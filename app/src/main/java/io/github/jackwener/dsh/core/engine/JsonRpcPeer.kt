@@ -137,7 +137,9 @@ class JsonRpcPeer(
                     throw e
                 } catch (e: JsonRpcException) {
                     errorFrame(id, e.code, e.message ?: "error")
-                } catch (e: Exception) {
+                } catch (e: Throwable) {
+                    // Throwable, not Exception: an Error (e.g. NoSuchMethodError from an API missing on an
+                    // older Android, #8) must still be answered, or the engine waits on this call forever.
                     Log.e(TAG, "$name handler $method failed", e)
                     errorFrame(id, -32603, e.message ?: e.javaClass.simpleName)
                 }

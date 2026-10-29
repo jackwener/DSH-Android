@@ -12,7 +12,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import rikka.shizuku.Shizuku
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -53,7 +53,13 @@ class ShizukuShell @Inject constructor(@ApplicationContext private val context: 
             override fun onServiceDisconnected(name: ComponentName?) { service = null }
         }
         withContext(Dispatchers.Main) { Shizuku.bindUserService(args, conn) }
-        withTimeout(10_000) { deferred.await() }.also { service = it }
+        // Starting the shell user service can take >10 s on slow phones (#8). If it never connects (a
+        // stale binding after Shizuku restarted), unbind it so the next call binds from scratch.
+        withTimeoutOrNull(30_000) { deferred.await() }?.also { service = it }
+            ?: run {
+                withContext(Dispatchers.Main) { runCatching { Shizuku.unbindUserService(args, conn, true) } }
+                error("the Shizuku shell service did not start within 30 s; try again")
+            }
     }
 
     suspend fun exec(cmd: String, timeoutMs: Long = 30_000): ShellResult = withContext(Dispatchers.IO) {

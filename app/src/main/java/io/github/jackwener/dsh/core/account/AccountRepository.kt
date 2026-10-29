@@ -321,7 +321,12 @@ class AccountRepository @Inject constructor(
             require(url.startsWith("https://"))
             val c = URL(url).openConnection() as HttpURLConnection
             c.connectTimeout = 10_000; c.readTimeout = 10_000; c.instanceFollowRedirects = true
-            val bytes = c.inputStream.use { it.readNBytes(MAX_AVATAR + 1) }
+            val bytes = c.inputStream.use { input ->
+                // InputStream.readNBytes(int) is API 33; read at most MAX_AVATAR + 1 bytes by hand.
+                val out = java.io.ByteArrayOutputStream(); val buf = ByteArray(8192)
+                while (out.size() <= MAX_AVATAR) { val n = input.read(buf, 0, minOf(buf.size, MAX_AVATAR + 1 - out.size())); if (n < 0) break; out.write(buf, 0, n) }
+                out.toByteArray()
+            }
             c.disconnect()
             require(bytes.size <= MAX_AVATAR)
             val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: error("not an image")

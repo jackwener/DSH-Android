@@ -37,7 +37,7 @@ import javax.inject.Singleton
 class FileTools @Inject constructor(@ApplicationContext private val context: Context) : ToolSet {
     private val root: File = Environment.getExternalStorageDirectory()
 
-    private fun need() { if (!Environment.isExternalStorageManager()) throw PermissionMissingException("All files access") }
+    private fun need() { if (!hasAllFilesAccess(context)) throw PermissionMissingException("All files access") }
 
     private fun resolve(path: String): File {
         val f = (if (path.startsWith("/")) File(path) else File(root, path)).canonicalFile
@@ -394,3 +394,8 @@ class FileTools @Inject constructor(@ApplicationContext private val context: Con
         },
     )
 }
+
+/** Broad shared-storage access: "All files access" on Android 11+, the legacy storage permission on Android 10. */
+fun hasAllFilesAccess(context: Context): Boolean =
+    if (android.os.Build.VERSION.SDK_INT >= 30) Environment.isExternalStorageManager()
+    else context.checkSelfPermission(android.Manifest.permission.WRITE_EXTERNAL_STORAGE) == android.content.pm.PackageManager.PERMISSION_GRANTED

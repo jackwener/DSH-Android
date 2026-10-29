@@ -119,7 +119,7 @@ class TriggerHub @Inject constructor(
 
     /** Non-blocking caveats (e.g. inexact alarms) to mention when a rule is created. */
     fun caveats(spec: RuleSpec): List<String> = buildList {
-        if (spec.trigger is Trigger.Time && !context.getSystemService(AlarmManager::class.java).canScheduleExactAlarms())
+        if (spec.trigger is Trigger.Time && !context.getSystemService(AlarmManager::class.java).canExact())
             add("exact alarms are not allowed for DSH, so this time rule may fire several minutes late (grant 'Alarms & reminders' to fix)")
         if (spec.trigger is Trigger.Geofence && !playServicesGeofencing)
             add("no Google Play services: the geofence uses the platform location service and may fire minutes late")
@@ -250,7 +250,7 @@ class TriggerHub @Inject constructor(
     private fun scheduleAlarm(e: RuleEntity, t: Trigger.Time) {
         val next = nextFire(e, t) ?: return
         val am = context.getSystemService(AlarmManager::class.java)
-        if (am.canScheduleExactAlarms()) am.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, next, alarmIntent(e.id))
+        if (am.canExact()) am.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, next, alarmIntent(e.id))
         else am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, next, alarmIntent(e.id))
     }
 
@@ -338,3 +338,6 @@ class TriggerHub @Inject constructor(
         const val DAILY_CAP = 50
     }
 }
+
+/** Exact alarms need no grant before Android 12, where `canScheduleExactAlarms()` does not exist (#8). */
+fun AlarmManager.canExact(): Boolean = android.os.Build.VERSION.SDK_INT < 31 || canScheduleExactAlarms()

@@ -79,6 +79,7 @@ object EngineDiagnostics {
         }.onFailure { Log.w(TAG, "exit info unavailable", it) }
     }
 
+    @androidx.annotation.RequiresApi(30)
     private fun save(dir: File, info: ApplicationExitInfo) {
         val ts = info.timestamp
         val reason = reasonName(info.reason)

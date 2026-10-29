@@ -242,7 +242,7 @@ class SystemTools @Inject constructor(
                 if (adapter == null) return ToolResult.error("unsupported", "This phone has no Bluetooth adapter.")
                 if (runCatching { adapter.isEnabled }.getOrNull() == on) return ToolResult.text("Bluetooth is already ${if (on) "on" else "off"}; nothing to do.")
                 if (gate.acquire(call, name, optional = true)) shellOrNull("cmd bluetooth_manager ${if (on) "enable" else "disable"}", "switch Bluetooth ${if (on) "on" else "off"}")?.let { return it }
-                val canAsk = on && context.checkSelfPermission(android.Manifest.permission.BLUETOOTH_CONNECT) == android.content.pm.PackageManager.PERMISSION_GRANTED
+                val canAsk = on && (android.os.Build.VERSION.SDK_INT < 31 || context.checkSelfPermission(android.Manifest.permission.BLUETOOTH_CONNECT) == android.content.pm.PackageManager.PERMISSION_GRANTED)
                 return openForUser(if (canAsk) Intent(android.bluetooth.BluetoothAdapter.ACTION_REQUEST_ENABLE) else Intent(Settings.ACTION_BLUETOOTH_SETTINGS),
                     "switch Bluetooth ${if (on) "on" else "off"}")
             }
@@ -319,7 +319,8 @@ class SystemTools @Inject constructor(
                 string("key", "", required = true); string("value", "", required = true)
             }, ShellUse.Required) {
             override suspend fun invoke(args: JsonObject, call: CallContext): ToolResult {
-                val v = args.reqStr("value").replace("'", "")
+                // An empty value is legitimate (e.g. clearing enabled_accessibility_services, #8).
+                val v = (args.str("value") ?: throw InvalidArgsException("missing 'value'")).replace("'", "")
                 return shell("settings put ${args.reqStr("namespace")} ${args.reqStr("key").filter { it.isLetterOrDigit() || it in "_." }} '$v'", "change setting")
             }
         },

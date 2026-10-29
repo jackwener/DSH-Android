@@ -1,5 +1,7 @@
 package io.github.jackwener.dsh.feature.settings
 
+import io.github.jackwener.dsh.core.capability.tools.hasAllFilesAccess
+import io.github.jackwener.dsh.core.trigger.canExact
 import android.Manifest
 import android.app.AlarmManager
 import android.app.NotificationManager
@@ -59,8 +61,10 @@ object PermissionCatalog {
             intent = { Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, pkgUri(it)) }),
         PermissionItem("files", "所有文件访问", "All files access", "查找、整理、清理你的文件", "Find, organise and clean up files",
             setOf(ToolGroup.Files),
-            check = { Environment.isExternalStorageManager() },
-            intent = { Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION, pkgUri(it)) }),
+            // Android 10 has no "All files access"; legacy storage + WRITE_EXTERNAL_STORAGE covers it there.
+            runtime = if (Build.VERSION.SDK_INT < 30) listOf(Manifest.permission.READ_EXTERNAL_STORAGE, Manifest.permission.WRITE_EXTERNAL_STORAGE) else null,
+            check = { hasAllFilesAccess(it) },
+            intent = { if (Build.VERSION.SDK_INT >= 30) Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION, pkgUri(it)) else null }),
         PermissionItem("accessibility", "无障碍（屏幕操作）", "Accessibility (screen control)", "读取屏幕、替你点按和输入", "Read the screen, tap and type for you",
             setOf(ToolGroup.Screen, ToolGroup.Apps), restrictedSetting = true,
             check = { DshAccessibilityService.instance != null || a11yEnabled(it) },
@@ -73,8 +77,8 @@ object PermissionCatalog {
                 else Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS) }),
         PermissionItem("exact_alarm", "闹钟和提醒", "Alarms & reminders", "定时自动化准点执行", "Run timed automations on time",
             setOf(ToolGroup.Rules),
-            check = { it.getSystemService(AlarmManager::class.java).canScheduleExactAlarms() },
-            intent = { Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM, pkgUri(it)) }),
+            check = { it.getSystemService(AlarmManager::class.java).canExact() },
+            intent = { if (Build.VERSION.SDK_INT >= 31) Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM, pkgUri(it)) else null }),
         PermissionItem("dnd", "勿扰模式权限", "Do Not Disturb access", "切换静音和勿扰", "Switch silent mode and Do Not Disturb",
             setOf(ToolGroup.System),
             check = { it.getSystemService(NotificationManager::class.java).isNotificationPolicyAccessGranted },
@@ -91,8 +95,8 @@ object PermissionCatalog {
             check = { granted(it, Manifest.permission.ACCESS_BACKGROUND_LOCATION) },
             intent = { appDetails(it) }),
         PermissionItem("bluetooth", "附近设备（蓝牙）", "Nearby devices", "按蓝牙设备名称触发自动化", "Trigger automations by Bluetooth device",
-            setOf(ToolGroup.Rules), runtime = listOf(Manifest.permission.BLUETOOTH_CONNECT),
-            check = { granted(it, Manifest.permission.BLUETOOTH_CONNECT) }),
+            setOf(ToolGroup.Rules), runtime = if (Build.VERSION.SDK_INT >= 31) listOf(Manifest.permission.BLUETOOTH_CONNECT) else null,
+            check = { Build.VERSION.SDK_INT < 31 || granted(it, Manifest.permission.BLUETOOTH_CONNECT) }),
         PermissionItem("comms", "联系人、短信、通话记录、日历", "Contacts, SMS, calls, calendar", "查联系人、读短信、记日程、发短信", "Look up contacts, read SMS, add events, send SMS",
             setOf(ToolGroup.Comms), runtime = listOf(Manifest.permission.READ_CONTACTS, Manifest.permission.READ_SMS, Manifest.permission.SEND_SMS,
                 Manifest.permission.READ_CALL_LOG, Manifest.permission.READ_CALENDAR, Manifest.permission.WRITE_CALENDAR),
