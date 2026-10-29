@@ -165,6 +165,20 @@ fun renderProfilePatch(providers: List<ProviderConfig>, webSearch: Boolean): Str
     }
     // dsh-base's tool-web config, with search off (a patch replaces the whole config).
     if (!webSearch) sb.append("- id: tool-web\n  config: {\"search\":false,\"fetch\":true,\"searchTimeoutMs\":60000}\n")
+    // Reasoning translation: dsh-base does not ship these rows on android. The translator makes the
+    // provider call (anonymous endpoints, no key); the cot-translation row exposes the
+    // cotTranslation/translate remote method the app calls from a reasoning row.
+    sb.append(
+        "- insert:\n" +
+            "    - id: translator\n" +
+            "      name: '@deepseek-ai/dsh-experimental-translator'\n" +
+            "    - id: cot-translation\n" +
+            "      name: '@deepseek-ai/dsh-experimental-client-ui-cot-translation'\n" +
+            "      config:\n" +
+            "        provider: bing\n" +
+            "        targetLanguage: auto\n"
+    )
+
     return sb.toString()
 }
 
