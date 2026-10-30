@@ -778,6 +778,5 @@
     <string name="diag_entry_desc">Builds a problem report to paste into a GitHub issue. No API keys, sign-in credentials, conversations or screen content.</string>
     <string name="diag_title">Diagnostics</string>
     <string name="diag_note">This is everything in the report. API keys, sign-in credentials, conversations and screen content are not included; IP addresses and emails are hidden. It leaves this page only when you tap Copy or Share; nothing is sent automatically.</string>
-    <string name="diag_copied">Copied</string>
     <string name="share">Share</string>
 </resources>

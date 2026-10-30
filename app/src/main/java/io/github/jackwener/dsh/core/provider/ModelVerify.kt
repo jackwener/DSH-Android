@@ -231,9 +231,10 @@ fun probeBody(model: String, forceTool: Boolean): String = buildJsonObject {
 
 /**
  * One real chat request. Returns null when the answer contains a tool call, else why not.
- * Runs on the caller's thread (call from Dispatchers.IO).
+ * Runs on the caller's thread (call from Dispatchers.IO). The read timeout is generous: a local
+ * server (Ollama, LM Studio) may load the model before the first byte.
  */
-fun probeToolCall(baseUrl: String, key: String?, model: String, forceTool: Boolean = true, connectTimeoutMs: Int = 10_000, readTimeoutMs: Int = 45_000): VerifyFailure? = try {
+fun probeToolCall(baseUrl: String, key: String?, model: String, forceTool: Boolean = true, connectTimeoutMs: Int = 10_000, readTimeoutMs: Int = 90_000): VerifyFailure? = try {
     val c = URL(baseUrl.trim().trimEnd('/') + "/chat/completions").openConnection() as HttpURLConnection
     try {
         c.connectTimeout = connectTimeoutMs; c.readTimeout = readTimeoutMs

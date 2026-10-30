@@ -778,6 +778,5 @@
     <string name="diag_entry_desc">生成一份问题报告，反馈时贴到 GitHub Issue。不含 API Key、登录凭据、对话和屏幕内容。</string>
     <string name="diag_title">诊断信息</string>
     <string name="diag_note">下面就是全部内容。API Key、登录凭据、对话和屏幕内容都不在里面，IP 地址和邮箱也已隐藏。只有点「复制」或「分享」才会带出去，不会自动发送。</string>
-    <string name="diag_copied">已复制</string>
     <string name="share">分享</string>
 </resources>

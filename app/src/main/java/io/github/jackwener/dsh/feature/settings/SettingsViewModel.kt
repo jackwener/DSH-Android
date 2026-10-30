@@ -22,6 +22,9 @@ import io.github.jackwener.dsh.core.engine.EngineManager
 import io.github.jackwener.dsh.core.engine.EngineState
 import io.github.jackwener.dsh.core.model.ToolGroup
 import io.github.jackwener.dsh.R
+import io.github.jackwener.dsh.core.diagnostics.DiagnosticsInput
+import io.github.jackwener.dsh.core.diagnostics.DiagnosticsReport
+import io.github.jackwener.dsh.core.diagnostics.ProviderFacts
 import io.github.jackwener.dsh.core.provider.ProviderConfig
 import io.github.jackwener.dsh.core.provider.VerifyFailure
 import io.github.jackwener.dsh.core.provider.VerifyOutcome
@@ -55,6 +58,8 @@ class SettingsViewModel @Inject constructor(
     private val shizukuInstaller: io.github.jackwener.dsh.core.platform.ShizukuInstaller,
     val account: io.github.jackwener.dsh.core.account.AccountRepository,
     usage: UsageDao,
+    private val sessionDao: io.github.jackwener.dsh.core.data.SessionDao,
+    private val agentScreen: io.github.jackwener.dsh.core.capability.AgentScreen,
 ) : ViewModel() {
     val settings: StateFlow<DshSettings> = repo.settings.stateIn(viewModelScope, SharingStarted.Eagerly, DshSettings())
     val usage: StateFlow<List<UsageEntity>> = usage.observe().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -156,6 +161,54 @@ class SettingsViewModel @Inject constructor(
     fun toggleNotificationApp(pkg: String) = viewModelScope.launch {
         val cur = settings.value.notificationBlocked
         repo.setNotificationBlocked(if (pkg in cur) cur - pkg else cur + pkg)
+    }
+
+    // ── 复制诊断信息 ──
+    /** The report shown in the diagnostics sheet; null = closed. Built on request, never sent anywhere by the app. */
+    val diagnostics = MutableStateFlow<String?>(null)
+    fun openDiagnostics() = viewModelScope.launch { diagnostics.value = buildDiagnostics() }
+    fun closeDiagnostics() { diagnostics.value = null }
+
+    /** Collects the facts for [DiagnosticsReport]: versions, device, access states, routes (hosts only), recent run ends, engine errors. */
+    suspend fun buildDiagnostics(): String {
+        val st = settings.value
+        val shell = shizuku.access.refresh()
+        val screenWhy = runCatching { agentScreen.unavailableReason() }.getOrElse { it.message }
+        return withContext(Dispatchers.IO) {
+            fun granted(id: String) = runCatching { PermissionCatalog.byId(id)?.check?.invoke(context) == true }.getOrDefault(false)
+            val choice = st.choice
+            val roles = mutableListOf<Pair<String, String>>()
+            roles += "main model" to (choice.provider?.let { p -> "${p.id} / ${choice.model}" + if (choice.model in p.verified) " (passed test)" else " (not tested)" }
+                ?: "DeepSeek / ${choice.model}, effort ${st.effort.id}")
+            if (st.provider.isNotEmpty() && choice.isDeepSeek) roles += "saved selection" to "${st.provider} / ${st.model} (unavailable, DeepSeek used instead)"
+            val runs = runCatching { sessionDao.recentRunEnds(DiagnosticsReport.RUNS) }.getOrDefault(emptyList())
+                .mapNotNull { DiagnosticsReport.outcomeOf(it.type, it.time, it.json) }
+            DiagnosticsReport.build(DiagnosticsInput(
+                appVersion = io.github.jackwener.dsh.BuildConfig.VERSION_NAME,
+                versionCode = io.github.jackwener.dsh.BuildConfig.VERSION_CODE.toLong(),
+                buildType = io.github.jackwener.dsh.BuildConfig.BUILD_TYPE,
+                engineVersion = runCatching { context.assets.open("engine-version.txt").bufferedReader().use { it.readText().trim() } }.getOrNull(),
+                device = "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}",
+                androidRelease = android.os.Build.VERSION.RELEASE,
+                sdk = android.os.Build.VERSION.SDK_INT,
+                abis = android.os.Build.SUPPORTED_ABIS.toList(),
+                shizuku = shell.reason,
+                accessibility = granted("accessibility"),
+                overlay = granted("overlay"),
+                batteryExempt = granted("battery"),
+                notifications = granted("notifications"),
+                agentScreenUnavailable = screenWhy,
+                agentScreenSetting = st.agentScreen,
+                deepseekCredential = when { hasKey -> "api key"; account.signedIn -> "account"; else -> "none" },
+                roles = roles,
+                providers = st.providers.map { ProviderFacts(it.id, it.preset, it.enabled, it.baseUrl, it.models, it.verified) },
+                runs = runs,
+                engineState = when (val e = engine.state.value) { is EngineState.Failed -> "failed: " + e.message; else -> e.javaClass.simpleName.lowercase() },
+                engineErrors = DiagnosticsReport.errorLines(io.github.jackwener.dsh.core.engine.EngineDiagnostics.logTail(context, 20_000)),
+                lastEngineExit = io.github.jackwener.dsh.core.engine.EngineDiagnostics.exitRecords(context).firstOrNull()?.summary,
+                generatedAt = System.currentTimeMillis(),
+            ))
+        }
     }
 
     /** Validates against DeepSeek's /models before saving. Returns null on success, else the error. */
