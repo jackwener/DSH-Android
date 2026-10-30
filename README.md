@@ -33,6 +33,10 @@
 - **手机里自带 Linux 环境**：Agent 可以跑 Python、处理你发来的文件、运行它自己写的脚本。
 - **出门也能用电脑上的 Agent**：通过 SSH 或 DSH Remote 连接电脑或服务器上的 DSH。只用远程模式的话，手机不用安装本地运行环境。
 
+## 界面一览
+
+<img src="docs/screenshots/showcase-dark.webp" width="100%" alt="界面一览：首页、操作手机、轨迹、随处唤起、手机权限、会话列表">
+
 ## 快速开始
 
 1. 从 [Releases](../../releases/latest) 下载 APK 并安装（arm64，Android 10 及以上）。
