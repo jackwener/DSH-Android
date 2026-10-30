@@ -12,6 +12,7 @@ import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
+import androidx.annotation.RequiresApi
 import io.github.jackwener.dsh.core.capability.Frame
 import io.github.jackwener.dsh.core.capability.UiElement
 import io.github.jackwener.dsh.core.trigger.TriggerEvents
@@ -171,7 +172,14 @@ class DshAccessibilityService : AccessibilityService() {
 
     suspend fun capture(displayId: Int = Display.DEFAULT_DISPLAY): Capture {
         if (Build.VERSION.SDK_INT < 30) return Capture(null, null)
-        return suspendCancellableCoroutine { cont ->
+        // DSH's own overlays (ball, status capsule, control border) never end up in a picture of the user's screen.
+        if (displayId == Display.DEFAULT_DISPLAY) return FloatingBallService.withoutOverlays { shot(displayId) }
+        return shot(displayId)
+    }
+
+    @RequiresApi(30)
+    private suspend fun shot(displayId: Int): Capture =
+        suspendCancellableCoroutine { cont ->
             takeScreenshot(displayId, shotExecutor, object : TakeScreenshotCallback {
                 override fun onSuccess(result: ScreenshotResult) {
                     val hw = Bitmap.wrapHardwareBuffer(result.hardwareBuffer, result.colorSpace)
@@ -182,6 +190,12 @@ class DshAccessibilityService : AccessibilityService() {
                 override fun onFailure(errorCode: Int) { if (cont.isActive) cont.resume(Capture(null, errorCode)) }
             })
         }
+
+    /** The app in front of [displayId], from its window list only (no tree walk). */
+    fun packageOn(displayId: Int): String? {
+        if (Build.VERSION.SDK_INT < 30) return null
+        val apps = runCatching { windowsOnAllDisplays.get(displayId).orEmpty() }.getOrDefault(emptyList()).filter { it.type == AccessibilityWindowInfo.TYPE_APPLICATION }
+        return (apps.firstOrNull { it.isActive || it.isFocused } ?: apps.firstOrNull())?.root?.packageName?.toString()
     }
 
     /**

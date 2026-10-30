@@ -98,6 +98,7 @@ class SettingsViewModel @Inject constructor(
     /** Bumped on resume so permission rows re-check their status. */
     val permissionTick = MutableStateFlow(0)
     fun setBall(on: Boolean) = viewModelScope.launch { repo.setFloatingBall(on); FloatingBallService.setEnabled(context, on) }
+    fun setBallStatus(on: Boolean) = viewModelScope.launch { repo.setBallStatus(on) }
     fun setLimits(daily: Long, session: Long) = viewModelScope.launch { repo.setLimits(daily, session) }
     fun toggleNotificationApp(pkg: String) = viewModelScope.launch {
         val cur = settings.value.notificationBlocked

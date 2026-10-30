@@ -21,6 +21,7 @@ import io.github.jackwener.dsh.core.data.SettingsRepository
 import io.github.jackwener.dsh.core.engine.JsonRpcException
 import io.github.jackwener.dsh.core.engine.JsonRpcPeer
 import io.github.jackwener.dsh.core.engine.RpcJson
+import io.github.jackwener.dsh.core.model.Risk
 import io.github.jackwener.dsh.core.model.RuleSpec
 import io.github.jackwener.dsh.core.model.ToolGroup
 import io.github.jackwener.dsh.core.model.ruleIdOfSession
@@ -40,9 +41,13 @@ import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.longOrNull
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -79,6 +84,10 @@ class CapabilityHub @Inject constructor(
     val allTools: Map<String, Tool> = listOf(files, apps, screen, system, notifications, comms, media, clipboard, browser, ruleTools, knowledge)
         .flatMap { it.tools }.associateBy { it.name }
     @Volatile private var bridge: JsonRpcPeer? = null
+    private val liveSeq = java.util.concurrent.atomic.AtomicLong()
+    private val _live = MutableStateFlow<Map<Long, LiveCall>>(emptyMap())
+    /** Calls executing now, keyed per call: read-only, for status surfaces outside the app (floating ball). */
+    val liveCalls: StateFlow<Map<Long, LiveCall>> = _live.asStateFlow()
 
     init {
         scope.launch {
@@ -199,7 +208,15 @@ class CapabilityHub @Inject constructor(
         // Answer a little before the engine gives up, so the model gets a clear result instead of a bare timeout.
         val budgetMs = (budget - ANSWER_MARGIN_MS).coerceAtLeast(budget / 2)
         val call = CallContext(sessionId, callId, unattended, SystemClock.elapsedRealtime() + budgetMs)
-        val result = withTimeoutOrNull(budgetMs) { run(tool, name, args, call) }
+        val liveKey = liveSeq.incrementAndGet()
+        // A screen call without an agent screen to act on works on the user's own screen (AgentScreen.target).
+        val mainScreen = name.startsWith("screen_") && (args.str("screen") == "main" || agentScreen.current(sessionId) == null)
+        _live.update { it + (liveKey to LiveCall(sessionId, name, mainScreen, acts = tool.descriptor.risk != Risk.read)) }
+        val result = try {
+            withTimeoutOrNull(budgetMs) { run(tool, name, args, call) }
+        } finally {
+            _live.update { it - liveKey }
+        }
         return result ?: call.waitingFor.let { waiting ->
             if (waiting != null) ToolResult.error("waiting_for_user",
                 "Still waiting for the user to $waiting after ${budgetMs / 1000}s, so the call was cancelled and nothing was done. " +
@@ -295,6 +312,9 @@ class CapabilityHub @Inject constructor(
         const val ANSWER_MARGIN_MS = 5_000L
     }
 }
+
+/** A call executing now. [mainScreen]: a screen_* call on the user's screen; [acts]: it changes something (not a read). */
+data class LiveCall(val sessionId: String, val tool: String, val mainScreen: Boolean, val acts: Boolean)
 
 /** Every tool group class exposes its tools. */
 interface ToolSet { val tools: List<Tool> }

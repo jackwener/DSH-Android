@@ -48,6 +48,8 @@ data class Settings(
     /** Apps whose notifications DSH must not read (default: none — every app is readable). */
     val notificationBlocked: Set<String> = emptySet(),
     val floatingBall: Boolean = false,
+    /** 操作时显示状态: the ball's status capsule, and the border while the agent operates the user's screen. */
+    val ballStatus: Boolean = true,
     val dailyTokenLimit: Long = 0,
     val sessionTokenLimit: Long = 0,
     val theme: ThemeMode = ThemeMode.System,
@@ -81,6 +83,7 @@ class SettingsRepository @Inject constructor(@ApplicationContext private val con
         val disabledGroups = stringSetPreferencesKey("disabled_groups")
         val notifBlocked = stringSetPreferencesKey("notif_blocked")
         val ball = booleanPreferencesKey("floating_ball")
+        val ballStatus = booleanPreferencesKey("ball_status")
         val dailyTokens = longPreferencesKey("daily_tokens")
         val sessionTokens = longPreferencesKey("session_tokens")
         val theme = stringPreferencesKey("theme")
@@ -103,6 +106,7 @@ class SettingsRepository @Inject constructor(@ApplicationContext private val con
         disabledGroups = this[K.disabledGroups]?.mapNotNull(ToolGroup::of)?.toSet() ?: emptySet(),
         notificationBlocked = this[K.notifBlocked] ?: emptySet(),
         floatingBall = this[K.ball] ?: false,
+        ballStatus = this[K.ballStatus] ?: true,
         dailyTokenLimit = this[K.dailyTokens] ?: 0,
         sessionTokenLimit = this[K.sessionTokens] ?: 0,
         theme = this[K.theme]?.let { v -> ThemeMode.entries.firstOrNull { it.name == v } } ?: ThemeMode.System,
@@ -132,6 +136,7 @@ class SettingsRepository @Inject constructor(@ApplicationContext private val con
     }
     suspend fun setNotificationBlocked(apps: Set<String>) = context.store.edit { it[K.notifBlocked] = apps }
     suspend fun setFloatingBall(on: Boolean) = context.store.edit { it[K.ball] = on }
+    suspend fun setBallStatus(on: Boolean) = context.store.edit { it[K.ballStatus] = on }
     suspend fun setLimits(daily: Long, session: Long) = context.store.edit {
         it[K.dailyTokens] = daily; it[K.sessionTokens] = session
     }
