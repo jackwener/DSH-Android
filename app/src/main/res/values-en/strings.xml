@@ -218,6 +218,7 @@
     <string name="tool_screen_type">Type</string>
     <string name="tool_screen_key">Key</string>
     <string name="tool_app_list">List apps</string>
+    <string name="tool_app_guide">App guide</string>
     <string name="tool_app_info">App info</string>
     <string name="tool_app_launch">Open app</string>
     <string name="tool_app_open_link">Open link</string>

@@ -148,6 +148,7 @@ docs/       架构说明、引擎契约、设计 token、截图
 - [Node.js](https://nodejs.org)；安卓构建参考了 [Termux](https://github.com/termux/termux-packages) 和 [nodejs-mobile](https://github.com/nodejs-mobile/nodejs-mobile) 的做法
 - [Shizuku](https://github.com/RikkaApps/Shizuku)（Apache-2.0）：App 内置了官方安装包
 - [ripgrep](https://github.com/BurntSushi/ripgrep)
+- [Mika](https://github.com/wangzan101/mika)（Apache-2.0，wangzan101）：18 个 App 的使用知识（`app/src/main/assets/knowledge/apps/`，取自 17f2fed，未改动；见 [NOTICE](NOTICE)）
 - [dsh-llm-service-lite](https://github.com/snnh/dsh-llm-service-lite)（MIT，snnh）：第三方模型适配器，原样内置于 `js/packages/llm-service-lite/`
 - [magpie](https://github.com/yetone/magpie)（MIT）：服务商预设地址和接入 dsh 的经验（按协议分组、maxTokens 与压缩阈值）
 
@@ -157,4 +158,4 @@ docs/       架构说明、引擎契约、设计 token、截图
 
 ## 许可证
 
-[Apache License 2.0](LICENSE)。内置的第三方组件（Node.js、dsh、dsh-llm-service-lite、Shizuku、ripgrep 等）遵循各自的许可证。
+[Apache License 2.0](LICENSE)。内置的第三方组件（Node.js、dsh、dsh-llm-service-lite、Shizuku、ripgrep、Mika 的 App 知识等）遵循各自的许可证。
