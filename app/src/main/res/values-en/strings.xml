@@ -10,6 +10,13 @@
     <string name="ball_working">The agent is working</string>
     <string name="ball_needs_you">A conversation needs you</string>
     <string name="ball_screen_needs_a11y">Turn on DSH\'s accessibility service to send the current screen</string>
+    <string name="status_thinking">Thinking…</string>
+    <string name="status_needs_you">Needs you: %1$s</string>
+    <string name="status_permission">grant a permission</string>
+    <string name="status_approve">approve %1$s</string>
+    <string name="status_background">Working in %1$s in the background</string>
+    <string name="status_background_step">In %1$s (background) · %2$s</string>
+    <string name="status_failed">Something went wrong</string>
     <string name="channel_engine">Agent engine</string>
     <string name="channel_tasks">Task results</string>
     <string name="channel_attention">Needs your attention</string>
@@ -384,6 +391,8 @@
     <string name="set_entry_points">Entry points</string>
     <string name="floating_ball">Floating button</string>
     <string name="floating_ball_desc">Tap to summon DSH over any app; double-tap to send it the current screen</string>
+    <string name="ball_status_setting">Show status while working</string>
+    <string name="ball_status_setting_desc">Shows what the agent is doing next to the ball; the screen edges light up while it operates your screen</string>
     <string name="default_assistant">Set as default assistant</string>
     <string name="default_assistant_desc">Summon with the power button or gesture, with the current page as context</string>
     <string name="key_connected">Connected</string>

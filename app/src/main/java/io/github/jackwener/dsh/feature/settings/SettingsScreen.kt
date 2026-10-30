@@ -214,6 +214,8 @@ private fun GeneralSection(vm: SettingsViewModel) {
         SettingsRow(stringResource(R.string.floating_ball), stringResource(if (ballBlocked) R.string.overlay_needed else R.string.floating_ball_desc), divider = false,
             onClick = if (ballBlocked) openOverlay else null,
             trailing = { DSwitch(s.floatingBall && canOverlay, { on -> if (on && !canOverlay) openOverlay() else { wantBall = false; vm.setBall(on) } }) })
+        if (s.floatingBall && canOverlay) SettingsRow(stringResource(R.string.ball_status_setting), stringResource(R.string.ball_status_setting_desc),
+            trailing = { DSwitch(s.ballStatus, { vm.setBallStatus(it) }) })
         SettingsRow(stringResource(R.string.default_assistant), stringResource(R.string.default_assistant_desc), onClick = { vm.openAssistantSettings(context) },
             trailing = {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
