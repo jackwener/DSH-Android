@@ -168,11 +168,14 @@ grep -q 'promptTimeZone' "$NM/@deepseek-ai/dsh-sdk-jsonrpc-server/lib/index.js" 
 [[ ! -e "$NM/@earendil-works/pi-ai" && ! -e "$NM/openai" ]] || die "provider SDK prune failed"
 [[ -f "$NM/@img/sharp-wasm32/package.json" ]] || die "sharp wasm build missing"
 [[ -f "$NM/@snnh/dsh-llm-service-lite/lib/index.js" && -f "$NM/eventsource-parser/package.json" ]] || die "llm-service-lite or eventsource-parser missing"
+[[ -f "$NM/@snnh/dsh-llm-service-lite/lib/opencode-session.js" ]] || die "OpenCode session header helper missing"
+grep -q 'headers: withOpenCodeSessionHeader(request.url, request.headers, options.sessionId)' "$NM/@snnh/dsh-llm-service-lite/lib/index.js" || die "OpenCode session header patch missing"
+grep -q 'if (usage === void 0 || usage === null || typeof usage.prompt_tokens' "$NM/@snnh/dsh-llm-service-lite/lib/index.js" || die "nullable streaming usage patch missing"
 log "no symlinks; entry point and patches verified"
 
 # ── 8. version, zip, digest, report ──────────────────────────────────────────
 INPUT_HASH=$( (cd "$JS_DIR" && cat engine/package-lock.json patches/*.patch \
-  packages/bundle-android/cordis.patch.yml packages/bundle-android/android-env.cjs packages/*/package.json packages/plugin-*/*.js packages/llm-service-lite/lib/index.js scripts/*.mjs build-engine.sh) | sha256sum | cut -c1-10)
+  packages/bundle-android/cordis.patch.yml packages/bundle-android/android-env.cjs packages/*/package.json packages/plugin-*/*.js packages/llm-service-lite/lib/*.js scripts/*.mjs build-engine.sh) | sha256sum | cut -c1-10)
 ENGINE_VERSION="${DSH_VERSION}-a${INPUT_HASH}"
 printf '%s\n' "$ENGINE_VERSION" > "$STAGE/engine-version.txt"
 printf '%s\n' "$ENGINE_VERSION" > "$OUT_DIR/engine-version.txt"

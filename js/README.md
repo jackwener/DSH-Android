@@ -13,7 +13,7 @@ DeepSeek Harness (dsh) **0.2.1-rc.2**, installed unmodified from npm and customi
 | `packages/plugin-device/` | capability bridge client (`DSH_BRIDGE_FD`) → dynamic dsh tools |
 | `packages/plugin-guard/` | hardline shell floor, approval policy, budgets, phone system prompt |
 | `packages/plugin-account/` | DeepSeek account login: loopback OAuth callback server + `account/*` SDK methods |
-| `packages/llm-service-lite/` | vendored `@snnh/dsh-llm-service-lite` 0.2.1 (MIT, snnh): third-party OpenAI-compatible model routes; built `lib/index.js` copied verbatim from the npm tarball (provenance in its `package.json` `//vendored`), Web client dropped. Upgrade = replace `lib/index.js` + note |
+| `packages/llm-service-lite/` | vendored `@snnh/dsh-llm-service-lite` 0.2.1 (MIT, snnh): third-party OpenAI-compatible model routes; built `lib/index.js` copied verbatim from npm (provenance in `package.json` `//vendored`), Web client dropped. Android adds a session-header helper through patch 14; patch 15 handles nullable stream usage. Upgrade = replace `lib/index.js`, re-check patches 14/15 + note |
 | `patches/*.patch` | unified diffs against `node_modules/`, applied in order with `patch -p1` (dry-run first) |
 | `scripts/fetch-locked.mjs` | installs lockfile-pinned packages `npm ci` skips on the host (sharp's WebAssembly build), sha512-verified |
 | `scripts/unreachable.mjs` | lists packages reachable only through given deps (used to prune pi-ai's provider SDKs) |
@@ -21,6 +21,8 @@ DeepSeek Harness (dsh) **0.2.1-rc.2**, installed unmodified from npm and customi
 | `scripts/bench-cold-start.mjs` | host cold-start benchmark (spawn → `initialize`) |
 | `test/hardline.test.mjs` | hardline unit tests: `node --test js/test/hardline.test.mjs` |
 | `test/prompt.test.mjs` | system prompt section tests: `node --test js/test/prompt.test.mjs` |
+| `test/opencode-session.test.mjs` | OpenCode header scope, per-conversation identities and explicit-header preservation: `node --test js/test/opencode-session.test.mjs` |
+| `test/host-opencode-session.mjs` | real built-adapter request/stream regression, no API key or native bindings: after building, `node --test js/test/host-opencode-session.mjs`; `E2E_ENGINE_DIR` can point at an extracted `engine.zip` |
 | `test/host-e2e.mjs` | host end-to-end run of the built `engine.zip` with a fake bridge |
 | `test/host-ac8-resume.mjs` | host repro of engine kill + `session/resume` + continuation |
 
@@ -156,7 +158,7 @@ The app uses `deepseek-account` only when no API key is set; the engine starts w
 
 Targets must be stable file names. `build-engine.sh` refuses a patch whose target is missing and maps a content-hashed
 chunk name (`name-XXXXXXXX.js`) to the single current chunk of that name, so a dsh upgrade fails loudly instead of
-silently skipping. All patches are inert on desktop Linux unless the corresponding env var is set (the host e2e sets
+silently skipping. Platform patches are inert on desktop Linux unless the corresponding env var is set (the host e2e sets
 `DSH_NATIVE_DIR` to exercise the Android code paths).
 
 | Patch | Package(s) | What / why |
@@ -171,6 +173,8 @@ silently skipping. All patches are inert on desktop Linux unless the correspondi
 | `09-sharp-wasm-android` | `sharp` | no bionic libvips: on `android-*` sharp loads its WebAssembly build. Attachments (tool images, prompt images) need it. |
 | `10-sdk-extension-methods` | `dsh-sdk-jsonrpc-server` | unknown SDK methods resolve through an optional `sdkExtensions` service or a `sdk-extensions/resolve` listener (works before `initialize`); plugins emit SDK notifications with `ctx.emit('sdk-extensions/notify', method, params)`. Used by plugin-account and plugin-guard. Re-check on every dsh bump. |
 | `11-sdk-prompt-time-zone` | `dsh-sdk-jsonrpc-server` | SDK prompts carried no time zone, so `dsh-time-context` reported "time zone unavailable". Prompts now carry `clientTimeZone` from `session/prompt`, else the process `TZ`. |
+| `14-llm-service-lite-opencode-session` | `dsh-llm-service-lite` | OpenCode/Go requires `x-opencode-session`. At the shared request boundary, add the harness conversation id only for `opencode.ai` and its subdomains; preserve an explicitly configured header. Sessionless calls get an isolated UUID. Applies on the host too, so the packaged adapter can be tested without Android. |
+| `15-llm-service-lite-null-usage` | `dsh-llm-service-lite` | Chat Completions streams may carry `usage: null` before the final accounting frame. Ignore those placeholders instead of reading `prompt_tokens` from null and misreporting a successful completion as a transport failure. Applies on the host too. |
 
 Not patched: `terminal-bash` (`/bin/bash` default) and `dsh-api-workspace-controller` are not mounted by
 dsh-base/sdk-app; `subprocess-local`'s `/bin/sh` fallback is Linux-only (Android uses plain `child_process.spawn`; its
