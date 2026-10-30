@@ -2,7 +2,7 @@
 
 # DSH-Android
 
-### 用 DSH 让手机替你做事
+### 让 DSH 替你用手机
 
 不要 root，不用电脑，直接跑在你的安卓手机上。真正的手机 Agent，替你把手机上的事干完。
 
@@ -19,7 +19,7 @@
 
 <br />
 
-<img src="docs/screenshots/hero.webp" width="100%" alt="DSH-Android：用 DSH 让手机替你做事">
+<img src="docs/screenshots/hero.webp" width="100%" alt="DSH-Android：让 DSH 替你用手机">
 
 </div>
 

@@ -18,7 +18,7 @@ shot_path = sys.argv[1] if len(sys.argv) > 1 else os.path.join(repo, "docs/scree
 out_path = sys.argv[2] if len(sys.argv) > 2 else os.path.join(repo, "docs/screenshots/hero.webp")
 
 NAME = "DSH-Android"
-HEADLINE = ["用 DSH", "让手机替你做事"]
+HEADLINE = ["让 DSH", "替你用手机"]
 SUB = "不要 root，不用电脑，直接跑在你的安卓手机上。"
 NOTE = "Android 10 及以上 ｜ 社区项目，非 DeepSeek 官方应用"
 ASK = "列出下载目录里最大的 5 个文件"
