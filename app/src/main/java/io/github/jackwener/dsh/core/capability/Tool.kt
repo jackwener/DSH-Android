@@ -46,7 +46,32 @@ sealed interface Content {
     data class Image(val mimeType: String, val base64: String) : Content
 }
 
-class ToolResult(val ok: Boolean, val content: List<Content>, val errorCode: String? = null, val errorMessage: String? = null) {
+class ToolResult(
+    val ok: Boolean,
+    val content: List<Content>,
+    val errorCode: String? = null,
+    val errorMessage: String? = null,
+    /** Measured effect of a screen/app action, for the loop guard (not sent to the engine). */
+    val outcome: ActionOutcome? = null,
+) {
+    fun withOutcome(o: ActionOutcome?) = ToolResult(ok, content, errorCode, errorMessage, o)
+
+    /** Adds a paragraph to the model-facing text (the error message too, for failed calls). */
+    fun appendText(text: String): ToolResult {
+        val i = content.indexOfLast { it is Content.Text }
+        val next = if (i < 0) listOf(Content.Text(text)) + content
+            else content.toMutableList().also { it[i] = Content.Text((it[i] as Content.Text).text + "\n\n" + text) }
+        return ToolResult(ok, next, errorCode, errorMessage?.let { "$it\n\n$text" }, outcome)
+    }
+
+    /** Puts a line before the model-facing text (e.g. which screen the call used). */
+    fun prependText(text: String): ToolResult {
+        val i = content.indexOfFirst { it is Content.Text }
+        val next = if (i < 0) listOf(Content.Text(text)) + content
+            else content.toMutableList().also { it[i] = Content.Text(text + "\n" + (it[i] as Content.Text).text) }
+        return ToolResult(ok, next, errorCode, errorMessage?.let { "$text\n$it" }, outcome)
+    }
+
     companion object {
         fun text(text: String) = ToolResult(true, listOf(Content.Text(text)))
         fun image(mime: String, b64: String, caption: String? = null) =
