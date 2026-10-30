@@ -20,6 +20,7 @@ splashscreen = "1.2.0"
 junit = "4.13.2"
 playServicesLocation = "21.4.0"
 pdfboxAndroid = "2.0.27.0"
+mlkitTextChinese = "16.0.1"
 
 [libraries]
 androidx-core-ktx = { module = "androidx.core:core-ktx", version.ref = "coreKtx" }
@@ -51,6 +52,7 @@ shizuku-provider = { module = "dev.rikka.shizuku:provider", version.ref = "shizu
 coil-compose = { module = "io.coil-kt.coil3:coil-compose", version.ref = "coil" }
 play-services-location = { module = "com.google.android.gms:play-services-location", version.ref = "playServicesLocation" }
 pdfbox-android = { module = "com.tom-roush:pdfbox-android", version.ref = "pdfboxAndroid" }
+mlkit-text-chinese = { module = "com.google.mlkit:text-recognition-chinese", version.ref = "mlkitTextChinese" }
 markdown-m3 = { module = "com.mikepenz:multiplatform-markdown-renderer-m3", version.ref = "markdown" }
 
 [plugins]
