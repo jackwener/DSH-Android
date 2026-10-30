@@ -66,8 +66,13 @@ phone) and fully regenerates it; it holds no secret. Values are JSON (valid YAML
 
 or just `[]` when no provider is enabled and web search is available. Only enabled providers with ≥ 1 model are
 written; `apiKeyEnv` only when a key is stored (an open endpoint gets no credential). Every model gets the same
-`contextWindow` 131072 and request cap `maxTokens` 16384 (sent as `max_tokens`; some vendors default to 1–4K and
+`contextWindow` 131072 and request cap `maxTokens` 16384 (sent as `max_tokens` on Chat Completions; some vendors default to 1–4K and
 truncate tool calls). No reasoning effort is configured: the adapter applies the model family's documented default.
+
+The exact `api.openai.com` host uses `openai-responses` instead, even for a custom preset. This route omits
+`includeUsage`, sets `extraBody: {"store":false}`, and declares `capabilities: {"responsesEncryptedReplay":true}`
+on every model. The adapter sends `max_output_tokens`, requests encrypted reasoning for reasoning models, and
+replays it with function calls and outputs on the next turn. Other hosts keep Chat Completions regardless of preset name.
 Route ids are the preset id (`kimi`, then `kimi-2`, …), never `deepseek-*`.
 
 Web search (`web_search`, DeepSeek search) needs a DeepSeek credential: `DEEPSEEK_API_KEY`, or the account login while
