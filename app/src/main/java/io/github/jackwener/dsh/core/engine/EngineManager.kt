@@ -131,7 +131,12 @@ class EngineManager @Inject constructor(
     private fun webSearch(st: io.github.jackwener.dsh.core.data.Settings, hasKey: Boolean) = hasKey || st.choice.isDeepSeek
 
     private fun profilePatch(st: io.github.jackwener.dsh.core.data.Settings, hasKey: Boolean) =
-        renderProfilePatch(st.providers, webSearch(st, hasKey))
+        renderProfilePatch(
+            st.providers,
+            webSearch(st, hasKey),
+            // Durable full-text index for the past-session search tool (built on the first search).
+            File(context.filesDir, "dsh-home/android/sessions.db").path,
+        )
 
     /** Provider keys for the engine environment (env var name → key). */
     private fun providerKeys(st: io.github.jackwener.dsh.core.data.Settings): Map<String, String> =
@@ -421,7 +426,11 @@ class EngineManager @Inject constructor(
         apiKey?.let { putString("DEEPSEEK_API_KEY", it) }
         providerKeys.forEach { (env, key) -> putString(env, key) }
         putString("DSH_ANDROID_PACKAGE", context.packageName)
-        putString("DSH_ANDROID_LOCALE", Locale.getDefault().toLanguageTag())
+        // The engine turns this into the system prompt language hint: use the app's own locale (per-app
+        // language / UI language) so the model reasons and answers in the language the UI is in, not in
+        // whatever the system locale happens to be.
+        val appLocale = context.resources.configuration.locales[0] ?: Locale.getDefault()
+        putString("DSH_ANDROID_LOCALE", appLocale.toLanguageTag())
         // Node otherwise runs in UTC (local time for the model, daily budget at local midnight).
         // DSH_ANDROID_TZ lets the bundle's preload re-apply it where AT_SECURE makes Node drop TZ.
         putString("TZ", startedTz)
