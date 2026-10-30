@@ -194,7 +194,7 @@ ${notes}
 }
 
 /** The English system-prompt section (the model replies in the user's language). */
-export function systemPromptSection(locale, descriptors = [], { homeWrites = false } = {}) {
+export function systemPromptSection(locale, descriptors = [], { homeWrites = false, shell = true, deviceTools = true } = {}) {
   const lang = locale ? `The phone's language is ${locale}. Reply in the language the user writes in; when unsure, use ${locale}.` : 'Reply in the language the user writes in.'
   const examples = lockFreeExamples(descriptors)
   if (descriptors.some(d => d.name.startsWith('file_') && d.needsUnlock !== true)) examples.push('file_*')
@@ -203,14 +203,14 @@ export function systemPromptSection(locale, descriptors = [], { homeWrites = fal
     : 'System API tools (files, settings, contacts, calendar, …): the direct way; those whose description does not say "needs the phone unlocked" also work while the phone is locked.'
   return `# Running on the user's Android phone
 
-You run inside the DSH app on the user's own Android phone, not on a server or developer machine. The device tools (files, apps, screen, system settings, notifications, contacts/messages, media, clipboard, automation rules) act on this phone through the app; some groups may be missing because the user has not enabled them.
+You run inside the DSH app on the user's own Android phone, not on a server or developer machine. ${deviceTools ? `The device tools (files, apps, screen, system settings, notifications, contacts/messages, media, clipboard, automation rules) act on this phone through the app; some groups may be missing because the user has not enabled them.
 
 Tool priority — always prefer the most direct, least fragile path:
 1. ${tier1}
 2. Intents and deep links (app_open_link, app_send_intent, share_to_app).
 3. Shizuku-backed tools (wifi_toggle, bluetooth_toggle, setting_put) when available.
 4. Screen automation (screen_read, screen_tap, screen_type, …) only when nothing above can do the job; it needs the phone unlocked and is slow and brittle.
-Each device tool's description ends with its policy line. A tool marked "needs the phone unlocked" waits until the user unlocks the phone; tell the user when that happens instead of reporting the task as done.
+Each device tool's description ends with its policy line. A tool marked "needs the phone unlocked" waits until the user unlocks the phone; tell the user when that happens instead of reporting the task as done.` : 'This conversation has no device tools: you cannot act on the phone here.'}
 
 Approvals and safety:
 - Read-only tools and read-only shell commands run directly${homeWrites ? ', and so do file writes inside your private home and temp folders (except in 仅可查看 mode)' : ''}. Other actions that change the phone ask the user, depending on the permission mode the user picked for this conversation; a read of private data (messages, contacts, notifications, clipboard, …) asks once per conversation.
@@ -218,7 +218,7 @@ Approvals and safety:
 - Before deleting, moving or overwriting files, state exactly which files and folders are affected (list them, or give the count and paths) and confirm the scope with the user unless they already named the exact items. Prefer the narrowest scope; never act on whole storage roots.
 - The app hard-blocks some shell commands (wiping storage roots or system directories, formatting or writing block devices, reboot/shutdown, fork bombs, executing decoded payloads, uninstalling system packages, deleting system settings): such a call is refused before it runs and returns HARDLINE_BLOCKED. Never try to work around a block.
 
-${screenSection(descriptors)}Shell: the bash tool runs Android's /system/bin/sh (mksh) with toybox utilities, not GNU bash/coreutils; there is no root. The user's shared storage is /sdcard (= /storage/emulated/0). Your working directory is the app's private home folder.
+${screenSection(descriptors)}${shell ? "Shell: the bash tool runs Android's /system/bin/sh (mksh) with toybox utilities, not GNU bash/coreutils; there is no root. " : ''}The user's shared storage is /sdcard (= /storage/emulated/0). Your working directory is the app's private home folder.
 
 ${lang} Keep replies short and suited to a phone screen.`
 }
@@ -467,8 +467,20 @@ export function apply(ctx, config = {}) {
   // ── 4. System prompt ───────────────────────────────────────────────────────
   ctx.inject(['systemPrompt'], child => {
     const sp = child.get('systemPrompt')
-    // The section text depends only on descriptor metadata, so it is stable while the tool set is.
-    sp.variable('android_phone_context', () => systemPromptSection(locale, descriptors(), { homeWrites: presetsReported }))
+    // The section text depends only on descriptor metadata and on which tools the calling agent
+    // sees (a session mode, plugin-mode, may hide device groups or the shell), so it is stable
+    // while the tool set is.
+    sp.variable('android_phone_context', context => {
+      const scope = context?.scope
+      const visible = name => { try { return ctx.tools.get(name, scope) !== undefined } catch { return true } }
+      const all = descriptors()
+      const shown = scope === undefined ? all : all.filter(d => visible(d.name))
+      return systemPromptSection(locale, shown, {
+        homeWrites: presetsReported,
+        shell: scope === undefined || visible('bash'),
+        deviceTools: shown.length > 0 || all.length === 0,
+      })
+    })
     sp.section({ name: 'android:phone-context', order: 130, text: '{{android_phone_context}}' })
     sp.context({
       name: 'android:unattended',

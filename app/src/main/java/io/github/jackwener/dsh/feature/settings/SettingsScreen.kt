@@ -96,6 +96,7 @@ fun isZh(): Boolean = LocalConfiguration.current.locales[0].language == "zh"
 enum class SettingsSection(val label: Int, val icon: Int) {
     Account(R.string.acct_nav, R.drawable.dsw_user_outline), General(R.string.set_general, R.drawable.dsw_settings_outline),
     Model(R.string.set_model, R.drawable.dsw_data_outline), Agent(R.string.set_agent, R.drawable.dsw_apps_add_outline),
+    Modes(R.string.set_modes, R.drawable.dsw_agent_preset_outline),
     Usage(R.string.set_usage, R.drawable.dsw_gauge_outline), Phone(R.string.set_phone, R.drawable.dsw_shield_outline),
     About(R.string.set_about, R.drawable.dsw_info_outline);
     companion object {
@@ -118,13 +119,18 @@ fun SettingsScreen(initial: SettingsSection?, onBack: () -> Unit, onNotification
     val toIndex = section != null && !deepLinked
     /** 模型服务 sub-page: [NEW_PROVIDER] or a provider id being edited. */
     var provider by rememberSaveable { mutableStateOf<String?>(null) }
+    /** 会话模式 sub-page: [NEW_MODE] or a mode id. */
+    var modePage by rememberSaveable { mutableStateOf<String?>(null) }
     BackHandler(toIndex) { section = null }
     BackHandler(provider != null) { provider = null }
+    BackHandler(modePage != null) { modePage = null }
     Column(Modifier.fillMaxSize().background(c.bgBase).statusBarsPadding()) {
-        val title = if (provider != null) stringResource(R.string.prov_title) else section?.let { stringResource(it.label) } ?: stringResource(R.string.settings)
-        DTopBar(title, { if (provider != null) provider = null else if (toIndex) section = null else onBack() })
+        val modeTitle = modePage?.let { id -> if (id == NEW_MODE) stringResource(R.string.mode_new)
+            else if (io.github.jackwener.dsh.core.model.SessionModes.builtIns.any { it.id == id }) stringResource(R.string.mode_view_title) else stringResource(R.string.mode_edit_title) }
+        val title = modeTitle ?: if (provider != null) stringResource(R.string.prov_title) else section?.let { stringResource(it.label) } ?: stringResource(R.string.settings)
+        DTopBar(title, { if (modePage != null) modePage = null else if (provider != null) provider = null else if (toIndex) section = null else onBack() })
         // One scroll position per page; IME insets first so focused fields and their buttons stay above the keyboard.
-        val scroll = rememberSaveable(section, provider, saver = androidx.compose.foundation.ScrollState.Saver) { androidx.compose.foundation.ScrollState(0) }
+        val scroll = rememberSaveable(section, provider, modePage, saver = androidx.compose.foundation.ScrollState.Saver) { androidx.compose.foundation.ScrollState(0) }
         Column(Modifier.fillMaxSize().imePadding().verticalScroll(scroll).navigationBarsPadding().padding(horizontal = 16.dp).padding(bottom = 24.dp)) {
             when (section) {
                 null -> SettingsIndex { section = it }
@@ -136,6 +142,7 @@ fun SettingsScreen(initial: SettingsSection?, onBack: () -> Unit, onNotification
                 SettingsSection.General -> GeneralSection(vm)
                 SettingsSection.Model -> provider?.let { ProviderPage(vm, it) { provider = null } } ?: ModelSection(vm) { provider = it }
                 SettingsSection.Agent -> AgentSection(vm, onAppNotes)
+                SettingsSection.Modes -> modePage?.let { ModePage(vm, it, onDone = { modePage = null }, onOpen = { id -> modePage = id }) } ?: ModesSection(vm) { modePage = it }
                 SettingsSection.Usage -> UsageSection(vm)
                 SettingsSection.Phone -> PhoneSection(vm, onNotificationApps)
                 SettingsSection.About -> AboutSection(vm)
@@ -303,7 +310,7 @@ private fun AgentSection(vm: SettingsViewModel, onAppNotes: () -> Unit) {
     WebSection(vm)
 }
 
-private fun groupLabel(g: ToolGroup) = when (g) {
+internal fun groupLabel(g: ToolGroup) = when (g) {
     ToolGroup.Files -> R.string.grp_files to R.string.grp_files_desc
     ToolGroup.Apps -> R.string.grp_apps to R.string.grp_apps_desc
     ToolGroup.Screen -> R.string.grp_screen to R.string.grp_screen_desc

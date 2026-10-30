@@ -84,6 +84,7 @@ import io.github.jackwener.dsh.core.designsystem.RiskConfirmDialog
 import io.github.jackwener.dsh.core.designsystem.elevated
 import io.github.jackwener.dsh.core.designsystem.pressable
 import io.github.jackwener.dsh.core.model.PermissionPreset
+import io.github.jackwener.dsh.core.model.SessionMode
 import io.github.jackwener.dsh.core.session.QueuedMessage
 import io.github.jackwener.dsh.core.session.TodoItem
 import kotlinx.coroutines.Dispatchers
@@ -176,7 +177,7 @@ data class ComposerActions(
 
 /**
  * dsh InputBar: R28 card on the input-major fill with the soft elevation; editor on top,
- * toolbar below: [+] [permission chip] … [context ring] [model chip] [send/stop 34].
+ * toolbar below: [+] [permission chip] [mode chip] … [context ring] [model chip] [send/stop 34].
  */
 @Composable
 fun Composer(
@@ -203,6 +204,13 @@ fun Composer(
     canSendEmpty: Boolean = false,
     /** A model/effort change waits for a running task (fix-session's ConversationController.modelChangePending); defaults to this session running. */
     modelChangePending: Boolean = running,
+    /** The conversation's session mode (null hides the mode chip) and the modes it can switch to. */
+    mode: SessionMode? = null,
+    modes: List<SessionMode> = emptyList(),
+    /** The conversation has started: the mode is shown but cannot change. */
+    modeLocked: Boolean = false,
+    onMode: (String) -> Unit = {},
+    onManageModes: (() -> Unit)? = null,
 ) {
     val c = Dsh.colors
     val context = LocalContext.current
@@ -212,6 +220,7 @@ fun Composer(
     var slashOpen by remember { mutableStateOf(false) }
     var presetOpen by remember { mutableStateOf(false) }
     var modelOpen by remember { mutableStateOf(false) }
+    var modeOpen by remember { mutableStateOf(false) }
     var confirmFull by remember { mutableStateOf(false) }
     val settled = rememberSettled()
     // A preset change from elsewhere (session switch, approval) drops any half-finished choice.
@@ -289,6 +298,8 @@ fun Composer(
                     MenuSectionTitle(stringResource(R.string.menu_commands))
                     if (showChips) {
                         MenuItem(stringResource(R.string.cmd_permission), { close(); presetOpen = true }, R.drawable.dsw_shield_outline, stringResource(R.string.cmd_permission_desc))
+                        if (mode != null) MenuItem(stringResource(R.string.mode_menu_title), { close(); modeOpen = true }, ModeUi.icon(mode),
+                            if (modeLocked) stringResource(R.string.mode_locked) else stringResource(R.string.mode_menu_hint))
                         MenuItem(stringResource(R.string.cmd_model), { close(); modelOpen = true }, R.drawable.dsw_data_outline, stringResource(R.string.cmd_model_desc))
                     }
                     actions.onNewSession?.let { MenuItem(stringResource(R.string.new_session), { close(); it() }, R.drawable.dsw_new_chat_outline) }
@@ -311,6 +322,7 @@ fun Composer(
                     }
                 }
             }
+            if (showChips && mode != null) ModeChip(mode, modes, modeLocked, narrow, onMode, onManageModes, modeOpen, { modeOpen = it }, settled)
             // The context ring and model chip take only the space left, so Send always stays on screen.
             Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.End)) {
             if (showChips && contextTokens > 0) ContextRing(contextTokens, model.contextWindow)

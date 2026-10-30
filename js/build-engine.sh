@@ -42,7 +42,7 @@ cp "$JS_DIR/engine/package.json" "$JS_DIR/engine/package-lock.json" "$STAGE/"
 # js/packages/<dir> → node_modules/<package name>: our @dsh-android packages plus the vendored
 # third-party LLM adapter @snnh/dsh-llm-service-lite (MIT; see its package.json "//vendored").
 log "adding @dsh-android packages + vendored @snnh/dsh-llm-service-lite"
-OUR_PKGS=(bundle-android plugin-device plugin-guard plugin-account llm-service-lite)
+OUR_PKGS=(bundle-android plugin-device plugin-guard plugin-mode plugin-account llm-service-lite)
 for pkg in "${OUR_PKGS[@]}"; do
   node -e '
     const [src, nm, stagePkg] = process.argv.slice(1)
@@ -170,6 +170,8 @@ grep -q 'promptTimeZone' "$NM/@deepseek-ai/dsh-sdk-jsonrpc-server/lib/index.js" 
 [[ -f "$NM/@snnh/dsh-llm-service-lite/lib/index.js" && -f "$NM/eventsource-parser/package.json" ]] || die "llm-service-lite or eventsource-parser missing"
 grep -q 'describeTransportCause' "$NM/@snnh/dsh-llm-service-lite/lib/index.js" || die "llm-service-lite transport-cause patch missing"
 grep -q 'patch 15' "$NM/@deepseek-ai/dsh-http-proxy/lib/index.js" || die "http-proxy exclusion-glob patch missing"
+grep -q 'appendPluginRecord' "$NM/@deepseek-ai/dsh-session/lib/index.js" || die "dsh-session lacks appendPluginRecord (plugin-mode records its selection with it)"
+[[ -f "$NM/@dsh-android/plugin-mode/index.js" ]] || die "plugin-mode missing"
 log "no symlinks; entry point and patches verified"
 
 # ── 8. version, zip, digest, report ──────────────────────────────────────────

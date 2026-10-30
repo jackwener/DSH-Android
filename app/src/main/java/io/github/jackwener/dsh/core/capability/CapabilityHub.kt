@@ -64,7 +64,7 @@ import javax.inject.Singleton
 
 /**
  * The single gate for device capabilities (docs/ENGINE-CONTRACT.md §3): lists the enabled tools
- * and executes calls after group, unattended-whitelist and lock-state checks.
+ * and executes calls after group, session-mode, unattended-whitelist and lock-state checks.
  */
 @Singleton
 class CapabilityHub @Inject constructor(
@@ -199,6 +199,9 @@ class CapabilityHub @Inject constructor(
         val group = ToolGroup.of(tool.descriptor.group)
         if (group !in settings.current().enabledGroups) return ToolResult.error("not_authorized",
             "The '${tool.descriptor.group}' capability is turned off. Ask the user to enable it in DSH → Settings → Agent.")
+        // Backstop for session modes (plugin-mode already hides these tools from the conversation).
+        if (group != null && !sessions.get().modeAllowsGroup(sessionId, group)) return ToolResult.error("not_authorized",
+            "The '${tool.descriptor.group}' tools are not available in this conversation's mode; nothing was done. Tell the user it needs a conversation in another mode.")
         val ruleId = ruleIdOfSession(sessionId)
         if (ruleId != null) {
             val spec = rules.get(ruleId)?.let { e -> runCatching { RpcJson.decodeFromString(RuleSpec.serializer(), e.specJson) }.getOrNull() }

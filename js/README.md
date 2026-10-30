@@ -12,6 +12,7 @@ DeepSeek Harness (dsh) **0.2.1-rc.2**, installed unmodified from npm and customi
 | `packages/bundle-android/` | the dsh bundle behind profile `android` (`cordis.patch.yml`) and the `android-env.cjs` preload |
 | `packages/plugin-device/` | capability bridge client (`DSH_BRIDGE_FD`) → dynamic dsh tools |
 | `packages/plugin-guard/` | hardline shell floor, approval policy, budgets, phone system prompt |
+| `packages/plugin-mode/` | session modes: per-conversation tool restriction, skills switch, mode prompt section (`android/session/mode`, ENGINE-CONTRACT §2.5) |
 | `packages/plugin-account/` | DeepSeek account login: loopback OAuth callback server + `account/*` SDK methods |
 | `packages/llm-service-lite/` | vendored `@snnh/dsh-llm-service-lite` 0.2.1 (MIT, snnh): third-party OpenAI-compatible model routes; built `lib/index.js` copied verbatim from the npm tarball (provenance in its `package.json` `//vendored`), Web client dropped. Upgrade = replace `lib/index.js` + note; changes go in `patches/` (14) |
 | `patches/*.patch` | unified diffs against `node_modules/`, applied in order with `patch -p1` (dry-run first) |
@@ -21,6 +22,7 @@ DeepSeek Harness (dsh) **0.2.1-rc.2**, installed unmodified from npm and customi
 | `scripts/bench-cold-start.mjs` | host cold-start benchmark (spawn → `initialize`) |
 | `test/hardline.test.mjs` | hardline unit tests: `node --test js/test/hardline.test.mjs` |
 | `test/prompt.test.mjs` | system prompt section tests: `node --test js/test/prompt.test.mjs` |
+| `test/mode.test.mjs` | plugin-mode unit tests (categories, payload validation, restriction / guard / record on a fake context): `node --test js/test/mode.test.mjs` |
 | `test/provider-network.test.mjs` | patches 14/15 against a built stage tree: `DSH_STAGE_NM=<WORK_DIR>/stage/node_modules node --test js/test/provider-network.test.mjs` |
 | `test/host-e2e.mjs` | host end-to-end run of the built `engine.zip` with a fake bridge |
 | `test/host-ac8-resume.mjs` | host repro of engine kill + `session/resume` + continuation |
@@ -67,7 +69,7 @@ Zip layout (= `ENGINE_DIR` on the device):
 ```
 package.json  package-lock.json  engine-version.txt
 node_modules/@deepseek-ai/dsh/lib/bin.js       ← entry point
-node_modules/@dsh-android/{bundle-android,plugin-device,plugin-guard,plugin-account}/
+node_modules/@dsh-android/{bundle-android,plugin-device,plugin-guard,plugin-mode,plugin-account}/
 node_modules/…                                  ← flat npm tree
 ```
 
@@ -170,7 +172,7 @@ silently skipping. All patches are inert on desktop Linux unless the correspondi
 | `07-android-profile-template` | `dsh-app-boot` | adds `android` to the shipped profile templates. |
 | `08-sdk-approval-user-questions` | `dsh-sdk-jsonrpc-server` | rc.2's SDK server lacks `approval/request` / `user-question/ask`; backport from 0.2.1-rc.3. **Drop when upgrading** (it would double-register). Without it every approval fails closed. |
 | `09-sharp-wasm-android` | `sharp` | no bionic libvips: on `android-*` sharp loads its WebAssembly build. Attachments (tool images, prompt images) need it. |
-| `10-sdk-extension-methods` | `dsh-sdk-jsonrpc-server` | unknown SDK methods resolve through an optional `sdkExtensions` service or a `sdk-extensions/resolve` listener (works before `initialize`); plugins emit SDK notifications with `ctx.emit('sdk-extensions/notify', method, params)`. Used by plugin-account and plugin-guard. Re-check on every dsh bump. |
+| `10-sdk-extension-methods` | `dsh-sdk-jsonrpc-server` | unknown SDK methods resolve through an optional `sdkExtensions` service or a `sdk-extensions/resolve` listener (works before `initialize`); plugins emit SDK notifications with `ctx.emit('sdk-extensions/notify', method, params)`. Used by plugin-account, plugin-guard and plugin-mode. Re-check on every dsh bump. |
 | `11-sdk-prompt-time-zone` | `dsh-sdk-jsonrpc-server` | SDK prompts carried no time zone, so `dsh-time-context` reported "time zone unavailable". Prompts now carry `clientTimeZone` from `session/prompt`, else the process `TZ`. |
 | `14-llm-lite-transport-cause` | `@snnh/dsh-llm-service-lite` (vendored) | a fetch failure surfaced as a bare `provider transport failed`: the cause chain does not reach the app. The message now carries the root cause and the target, e.g. `…: ECONNREFUSED 192.168.1.5:8080 (connection refused)` (undici's `cause` / `AggregateError` attempts, TLS codes; URLs reduced to their origin, never the key). Code stays `TRANSPORT` for any fetch `TypeError`; bare-code throws also count `EHOSTUNREACH`/`ENETUNREACH`/`UND_ERR_HEADERS_TIMEOUT`/…, not `ENOTFOUND`. Exports `classifyTransport` / `describeTransportCause` for the unit test. The app maps the code to a hint (`NetDiagnose`). |
 | `15-http-proxy-exclusion-globs` | `dsh-http-proxy` | `NO_PROXY` entries with a `*` other than a leading `*.` match as a whole-host glob, so Android exclusion lists (`192.168.*`, `10.*`) bypass the proxy as they do for `HttpURLConnection`. |

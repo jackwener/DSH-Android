@@ -122,6 +122,8 @@ dependencies {
     implementation(libs.coil.compose)
     implementation(libs.markdown.m3)
     testImplementation(libs.junit)
+    // Room migration tests on the JVM: the real SQLite engine runs the migration SQL against the exported schemas.
+    testImplementation(libs.sqlite.jdbc)
     // Geofences on devices with Play services (background-FGS-start exempt); LocationManager otherwise.
     implementation(libs.play.services.location)
     // PDF text for file_read (Apache-2.0, ~3 MB). BouncyCastle is only needed for encrypted PDFs, which

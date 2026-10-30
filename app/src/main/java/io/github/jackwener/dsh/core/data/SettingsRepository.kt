@@ -10,6 +10,8 @@ import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import dagger.hilt.android.qualifiers.ApplicationContext
 import io.github.jackwener.dsh.core.model.PermissionPreset
+import io.github.jackwener.dsh.core.model.SessionMode
+import io.github.jackwener.dsh.core.model.SessionModes
 import io.github.jackwener.dsh.core.model.ToolGroup
 import io.github.jackwener.dsh.core.provider.ModelChoice
 import io.github.jackwener.dsh.core.provider.ProviderConfig
@@ -64,7 +66,13 @@ data class Settings(
     val reflectExperience: Boolean = true,
     /** Third-party OpenAI-compatible providers (keys live in SecretStore, never here). */
     val providers: List<ProviderConfig> = emptyList(),
+    /** The user's own session modes (设置 → 会话模式); the built-ins live in [SessionModes]. */
+    val modes: List<SessionMode> = emptyList(),
 ) {
+    /** Built-in then user modes, in display order. */
+    val allModes: List<SessionMode> get() = SessionModes.all(modes)
+    fun mode(id: String?): SessionMode = SessionModes.resolve(id, modes)
+
     val enabledGroups: Set<ToolGroup> get() = ToolGroup.entries.toSet() - disabledGroups
     /** The effective selection (falls back to DeepSeek when the provider/model is gone or disabled). */
     val choice: ModelChoice get() = resolveChoice(provider, model, providers)
@@ -74,12 +82,14 @@ data class Settings(
 
 private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 private val providerList = ListSerializer(ProviderConfig.serializer())
+private val modeList = ListSerializer(SessionMode.serializer())
 
 @Singleton
 class SettingsRepository @Inject constructor(@ApplicationContext private val context: Context) {
     private object K {
         val provider = stringPreferencesKey("provider")
         val providers = stringPreferencesKey("providers_json")
+        val modes = stringPreferencesKey("session_modes_json")
         val model = stringPreferencesKey("model")
         val effort = stringPreferencesKey("effort")
         val disabledGroups = stringSetPreferencesKey("disabled_groups")
@@ -104,6 +114,7 @@ class SettingsRepository @Inject constructor(@ApplicationContext private val con
     private fun Preferences.toSettings() = Settings(
         provider = this[K.provider] ?: "",
         providers = this[K.providers]?.let { runCatching { json.decodeFromString(providerList, it) }.getOrNull() } ?: emptyList(),
+        modes = decodeModes(this[K.modes]),
         model = this[K.model] ?: Settings.DEFAULT_MODEL,
         effort = Effort.of(this[K.effort]),
         disabledGroups = this[K.disabledGroups]?.mapNotNull(ToolGroup::of)?.toSet() ?: emptySet(),
@@ -133,6 +144,19 @@ class SettingsRepository @Inject constructor(@ApplicationContext private val con
         it[K.providers] = json.encodeToString(providerList, cur.filter { c -> c.id != id })
         if (it[K.provider] == id) { it[K.provider] = ""; it[K.model] = Settings.DEFAULT_MODEL }
     }
+    /** Adds or replaces a user mode (built-in ids are refused: built-ins are duplicated, not edited). */
+    suspend fun saveMode(m: SessionMode) {
+        require(SessionModes.builtIns.none { it.id == m.id }) { "built-in mode ${m.id} cannot be edited" }
+        context.store.edit {
+            val cur = decodeModes(it[K.modes])
+            val mode = m.copy(builtIn = false)
+            val next = if (cur.any { c -> c.id == m.id }) cur.map { c -> if (c.id == m.id) mode else c } else cur + mode
+            it[K.modes] = json.encodeToString(modeList, next)
+        }
+    }
+    suspend fun deleteMode(id: String) = context.store.edit {
+        it[K.modes] = json.encodeToString(modeList, decodeModes(it[K.modes]).filter { c -> c.id != id })
+    }
     suspend fun setEffort(effort: Effort) = context.store.edit { it[K.effort] = effort.id }
     suspend fun setGroupEnabled(group: ToolGroup, enabled: Boolean) = context.store.edit {
         val cur = it[K.disabledGroups] ?: emptySet()
@@ -152,3 +176,9 @@ class SettingsRepository @Inject constructor(@ApplicationContext private val con
     suspend fun setAgentScreen(on: Boolean) = context.store.edit { it[K.agentScreen] = on }
     suspend fun setReflectExperience(on: Boolean) = context.store.edit { it[K.reflect] = on }
 }
+
+/** Stored user modes; an unreadable value (a future format) reads as none rather than failing settings. */
+internal fun decodeModes(raw: String?): List<SessionMode> =
+    raw?.let { runCatching { json.decodeFromString(modeList, it) }.getOrNull() } ?: emptyList()
+
+internal fun encodeModes(modes: List<SessionMode>): String = json.encodeToString(modeList, modes)

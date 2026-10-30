@@ -129,13 +129,13 @@ private fun ConversationPane(vm: HomeViewModel, onMenu: () -> Unit, onSettings: 
             AnimatedContent(Triple(view, empty, live.sessionId), transitionSpec = { fadeIn() togetherWith fadeOut() }, label = "pane") { (v, isEmpty, _) ->
                 when {
                     v == SessionView.Trajectory -> TrajectoryView(vm)
-                    isEmpty -> EmptyHero(vm, composer, settings, live, conv, onAutomation)
+                    isEmpty -> EmptyHero(vm, composer, settings, live, conv, onAutomation, onSettings)
                     // One list state per session (and per crossfading pane), so positions never leak across sessions.
                     else -> ChatStream(conv, live, settings.workDetails, rememberLazyListState(), onInspect = vm::inspect, onRetry = vm::retry, onOpenSettings = { onSettings(it) }, modifier = Modifier.fillMaxSize())
                 }
             }
         }
-        if (!empty && view == SessionView.Chat) BottomDock(vm, composer, settings, live, conv, onAutomation)
+        if (!empty && view == SessionView.Chat) BottomDock(vm, composer, settings, live, conv, onAutomation, onSettings)
         else if (view == SessionView.Trajectory) {
             // Trajectory has no composer: keep the run stoppable from here.
             if (live.running) Box(Modifier.fillMaxWidth().navigationBarsPadding().padding(8.dp), contentAlignment = Alignment.Center) {
@@ -149,7 +149,7 @@ private fun ConversationPane(vm: HomeViewModel, onMenu: () -> Unit, onSettings: 
 
 /** dsh EmptyHero: centered whale + 探索未至之境 + 预览版 pill, composer below. No suggestion chips. */
 @Composable
-private fun EmptyHero(vm: HomeViewModel, composer: ComposerState, settings: Settings, live: SessionLive, conv: Conversation, onAutomation: () -> Unit) {
+private fun EmptyHero(vm: HomeViewModel, composer: ComposerState, settings: Settings, live: SessionLive, conv: Conversation, onAutomation: () -> Unit, onSettings: (String?) -> Unit) {
     val c = Dsh.colors
     Column(Modifier.fillMaxSize().imePadding().navigationBarsPadding().padding(horizontal = 8.dp).padding(bottom = 32.dp),
         verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
@@ -160,17 +160,17 @@ private fun EmptyHero(vm: HomeViewModel, composer: ComposerState, settings: Sett
                 color = c.labelPrimary, textAlign = TextAlign.Center)
         }
         Spacer(Modifier.height(28.dp))
-        ComposerSlot(vm, composer, settings, live, conv, hero = true, onAutomation = onAutomation)
+        ComposerSlot(vm, composer, settings, live, conv, hero = true, onAutomation = onAutomation, onManageModes = { onSettings("Modes") })
     }
 }
 
 /** Bottom dock: [todo dock | queue dock] above the composer slot (approval ▸ permission ▸ question ▸ composer). */
 @Composable
-private fun BottomDock(vm: HomeViewModel, composer: ComposerState, settings: Settings, live: SessionLive, conv: Conversation, onAutomation: () -> Unit) {
+private fun BottomDock(vm: HomeViewModel, composer: ComposerState, settings: Settings, live: SessionLive, conv: Conversation, onAutomation: () -> Unit, onSettings: (String?) -> Unit) {
     Column(Modifier.fillMaxWidth().imePadding().navigationBarsPadding().padding(bottom = 4.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         conv.todos?.let { if (live.running) TodoDock(it) }
         QueueDock(live.queue, onEdit = { q -> vm.removeQueued(q.id); composer.text = q.text }, onDelete = { vm.removeQueued(it.id) }, onSendNow = { vm.sendQueuedNow(it.id) })
-        Box(Modifier.padding(horizontal = 8.dp)) { ComposerSlot(vm, composer, settings, live, conv, hero = false, onAutomation = onAutomation) }
+        Box(Modifier.padding(horizontal = 8.dp)) { ComposerSlot(vm, composer, settings, live, conv, hero = false, onAutomation = onAutomation, onManageModes = { onSettings("Modes") }) }
     }
 }
 
@@ -178,7 +178,7 @@ private fun BottomDock(vm: HomeViewModel, composer: ComposerState, settings: Set
 @Composable
 fun ComposerSlot(vm: ConversationController, composer: ComposerState, settings: Settings, live: SessionLive, conv: Conversation, hero: Boolean,
                  onAutomation: (() -> Unit)? = null, showChips: Boolean = true, canSendEmpty: Boolean = false,
-                 prepare: (String) -> String = { it }) {
+                 prepare: (String) -> String = { it }, onManageModes: (() -> Unit)? = null) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val modelChangePending by vm.modelChangePending.collectAsStateWithLifecycle()
     // Queued messages the run never sent (stopped / failed) come back into the composer.
@@ -210,6 +210,11 @@ fun ComposerSlot(vm: ConversationController, composer: ComposerState, settings: 
             showChips = showChips,
             canSendEmpty = canSendEmpty,
             modelChangePending = modelChangePending,
+            mode = settings.mode(live.modeId),
+            modes = settings.allModes,
+            modeLocked = !live.modeChangeable,
+            onMode = vm::setMode,
+            onManageModes = onManageModes,
         )
     }
 }

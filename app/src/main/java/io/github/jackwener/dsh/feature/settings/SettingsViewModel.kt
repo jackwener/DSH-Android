@@ -63,6 +63,8 @@ class SettingsViewModel @Inject constructor(
     val maskedKey get() = secrets.read()?.let { it.take(5) + "…" + it.takeLast(4) }
 
     fun setGroup(g: ToolGroup, on: Boolean) = viewModelScope.launch { repo.setGroupEnabled(g, on) }
+    suspend fun saveMode(m: io.github.jackwener.dsh.core.model.SessionMode) = repo.saveMode(m)
+    suspend fun deleteMode(id: String) = repo.deleteMode(id)
     /** [provider] "" = DeepSeek. */
     fun setModel(provider: String, m: String) = viewModelScope.launch { repo.setModel(provider, m) }
 

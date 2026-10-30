@@ -107,6 +107,12 @@
         # write/edit inside HOME/TMPDIR, which plugin-guard allows directly.
         askTools: [bash, write, edit]
 
+    # Session modes (ENGINE-CONTRACT §2.5): the app sends each conversation's mode with
+    # android/session/mode; the plugin hides the tools the mode leaves out (per agent,
+    # subagents follow their root), turns the skill catalog off, adds the mode's prompt.
+    - id: android-mode
+      name: '@dsh-android/plugin-mode'
+
     # DeepSeek account login. dsh-base mounts the account provider
     # (`deepseek-account`, OAuth + PKCE against platform.deepseek.com) and the
     # `deepseek-account` model route; this row adds the loopback callback

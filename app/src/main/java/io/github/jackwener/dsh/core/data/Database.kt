@@ -12,6 +12,8 @@ import androidx.room.Query
 import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.room.Upsert
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -36,6 +38,8 @@ data class SessionEntity(
     val unread: Boolean = false,
     /** PermissionPreset id; null = the default from settings. */
     val preset: String? = null,
+    /** SessionMode id (issue #3); null = 默认 (rows from before modes, and conversations never given one). */
+    val modeId: String? = null,
 )
 
 /**
@@ -82,6 +86,8 @@ interface SessionDao {
     suspend fun setUnread(id: String, unread: Boolean)
     @Query("UPDATE sessions SET preset = :preset WHERE id = :id")
     suspend fun setPreset(id: String, preset: String?)
+    @Query("UPDATE sessions SET modeId = :modeId WHERE id = :id")
+    suspend fun setMode(id: String, modeId: String?)
     @Query("SELECT * FROM sessions WHERE id = :id")
     suspend fun get(id: String): SessionEntity?
     @Query("SELECT * FROM sessions WHERE running = 1")
@@ -131,18 +137,43 @@ interface UsageDao {
     @Upsert suspend fun upsert(u: UsageEntity)
 }
 
-@Database(entities = [SessionEntity::class, EventEntity::class, RuleEntity::class, RuleRunEntity::class, UsageEntity::class], version = 2)
+@Database(entities = [SessionEntity::class, EventEntity::class, RuleEntity::class, RuleRunEntity::class, UsageEntity::class], version = DB_VERSION)
 abstract class DshDatabase : RoomDatabase() {
     abstract fun sessions(): SessionDao
     abstract fun rules(): RuleDao
     abstract fun usage(): UsageDao
 }
 
+const val DB_VERSION = 3
+
+/**
+ * Schema migrations. Every released version from 2 on is migrated in place (conversations are user
+ * data); only version 1 (pre-release builds) is still recreated. A new schema version must add
+ * its Migration here: Room then fails loudly instead of silently dropping every conversation.
+ */
+object Migrations {
+    /** v3: `sessions.modeId` (session modes). Existing rows read null = 默认, i.e. unchanged behaviour. */
+    val SQL_2_3 = listOf("ALTER TABLE `sessions` ADD COLUMN `modeId` TEXT")
+
+    val M_2_3 = object : Migration(2, 3) {
+        override fun migrate(db: SupportSQLiteDatabase) { SQL_2_3.forEach(db::execSQL) }
+    }
+
+    val ALL: Array<Migration> = arrayOf(M_2_3)
+    /** Versions that are still recreated instead of migrated. */
+    val DESTRUCTIVE_FROM = intArrayOf(1)
+}
+
 @Module
 @InstallIn(SingletonComponent::class)
 object DatabaseModule {
     @Provides @Singleton
-    fun db(@ApplicationContext c: Context): DshDatabase = Room.databaseBuilder(c, DshDatabase::class.java, "dsh.db").fallbackToDestructiveMigration(true).build()
+    fun db(@ApplicationContext c: Context): DshDatabase = Room.databaseBuilder(c, DshDatabase::class.java, "dsh.db")
+        .addMigrations(*Migrations.ALL)
+        .fallbackToDestructiveMigrationFrom(true, *Migrations.DESTRUCTIVE_FROM)
+        // Installing an older build over a newer one (sideloaded test builds) cannot read the newer schema.
+        .fallbackToDestructiveMigrationOnDowngrade(true)
+        .build()
     @Provides fun sessions(db: DshDatabase) = db.sessions()
     @Provides fun rules(db: DshDatabase) = db.rules()
     @Provides fun usage(db: DshDatabase) = db.usage()

@@ -96,8 +96,13 @@ data class SessionLive(
     /** Queued messages handed back to the composer after the run ended without sending them (stop / failure). */
     val restoredDraft: String? = null,
     val preset: PermissionPreset = PermissionPreset.Full,
+    /** SessionMode id from the session row (or picked for a new conversation); null = 默认. */
+    val modeId: String? = null,
     val exists: Boolean = false,
 ) {
+    /** The mode can be picked only before the conversation's first message (see [modeChangeable]). */
+    val modeChangeable: Boolean get() = io.github.jackwener.dsh.core.model.modeChangeable(exists, running, events.any { it.seq >= 0 })
+
     val hasPendingRequest: Boolean get() = approvals.isNotEmpty() || questions.isNotEmpty() || permissions.isNotEmpty() || takeovers.isNotEmpty()
 
     /** Appends a pending request of any kind to its FIFO. */

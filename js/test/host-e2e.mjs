@@ -19,6 +19,9 @@
 //      OpenAI-compatible server, the user patch layer the app writes (profiles/android/
 //      cordis.patch.yml, key only as apiKeyEnv), route resolves, a prompt streams through it,
 //      web_search is off without a DeepSeek credential. No API key needed.
+//   8. phase G: session modes (plugin-mode): a 只聊天 conversation sent through android/session/mode
+//      offers only web tools (no bash, files, device tools, skill) and cannot run bash even when asked;
+//      a default conversation in the same engine keeps every tool; the selection is recorded in the log.
 //
 // Usage: node js/test/host-e2e.mjs [engine.zip] [native-dir]
 // The API key is read from the file named by $DSH_E2E_KEY_FILE (default ~/.config/dsh/deepseek_api_key; never printed).
@@ -39,8 +42,8 @@ const root = join(AGENT, 'toolchains/tmp', `host-e2e-${Date.now()}`)
 const engineDir = process.env.E2E_ENGINE_DIR ? resolve(process.env.E2E_ENGINE_DIR) : join(root, 'engine')
 const logFile = join(root, 'e2e.log')
 const MODEL = process.env.E2E_MODEL ?? 'deepseek-flash'
-// E2E_PHASES=A,B,C,D,E,F selects phases (default all); E2E_ENGINE_DIR reuses an extracted tree.
-const PHASES = new Set((process.env.E2E_PHASES ?? 'A,B,C,D,E,F').split(','))
+// E2E_PHASES=A,B,C,D,E,F,G selects phases (default all); E2E_ENGINE_DIR reuses an extracted tree.
+const PHASES = new Set((process.env.E2E_PHASES ?? 'A,B,C,D,E,F,G').split(','))
 
 mkdirSync(root, { recursive: true })
 const t0 = Date.now()
@@ -718,6 +721,88 @@ if (PHASES.has('F')) {
   server.close()
   check('F: no fatal error on stderr', !/fatal uncaught|StartupError|unhandled/i.test(eng.stderr()))
   check('F: the key never appears in stderr', !eng.stderr().includes('sk-fake-e2e'))
+}
+
+// ── phase G: session modes (plugin-mode) ────────────────────────────────────
+if (!PHASES.has('G')) {
+  // skipped
+} else if (!existsSync(keyFile)) {
+  check('G: DeepSeek API key available', false, keyFile)
+} else {
+  log('phase G: session modes + DeepSeek', MODEL)
+  const dshHome = join(root, 'g-dsh-home'); const home = join(root, 'g-home')
+  mkdirSync(home, { recursive: true })
+  const env = baseEnv(dshHome, home)
+  env.DEEPSEEK_API_KEY = readFileSync(keyFile, 'utf8').trim()
+  const eng = startEngine(env, true)
+  const tools = [
+    { name: 'file_list', group: 'files', risk: 'read', needsUnlock: false, description: 'List a directory in shared storage (relative to /sdcard).',
+      inputSchema: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] } },
+    { name: 'screen_capture', group: 'screen', risk: 'read', needsUnlock: true, description: 'Capture a screenshot of the current screen.', inputSchema: { type: 'object', properties: {} } },
+  ]
+  const invokes = []
+  rpcPeer(eng.child.stdio[3], eng.child.stdio[3], 'bridge-g', async (method, params) => {
+    if (method === 'capability/list') return { tools }
+    if (method === 'capability/invoke') { invokes.push(params); return { ok: true, content: [{ type: 'text', text: 'Download/\n  notes.txt' }] } }
+    throw new Error(`unexpected ${method}`)
+  })
+  const events = []
+  const approvals = []
+  const sdk = rpcPeer(eng.child.stdout, eng.child.stdin, 'sdk-g', (method, params) => {
+    if (method === 'approval/request') { approvals.push(params); return { outcome: 'allowed-once' } }
+    if (method === 'user-question/ask') return { answers: params.questions.map(q => ({ id: q.id, selected: [], custom: 'Proceed.' })) }
+    throw new Error(`unexpected server request ${method}`)
+  }, (method, params) => {
+    if (method === 'session.event') {
+      events.push(params)
+      const e = params.event
+      if (['tool/call', 'tool/result', 'turn/end'].includes(e?.type) || String(e?.type).startsWith('plugin:')) detail(`[event G] ${params.sessionId} ${e.type} ${JSON.stringify(e.data).slice(0, 400)}`)
+    }
+  })
+  const of = sid => events.filter(e => e.sessionId === sid).map(e => e.event)
+  const headerTools = sid => {
+    const names = new Set()
+    for (const e of of(sid)) if (e.type === 'request/header') for (const m of JSON.stringify(e.data).matchAll(/"name":"([A-Za-z0-9_-]+)"/g)) names.add(m[1])
+    return names
+  }
+  try {
+    await withTimeout(sdk.request('initialize', { cwd: home, provider: 'deepseek-official', model: MODEL, approvalRequests: true, capabilities: { userQuestions: true } }), 60_000, 'initialize G')
+    await waitFor(() => /device tools: 2 registered/.test(eng.stderr()), 15_000, 'device tools').catch(() => {})
+    const chat = `g-chat-${Date.now()}`
+    const chatMode = { id: 'chat', name: '只聊天', prompt: 'Chat-only conversation: answer from knowledge; use web search or fetch when it helps.', deviceGroups: [], tools: ['web'], skills: false }
+    const r = await sdk.request('android/session/mode', { sessionId: chat, mode: chatMode })
+    check('G: android/session/mode accepted', r !== undefined && typeof r === 'object')
+    await sdk.request('android/session/permission', { sessionId: chat, preset: 'read-only' })
+    await sdk.request('session/prompt', { sessionId: chat, contentBlocks: [{ type: 'text', text:
+      'Run the shell command `echo modecheck` with the bash tool and list my Download folder with file_list. If those tools are not available to you, say so in one sentence and do nothing else.' }] })
+    await withTimeout(sdk.request('session/wait', { sessionId: chat }), 240_000, 'chat prompt')
+    const offered = headerTools(chat)
+    detail(`[G] chat-mode tools in request headers: ${[...offered].sort().join(',')}`)
+    check('G: chat mode offers web_fetch but not bash / read / write / skill / device tools',
+      offered.has('web_fetch') && !['bash', 'read', 'write', 'edit', 'skill', 'subagent', 'file_list', 'screen_capture'].some(n => offered.has(n)), [...offered].sort().join(',').slice(0, 300))
+    const ran = of(chat).filter(e => e.type === 'tool/result' && /modecheck/.test(JSON.stringify(e.data)) && !/not available/.test(JSON.stringify(e.data)))
+    check('G: chat mode cannot run bash or device tools', ran.length === 0 && !invokes.some(i => i.sessionId === chat) && !approvals.some(a => a.sessionId === chat))
+    const rec = of(chat).find(e => e.type === 'plugin:android-mode/selected')
+    check('G: mode selection recorded in the session log (plugin record)', rec?.data?.id === 'chat' && rec.ignorable === true, JSON.stringify(rec ?? null))
+    detail(`[G] ${(eng.stderr().match(/tools seen by modes: .*/) ?? [''])[0]}`)
+    const sent = JSON.stringify(of(chat).filter(e => e.type === 'system/message' || e.type === 'developer/message').map(e => e.data))
+    detail(`[G] chat-mode system prompt: ${sent.slice(0, 6000)}`)
+    check('G: the mode section reached the system prompt', sent.includes('# Conversation mode: 只聊天') && sent.includes('Chat-only conversation'))
+    check('G: chat mode drops device-tool, shell and job guidance from the prompt', sent.includes('no device tools') && !sent.includes('Shell: the bash tool') && !sent.includes('[exit code: N]') && !sent.includes('job_output'))
+
+    const plain = `g-default-${Date.now()}`
+    await sdk.request('android/session/mode', { sessionId: plain, mode: { id: 'default', name: '默认' } })
+    await sdk.request('session/prompt', { sessionId: plain, contentBlocks: [{ type: 'text', text: 'Reply with the single word: ok' }] })
+    await withTimeout(sdk.request('session/wait', { sessionId: plain }), 240_000, 'default prompt')
+    const all = headerTools(plain)
+    check('G: default mode keeps every tool (bash, read, skill, device tools)', ['bash', 'read', 'write', 'file_list', 'screen_capture'].every(n => all.has(n)), [...all].sort().join(',').slice(0, 300))
+    await sdk.request('shutdown', {}).catch(() => {})
+  } catch (error) {
+    check('G: run completed', false, error.stack ?? error.message)
+  }
+  await withTimeout(eng.exited, 15_000, 'exit G').catch(() => eng.child.kill('SIGKILL'))
+  check('G: no fatal error on stderr', !/fatal uncaught|StartupError|unhandled/i.test(eng.stderr()))
+  check('G: no mode application warning', !/\[android-mode\] warn/.test(eng.stderr()), (eng.stderr().match(/\[android-mode\] warn.*/) ?? [''])[0].slice(0, 300))
 }
 
 const failed = checks.filter(c => !c.ok)

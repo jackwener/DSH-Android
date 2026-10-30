@@ -14,7 +14,7 @@ DSH-Android 把 DeepSeek Harness（dsh）跑在手机上：Node 24 编译成 bio
         │  socketpair（DSH_BRIDGE_FD）：能力桥 JSON-RPC
 :engine（前台服务 EngineService，specialUse）
   libdshengine.so → node::Start → dsh --profile android
-     + @dsh-android/plugin-device / plugin-guard / plugin-account
+     + @dsh-android/plugin-device / plugin-guard / plugin-mode / plugin-account
      + llm-service-lite（第三方模型，OpenAI 兼容）
   子进程：/system/bin/sh、toybox、rg（librg.so）
 Shizuku 用户服务（shell uid，可选）：ShellUserService
@@ -62,7 +62,7 @@ Shizuku 用户服务（shell uid，可选）：ShellUserService
 
 ## 两条通道
 
-**SDK 通道**（stdin/stdout）：dsh 原样的 SDK JSON-RPC 2.0，App 是客户端。用到的方法有 `initialize`、`session/prompt`、`session/resume`、`shutdown`、`android/session/permission`，以及 `account/*`。dsh 发来的服务端请求有 `approval/request`、`user-question/ask`。每个 `session.event` 都原样写进 Room 的 `events` 表；对话视图和轨迹视图都是这份日志的投影（`core/session/Projection.kt`）。
+**SDK 通道**（stdin/stdout）：dsh 原样的 SDK JSON-RPC 2.0，App 是客户端。用到的方法有 `initialize`、`session/prompt`、`session/resume`、`shutdown`、`android/session/permission`、`android/session/mode`，以及 `account/*`。dsh 发来的服务端请求有 `approval/request`、`user-question/ask`。每个 `session.event` 都原样写进 Room 的 `events` 表；对话视图和轨迹视图都是这份日志的投影（`core/session/Projection.kt`）。
 
 **能力桥**（`DSH_BRIDGE_FD`，AF_UNIX socketpair，换行分隔的 JSON-RPC）：`plugin-device` 调用 `capability/list` 把每个 `ToolDescriptor` 注册成 dsh 工具，再用 `capability/invoke` 执行。工具描述是静态的，Shizuku 是否可用、权限是否授予都放在调用结果里返回，避免改动描述导致整段缓存的 prompt 重新计费。超时和取消规则见契约 §3.1：每个工具有一个 `timeoutMs`，App 在截止前 5 秒作答；插件超时或本轮中止时发 `capability/cancel`；所有等待在动手前都会再检查一次调用是否仍然有效。
 
@@ -90,6 +90,14 @@ Shizuku 用户服务（shell uid，可选）：ShellUserService
 - 预算：会话和每日 token 上限在设置里配置，通过 `budget/update` 下发，由 `plugin-guard` 在每一步之前检查；超限时发 `budget/exceeded`，会话里显示提示。
 
 **执行路径**：工具优先用系统 API 或 Intent，其次是 Shizuku，最后是无障碍。这条规则也写进了 `plugin-guard` 的 system prompt。
+
+## 会话模式（issue #3）
+
+模式决定一个对话能用哪些工具、附加什么系统提示词，以及选中时套用的权限预设（契约 §2.5）。
+
+- **定义在 App**（`core/model/SessionMode.kt`）：`id`、名称、图标（固定的一组）、附加提示词、手机能力组（`ToolGroup`，null = 全部）、内置工具类别（`EngineTool`：命令行、读文件、写文件、联网、子智能体，null = 全部）、默认权限（null = 跟随通用设置）、技能开关。内置四个：默认（不做任何限制，即原来的行为）、手机操作（全部手机能力 + 读文件/联网/子智能体，操作需确认）、编程（命令行、文件、技能、联网，手机能力只有文件和剪贴板，操作需确认）、只聊天（只联网，仅可查看，关技能）。内置模式不能修改，可以复制；用户模式存在 DataStore（`session_modes_json`），在设置 → 会话模式里新建、编辑、删除。
+- **选择**：输入框工具栏的模式标签（权限标签右边）。只能在对话的第一条消息之前选（`SessionLive.modeChangeable`：没有会话行、没有引擎事件、没在运行）；之后标签只显示当前模式，点开说明为什么不能改。选模式时同时套用它的默认权限，之后仍可照常改权限。会话行的 `modeId` 在首次发送时写入；旧会话和从未选过的会话是 null，按“默认”处理，行为不变。被删除的用户模式也回退到“默认”。用户模式的修改从该模式对话的下一条消息起生效。
+- **下发与执行**：`SessionStore.prompt` 在每次 `session/prompt` 之前（包括 resume 之后）发 `android/session/mode`，载荷是解析后的完整模式，引擎不保存定义。`plugin-mode` 按根会话记住模式，对根会话和它的子智能体：`agent.ctx.tools.restrict({ deny })` 隐藏被排除的工具（只列当前存在的名字，工具集变化时重新计算），全局 `tools.guard` 兜底拒绝；关技能就隐藏 `skill` 工具（dsh 不再发技能目录）；附加提示词作为每个 agent 的 prompt section；被隐藏工具的 `tool:*` 指引段落从组装后的 prompt 里去掉；`plugin-guard` 的手机说明段按 agent 可见的工具生成。选择记在 dsh 会话日志里（插件记录 `plugin:android-mode/selected`，不进模型上下文）。`CapabilityHub` 再按会话模式拒绝被排除组的设备调用，作为 App 侧兜底（`capability/list` 是全局的，所以不按会话裁剪清单）。
 - 无障碍（`DshAccessibilityService`）：读界面元素树、手势、截图（Android 14+ 遇到 `FLAG_SECURE` 页面时显示“请你来操作”的接管卡片）。没开无障碍但 Shizuku 可用时，点按和滑动改用 `input` 命令。
 - `screen_type` 逐级回退，每一步都回读字段内容确认：`ACTION_SET_TEXT` → 无障碍输入连接（Android 13+）→ DSH 输入法（当前就是它时）→ Shizuku `input text`（ASCII），或用 `ime set` 临时切到 DSH 输入法再切回 → 剪贴板粘贴。
 - Shizuku（`core/platform/ShellAccess`、`ShizukuShell`、`ShellUserService`）：只和官方 Shizuku App 通信，不自带 ADB 客户端。工具分为三类（`ShellUse`）：不需要、可选（Wi‑Fi、蓝牙、移动数据、剪贴板、`setting_get`、`location_get`；没有 Shizuku 时打开系统面板让用户点，或走普通 API）、必需（`setting_put`）。后台屏（`core/capability/AgentScreen`）在 Shizuku 就绪时由 `app_launch` / `app_open_link` 自动创建，没有 Shizuku 时退回主屏。必需 Shizuku 的调用会在输入框位置显示 Shizuku 卡片，Shizuku 就绪后自动继续。APK 内置官方 Shizuku 安装包（构建时由 `tools/fetch-shizuku.sh` 下载并校验哈希和签名），通过 `PackageInstaller` 在 App 内安装或升级。
@@ -127,7 +135,8 @@ Shizuku 用户服务（shell uid，可选）：ShellUserService
 - `MainActivity` 用 Navigation Compose，没有底部导航。没有凭据时先进入引导页（API key 或账号登录），然后是可选的 Shizuku 增强步骤，最后到首页。
 - 首页 `HomeScreen`：单会话页，左侧是模态抽屉 `SessionDrawer`（新会话、自动化、会话列表、账号）。顶部在“对话 / 轨迹”两个视图之间切换。对话视图（`Stream`、`ToolRows`）把工具调用折叠成步骤行；轨迹视图（`feature/trajectory/`）移植自 dsh ui-trajectory：时间轴总览，加按轮次分组的记录，点开是检查器。
 - 输入框位置一次只显示一样东西，优先级是：授权卡片 → 审批卡片 → 问题卡片 → 输入框。运行中发送的消息默认进入队列（可在设置里改）。附件支持最多 4 张图片，文档会复制到 `home/attachments`。
-- 设置 `SettingsScreen`：分为账号、通用、模型服务、能力（工具组开关）、用量、手机权限（`PermissionCatalog`，各项权限用到时才申请）、关于（自检 `ReliabilityDoctor`、引擎重启、崩溃记录）。
+- 输入框工具栏：`+`、权限标签、会话模式标签、上下文环、模型标签、发送。
+- 设置 `SettingsScreen`：分为账号、通用、模型服务、能力（工具组开关）、会话模式（列表 + 编辑页）、用量、手机权限（`PermissionCatalog`，各项权限用到时才申请）、关于（自检 `ReliabilityDoctor`、引擎重启、崩溃记录）。
 - 视觉对齐 dsh Web：颜色、字号、圆角取自 dsh 的 ui-theme，映射到 Material 3，不启用动态取色。见 [design-tokens.md](design-tokens.md) 和 `core/designsystem/`。
 
 ## 账号登录
@@ -150,7 +159,9 @@ dsh-base 自带 DeepSeek 账号 provider（OAuth + PKCE，凭据存在 `DSH_HOME
 
 ## 存储
 
-第三方服务商列表存在 DataStore（JSON），密钥存在 `SecretStore`。Room（`core/data/Database.kt`）：`sessions`、`events`（原样的 dsh 事件，加上 App 本地记录 `app/*`，后者用负序号）、`rules`、`rule_runs`、`usage`（按天的 token 数）。设置存在 DataStore。dsh 自己在 `DSH_HOME` 里持久化会话，以便 resume。
+第三方服务商列表存在 DataStore（JSON），密钥存在 `SecretStore`。用户的会话模式也存在 DataStore（JSON）。Room（`core/data/Database.kt`，版本 3）：`sessions`（含 `preset`、`modeId`）、`events`（原样的 dsh 事件，加上 App 本地记录 `app/*`，后者用负序号）、`rules`、`rule_runs`、`usage`（按天的 token 数）。设置存在 DataStore。dsh 自己在 `DSH_HOME` 里持久化会话，以便 resume。
+
+Room 升级必须写 `Migration`（`Migrations.ALL`）：从 2 起的每个已发布版本都原地迁移（v2 → v3 只是 `ALTER TABLE sessions ADD COLUMN modeId TEXT`），只有预发布的 v1 还会被重建（`fallbackToDestructiveMigrationFrom(1)`）；降级安装才会清空。缺少迁移时 Room 直接报错，而不是悄悄删掉所有对话。`MigrationTest` 在 JVM 上用 sqlite-jdbc 按冻结的 v2 schema（`src/test/resources/room-schemas/2.json`）建库、灌数据、跑迁移 SQL，再逐列对照 Room 为当前版本导出的 schema（`app/schemas/`，构建时生成）。
 
 ## 构建
 

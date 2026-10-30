@@ -103,6 +103,8 @@ an offset past its log (`LogSeqs`), never treating a seq as a cross-generation i
   need approval up front in 仅可查看 and tells the model the mode is why (instead of "the user rejected tool …"), and
   auto-allows `write`/`edit` inside `HOME`/`TMPDIR` in the other modes. Until the app sends it the engine treats the
   mode as unknown: those writes still ask, and a refusal says "declined, or the mode is 仅可查看".
+- `android/session/mode { sessionId, mode: null | SessionMode }` → `{}` (plugin-mode, through patch 10; §2.5). **The app
+  sends it right after `android/session/permission`, before each `session/prompt`** (also after a resume).
 - handles server requests `approval/request` (answer `allowed-once | rejected | cancelled`; requests from subagents carry `rootSessionId`, which owns the approval) and `user-question/ask` (`ask_user_question` tool, plan mode); consumes `session.event` / `session.status` notifications.
 - Approval friction (plugin-guard, before anything reaches the app): read-only shell commands (`ls`, `cat`, `grep`,
   `getprop`, `dumpsys`, `settings get`, `pm list`, … with no output redirect; hardline-parsed) run without asking in
@@ -156,6 +158,45 @@ Closing the screen (✕, or Back with no page history) cancels the attempt (`acc
 `dsh-android://account` on MainActivity remains for a sign-in link copied into another browser.
 
 **Session id convention:** attended sessions use a random UUID. Sessions started by automations use `auto_<ruleId>_<uuid>`; the app auto-answers `approval/request` for these (allowed only if the tool is in the rule's whitelist, else `rejected`).
+
+### 2.5 Session modes — `@dsh-android/plugin-mode`
+
+A conversation's mode (issue #3) limits its tools and adds prompt text. The app owns the definitions
+(`core/model/SessionMode.kt`, Settings → 会话模式) and sends the resolved mode; the engine stores nothing.
+
+```ts
+interface SessionMode {          // `mode` of android/session/mode; null = unrestricted (forget)
+  id: string                     // "default" | "phone" | "code" | "chat" | "u_…" (user modes)
+  name: string                   // display name (model-facing heading)
+  prompt?: string                // extra system-prompt text (≤ 8000 chars)
+  deviceGroups?: string[]        // device ToolGroup ids offered; absent = every group
+  tools?: string[]               // built-in categories offered; absent = all
+                                 //   shell: bash, pwsh, terminal_*, job_*   files_read: read, read_image, glob, grep
+                                 //   files_write: write, edit   web: web_search, web_fetch
+                                 //   subagent: subagent, subagent_fork, list_subagent_models, send_message, interrupt_agent, list_agents
+  skills?: boolean               // false hides the `skill` tool (and with it dsh's skill catalog); default true
+}
+```
+
+Tools in no category (ask_user_question, todo_write, goals, working_directory, exit_plan_mode, …) are never hidden.
+Unknown category ids are ignored; the default mode (`{ id: "default" }`, nothing restricted) changes nothing.
+
+Per root session (subagents resolve to their root, like approvals), for every agent of the conversation —
+on `agent/created` (new, resumed, cleared, compacted) and when the app sends the mode:
+- `agent.ctx.tools.restrict({ deny })` with the excluded names that exist in the agent's view (dsh rejects unknown
+  names), re-derived on `tools/change` (device tools re-register after a bridge reconnect);
+- a global `ctx.tools.guard` refuses an excluded call outright ("not available in this conversation's mode");
+- the prompt text, a `# Conversation mode: <name>` heading and (when tools are limited) a note that missing tools are
+  unavailable here go into a per-agent section `android:mode` (order 150, not interpolated); the `system-prompt/assemble`
+  waterfall drops `tool:<name>` guidance sections of excluded tools (bash and jobs render theirs unconditionally);
+  plugin-guard's phone-context section describes only the device tools / shell the agent sees;
+- the root session's log gets the plugin record `plugin:android-mode/selected { id, name }` when the mode differs from
+  the last record (a log without one is the default mode). It is `ignorable` and never model-visible; the app does not
+  store it (`UNLOGGED`), the session row already has `modeId`.
+
+The app lets the user pick the mode only before the conversation's first message, so a mode never changes mid-history
+(an edited user mode applies from the next prompt). CapabilityHub additionally refuses device calls of a group the
+session's mode excludes (`not_authorized`). `capability/list` stays global.
 
 ## 3. Capability channel (`DSH_BRIDGE_FD`)
 
@@ -238,6 +279,8 @@ later, or send an SMS twice after a retry). The rules:
 ## 4. dsh-side responsibilities (js/)
 - `@dsh-android/plugin-device`: registers every `ToolDescriptor` as a dsh tool; maps `risk` → dsh approval requirement (`read` auto; others ask); per-tool timeouts from `ToolDescriptor.timeoutMs` and `capability/cancel` on timeout/abort (§3.1).
 - `@dsh-android/plugin-account`: loopback OAuth callback server + account SDK methods/notifications (§2.4).
+- `@dsh-android/plugin-mode`: session modes (§2.5): per-conversation tool restriction + guard, skills switch, mode prompt
+  section, selection record.
 - `@dsh-android/plugin-guard`: hardline command floor for the shell tool (relative paths resolve against the session
   cwd and any `cd` earlier in the command); approval policy (§2); token/cost budget enforcement from `budget/update`;
   system-prompt section describing the phone context and the tool-priority rule (system API > intent/deeplink >

@@ -140,7 +140,7 @@ class SessionStore @Inject constructor(
         val events = dao.events(sessionId).let { rows -> withContext(Dispatchers.Default) { rows.map { it.toLogged() } } }
         val preset = entity?.preset?.let { PermissionPreset.of(it) } ?: settings.current().defaultPreset
         android.util.Log.i(TAG, "session $sessionId loaded: preset ${preset.id} (${if (entity?.preset != null) "session row" else "settings default"})")
-        MutableStateFlow(SessionLive(sessionId, entity?.title ?: "", events, running = false, preset = preset, exists = entity != null))
+        MutableStateFlow(SessionLive(sessionId, entity?.title ?: "", events, running = false, preset = preset, modeId = entity?.modeId, exists = entity != null))
             .also { states[sessionId] = it }
     }
 
@@ -232,7 +232,7 @@ class SessionStore @Inject constructor(
         if (!appPrompt) capabilities.onUserPrompt(sessionId, text)
         // A prompt the app sent for the user is not re-sent verbatim by 重试 (that asks to continue).
         val retryText = text.takeUnless { appPrompt }
-        if (existing == null) dao.upsert(SessionEntity(sessionId, text.lineSequence().first().take(40), now, now, ruleId, running = true, preset = live.preset.id))
+        if (existing == null) dao.upsert(SessionEntity(sessionId, text.lineSequence().first().take(40), now, now, ruleId, running = true, preset = live.preset.id, modeId = live.modeId))
         else dao.setRunning(sessionId, true)
         // Steering a running session keeps it an engine run (no startingEngine): see hasEngineRuns.
         mutate(sessionId) { it.copy(running = true, exists = true, runStartedAt = it.runStartedAt.takeIf { _ -> live.running } ?: now,
@@ -249,8 +249,11 @@ class SessionStore @Inject constructor(
             engine.markSessionOpened()
             val gen = engine.generation
             if (resumedIn[sessionId] != gen && (live.events.none { it.seq >= 0 } || resume(sdk, sessionId))) resumedIn[sessionId] = gen
-            // The guard needs the conversation's permission mode (ENGINE-CONTRACT: android/session/permission).
+            // The guard needs the conversation's permission mode (ENGINE-CONTRACT: android/session/permission),
+            // plugin-mode its session mode (android/session/mode); both are re-sent before every prompt,
+            // also after a resume (a new engine generation knows neither).
             sendPreset(sdk, sessionId, flowOf(sessionId).value.preset)
+            sendMode(sdk, sessionId, flowOf(sessionId).value.modeId)
             sdk.request("session/prompt", buildJsonObject {
                 put("sessionId", sessionId)
                 putJsonArray("contentBlocks") {
@@ -405,6 +408,42 @@ class SessionStore @Inject constructor(
     private suspend fun sendPreset(sdk: JsonRpcPeer, sessionId: String, preset: PermissionPreset) {
         runCatching { sdk.request("android/session/permission", buildJsonObject { put("sessionId", sessionId); put("preset", preset.id) }) }
             .onFailure { android.util.Log.w(TAG, "android/session/permission failed", it) }
+    }
+
+    /**
+     * Picks the session mode of a conversation that has not started yet (see [SessionLive.modeChangeable]);
+     * also applies the mode's permission preset (the settings default when it has none). The user can
+     * still change the permission afterwards. Returns false when the conversation is locked.
+     */
+    suspend fun setMode(sessionId: String, modeId: String): Boolean {
+        val live = flowOf(sessionId).value
+        if (!live.modeChangeable) return false
+        val st = settings.current()
+        val mode = st.mode(modeId)
+        android.util.Log.i(TAG, "session $sessionId mode -> ${mode.id}")
+        mutate(sessionId) { it.copy(modeId = mode.id.takeUnless { mode.isDefault }) }
+        setPreset(sessionId, mode.presetOrNull ?: st.defaultPreset)
+        return true
+    }
+
+    /**
+     * Whether the conversation's mode offers device tools of [group] (CapabilityHub's backstop; the
+     * engine already hides them). Rule steps without a session and unknown sessions are not limited.
+     */
+    suspend fun modeAllowsGroup(sessionId: String, group: io.github.jackwener.dsh.core.model.ToolGroup): Boolean {
+        if (sessionId.isEmpty()) return true
+        val modeId = flowOf(sessionId).value.modeId ?: return true
+        return settings.current().mode(modeId).allowsGroup(group)
+    }
+
+    private suspend fun sendMode(sdk: JsonRpcPeer, sessionId: String, modeId: String?) {
+        val mode = settings.current().mode(modeId)
+        runCatching {
+            sdk.request("android/session/mode", buildJsonObject {
+                put("sessionId", sessionId)
+                put("mode", mode.payload(io.github.jackwener.dsh.core.model.modeDisplayName(context, mode)))
+            })
+        }.onFailure { android.util.Log.w(TAG, "android/session/mode failed", it) }
     }
 
     suspend fun delete(sessionId: String) {
@@ -791,7 +830,9 @@ class SessionStore @Inject constructor(
         val NETWORK_CODES = setOf("TRANSPORT", "TIMEOUT")
 
         /** Log-only records the phone UI never shows; they carry the whole prompt and tool schema. */
-        val UNLOGGED = setOf("request/header", "request/context", "system/message", "developer/message", "session/end-seed")
+        val UNLOGGED = setOf("request/header", "request/context", "system/message", "developer/message", "session/end-seed",
+            // plugin-mode's selection record; the session row already holds the mode.
+            "plugin:android-mode/selected")
 
         /** Maps a PermissionMissingException description to a PermissionCatalog id. */
         fun permissionIdFor(what: String): String? {

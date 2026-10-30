@@ -1,7 +1,7 @@
 {
   "name": "@dsh-android/bundle-android",
   "version": "0.1.0",
-  "description": "DSH-Android profile bundle: layered over dsh-base + dsh-sdk-app; trims desktop/web/experimental rows, runs approval-only without an OS sandbox, mounts the device, guard and account plugins, and the dormant llm-service-lite row for third-party models.",
+  "description": "DSH-Android profile bundle: layered over dsh-base + dsh-sdk-app; trims desktop/web/experimental rows, runs approval-only without an OS sandbox, mounts the device, guard, mode and account plugins, and the dormant llm-service-lite row for third-party models.",
   "type": "module",
   "private": true,
   "license": "MIT",
@@ -26,6 +26,7 @@
     "@dsh-android/plugin-account": "0.1.0",
     "@dsh-android/plugin-device": "0.1.0",
     "@dsh-android/plugin-guard": "0.1.0",
+    "@dsh-android/plugin-mode": "0.1.0",
     "@snnh/dsh-llm-service-lite": "0.2.1"
   }
 }

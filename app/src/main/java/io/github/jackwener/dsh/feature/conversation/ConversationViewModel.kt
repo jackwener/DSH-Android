@@ -136,6 +136,8 @@ open class ConversationController(
     fun removeQueued(id: String) = store.removeQueued(sessionId.value, id)
     fun sendQueuedNow(id: String) = viewModelScope.launch { store.sendQueuedNow(sessionId.value, id) }
     fun setPreset(p: PermissionPreset) = viewModelScope.launch { store.setPreset(sessionId.value, p) }
+    /** Only before the conversation's first message; the store refuses it afterwards. */
+    fun setMode(modeId: String) = viewModelScope.launch { store.setMode(sessionId.value, modeId) }
     /** [provider] "" = DeepSeek. */
     fun setModel(provider: String, m: String) = viewModelScope.launch { settingsRepo.setModel(provider, m) }
     fun setEffort(e: Effort) = viewModelScope.launch { settingsRepo.setEffort(e) }
