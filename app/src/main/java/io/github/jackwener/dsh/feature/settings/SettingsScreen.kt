@@ -230,6 +230,8 @@ private fun GeneralSection(vm: SettingsViewModel) {
                     DIcon(R.drawable.dsw_chevron_right_outline, size = 14.dp, tint = Dsh.colors.labelTertiary)
                 }
             })
+        SettingsRow(stringResource(R.string.voice_on_assist), stringResource(R.string.voice_on_assist_desc),
+            trailing = { DSwitch(s.voiceOnAssist, { vm.setVoiceOnAssist(it) }) })
         SettingsRow(stringResource(R.string.allow_external_apps), stringResource(R.string.allow_external_apps_desc),
             trailing = { DSwitch(s.allowExternalApps, { vm.setAllowExternalApps(it) }) })
     }

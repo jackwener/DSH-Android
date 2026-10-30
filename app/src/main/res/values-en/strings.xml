@@ -128,6 +128,7 @@
     <string name="net_tls">Certificate verification failed.</string>
     <string name="net_tls_hint">Use http:// for a LAN gateway; self-signed certificates are not supported.</string>
     <string name="net_other">Network connection failed.</string>
+    <string name="err_provider_format">The model service returned data in an incompatible format: %1$s</string>
     <string name="err_engine_title">The agent engine failed to start</string>
     <string name="err_engine_lost_title">Engine connection lost</string>
     <string name="err_engine_lost">The agent engine exited unexpectedly; this turn was interrupted.</string>
@@ -418,7 +419,7 @@
     <string name="busy_steer">Steer</string>
     <string name="set_entry_points">Entry points</string>
     <string name="floating_ball">Floating button</string>
-    <string name="floating_ball_desc">Tap to summon DSH over any app; double-tap to send it the current screen</string>
+    <string name="floating_ball_desc">Tap to summon DSH over any app, long-press to speak a task, double-tap to send it the current screen</string>
     <string name="ball_status_setting">Show status while working</string>
     <string name="ball_status_setting_desc">Shows what the agent is doing next to the ball; the screen edges light up while it operates your screen</string>
     <string name="default_assistant">Set as default assistant</string>
@@ -652,6 +653,7 @@
     <string name="prov_fetch">Fetch models</string>
     <string name="prov_fetching">Connecting…</string>
     <string name="prov_fetch_ok">Connected: %1$d models</string>
+    <string name="prov_fetch_ok_v1">Connected: %1$d models; the address was changed to %2$s</string>
     <string name="prov_fetch_failed">Connection failed: %1$s</string>
     <string name="prov_models_desc">Checked models appear in the model picker</string>
     <string name="prov_add_model">Type a model ID</string>
@@ -661,6 +663,19 @@
     <string name="prov_err_key">Enter the API key</string>
     <string name="prov_err_models">Check at least one model</string>
     <string name="prov_model_desc">Uses the model\'s default reasoning settings</string>
+    <string name="prov_context_window">Context window</string>
+    <string name="prov_max_output">Max output</string>
+    <string name="prov_limit_auto">Auto</string>
+    <string name="prov_limits_hint">Blank: use what the endpoint reports, else %1$d / %2$d. Applies to all models; tap ✎ on a model to set it alone. Range 4096–10000000; max output at most half the window.</string>
+    <string name="prov_limits_line">Context %1$s (%2$s) · output %3$s (%4$s)</string>
+    <string name="prov_model_missing">Not returned by endpoint</string>
+    <string name="prov_model_limits">Set this model\'s context and output</string>
+    <string name="prov_model_limits_hint">This model only; blank falls back to the setting above / endpoint value / default</string>
+    <string name="prov_err_limits">Context window and max output must be positive whole numbers</string>
+    <string name="limit_src_detected">from endpoint</string>
+    <string name="limit_src_manual">set manually</string>
+    <string name="limit_src_default">default</string>
+    <string name="context_window_src">Context window %1$s · %2$s</string>
     <string name="onb_third_party">Use another model provider (OpenAI-compatible)</string>
     <string name="web_search_needs_key">Needs a DeepSeek API key</string>
     <string name="web_search_off_desc">A third-party model is selected. Web search is provided by DeepSeek and needs a DeepSeek API key; reading web pages still works.</string>
@@ -715,4 +730,20 @@
     <string name="mode_delete_confirm">Delete \"%1$s\"? Conversations using it switch to Default.</string>
     <string name="mode_copy_name">%1$s copy</string>
     <string name="mode_name_required">Enter a name</string>
+    <string name="voice_on_assist">Start voice input from the assistant gesture</string>
+    <string name="voice_on_assist_desc">Long-press power or the assistant gesture to start listening right away; it sends when you stop talking. Long-press the floating ball to speak a task too</string>
+    <string name="voice_input">Voice input</string>
+    <string name="voice_stop">Finish voice input</string>
+    <string name="voice_starting">Starting…</string>
+    <string name="voice_listening">Listening…</string>
+    <string name="voice_sending">Sending</string>
+    <string name="voice_tap_edit">Tap to edit</string>
+    <string name="voice_err_no_recognizer">No speech recognizer on this phone. Type instead</string>
+    <string name="voice_err_permission">Voice input needs the microphone permission. Tap to open settings</string>
+    <string name="voice_err_no_match">Didn\'t catch that. Tap to retry</string>
+    <string name="voice_err_network">Speech recognition needs a network connection. Tap to retry</string>
+    <string name="voice_err_busy">Speech recognition is busy. Tap to retry</string>
+    <string name="voice_err_audio">Can\'t record; the microphone may be in use. Tap to retry</string>
+    <string name="voice_err_language">Speech recognition doesn\'t support this language. Type instead</string>
+    <string name="voice_err_other">Speech recognition failed. Tap to retry</string>
 </resources>

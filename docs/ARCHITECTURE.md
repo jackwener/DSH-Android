@@ -152,7 +152,7 @@ dsh-base 自带 DeepSeek 账号 provider（OAuth + PKCE，凭据存在 `DSH_HOME
 - **预设**（`PRESETS`，一行一个）：OpenAI、Anthropic、Gemini、xAI、OpenRouter、Kimi、智谱、通义千问、火山方舟、MiniMax、硅基流动、阶跃星辰，以及“自定义（OpenAI 兼容）”。地址参考 [magpie](https://github.com/yetone/magpie) 的 `internal/provider/presets.go`（MIT），只取各家的 OpenAI 兼容地址；默认模型 ID 只是起点。仅支持 HTTPS（`network_security_config` 不变）。
 - **配置下发**：App 在每次启动引擎前生成 `$DSH_HOME/profiles/android/cordis.patch.yml`（`renderProfilePatch`，契约 §1.1），里面只有 `apiKeyEnv` 名字，没有密钥。每个服务商是一条路由（路由 ID = 预设 ID，重复时加 `-2`…）。
 - **密钥**：`SecretStore` 的命名槽位（`provider-<路由 ID>`，与 DeepSeek key 同一个 Keystore AES-GCM 密钥，`noBackupFilesDir`），启动引擎时作为 `DSH_ANDROID_KEY_<ID>` 环境变量传入。设置里只存 `hasKey`。
-- **模型元数据**：不做逐模型的能力矩阵。所有第三方模型统一按 128K 上下文、16K 输出上限（Responses 发 `max_output_tokens`，Chat Completions 发 `max_tokens`，避免厂商默认值过小截断工具调用）、压缩 headroom 16K（借鉴 magpie 的经验：dsh 的压缩阈值 = min(80% 窗口, 窗口 − maxTokens − headroom)，默认 64K headroom 会在 48K 就压缩）。不发推理等级，由适配器按模型家族的默认值处理；模型选择器对第三方模型隐藏推理等级，上下文环按 128K 计。
+- **模型元数据**：不做逐模型的能力矩阵。第三方模型的上下文窗口 / 输出上限按「单模型手动 › 服务商手动 › `/models` 返回值 › 默认 128K / 16K」取值（Responses 发 `max_output_tokens`，Chat Completions 发 `max_tokens`，避免厂商默认值过小截断工具调用）、压缩 headroom 16K（借鉴 magpie 的经验：dsh 的压缩阈值 = min(80% 窗口, 窗口 − maxTokens − headroom)，默认 64K headroom 会在 48K 就压缩）。不发推理等级，由适配器按模型家族的默认值处理；模型选择器对第三方模型隐藏推理等级，上下文环按同一有效窗口计，并标明来源（接口返回 / 手动设置 / 默认）。
 - **界面**：设置 → 模型服务：DeepSeek 卡片、第三方服务商列表（开关、编辑、删除）、“添加服务商”（选预设 → 填 key → “获取模型列表”即 `GET {baseURL}/models`，兼作连接测试，也可手动输入模型 ID）、默认模型。输入框的模型菜单按服务商分组。引导页也可以直接进入模型服务。
 - **选择回退**：所选服务商被删除、停用或模型不在列表里时回到 DeepSeek（`resolveChoice`）。第三方路由 `initialize` 失败时引擎改用 DeepSeek 路由启动，对话报出该路由的错误。
 - **联网搜索**：`web_search` 由 DeepSeek 提供，需要 DeepSeek API key（或账号路由下的账号登录）。选用第三方模型且没有 API key 时，patch 层关掉 `tool-web.search`，设置页显示“需要 DeepSeek API Key”；`web_fetch` 不受影响。

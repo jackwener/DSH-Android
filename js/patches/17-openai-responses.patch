@@ -25,7 +25,7 @@
  			type: "function",
  			name: tool.name,
  			description: tool.description,
-+			// DSH-Android (patch 16): preserve Chat Completions tool-schema semantics.
++			// DSH-Android (patch 17): preserve Chat Completions tool-schema semantics.
 +			strict: false,
  			parameters: tool.parameters
  		})) },

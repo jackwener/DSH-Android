@@ -128,6 +128,7 @@
     <string name="net_tls">证书校验失败。</string>
     <string name="net_tls_hint">局域网网关请用 http://；自签证书不支持。</string>
     <string name="net_other">网络连接失败。</string>
+    <string name="err_provider_format">模型服务返回的数据格式不兼容：%1$s</string>
     <string name="err_engine_title">智能体引擎启动失败</string>
     <string name="err_engine_lost_title">引擎连接已断开</string>
     <string name="err_engine_lost">智能体引擎意外退出，本轮已中断。</string>
@@ -418,7 +419,7 @@
     <string name="busy_steer">插话发送</string>
     <string name="set_entry_points">唤起方式</string>
     <string name="floating_ball">悬浮球</string>
-    <string name="floating_ball_desc">在任何 App 上方点一下即可唤起，双击把当前屏幕发给 DSH</string>
+    <string name="floating_ball_desc">在任何 App 上方点一下即可唤起，长按语音发起任务，双击把当前屏幕发给 DSH</string>
     <string name="ball_status_setting">操作时显示状态</string>
     <string name="ball_status_setting_desc">悬浮球旁显示智能体正在做什么；它操作你的屏幕时，屏幕边缘会亮起</string>
     <string name="default_assistant">设为默认数字助手</string>
@@ -652,6 +653,7 @@
     <string name="prov_fetch">获取模型列表</string>
     <string name="prov_fetching">正在连接…</string>
     <string name="prov_fetch_ok">连接成功，共 %1$d 个模型</string>
+    <string name="prov_fetch_ok_v1">连接成功，共 %1$d 个模型；地址已改为 %2$s</string>
     <string name="prov_fetch_failed">连接失败：%1$s</string>
     <string name="prov_models_desc">勾选的模型会出现在模型选择器里</string>
     <string name="prov_add_model">手动输入模型 ID</string>
@@ -661,6 +663,19 @@
     <string name="prov_err_key">请填写 API Key</string>
     <string name="prov_err_models">至少勾选一个模型</string>
     <string name="prov_model_desc">使用该模型默认的推理设置</string>
+    <string name="prov_context_window">上下文窗口</string>
+    <string name="prov_max_output">最大输出</string>
+    <string name="prov_limit_auto">自动</string>
+    <string name="prov_limits_hint">留空：用接口返回的值，没有则按 %1$d / %2$d。对全部模型生效；单个模型点 ✎ 另设。范围 4096–10000000，最大输出不超过上下文的一半。</string>
+    <string name="prov_limits_line">上下文 %1$s（%2$s）· 输出 %3$s（%4$s）</string>
+    <string name="prov_model_missing">接口未返回</string>
+    <string name="prov_model_limits">设置该模型的上下文与输出</string>
+    <string name="prov_model_limits_hint">仅对该模型生效，留空则沿用上方设置 / 接口返回值 / 默认值</string>
+    <string name="prov_err_limits">上下文窗口和最大输出只能填正整数</string>
+    <string name="limit_src_detected">接口返回</string>
+    <string name="limit_src_manual">手动设置</string>
+    <string name="limit_src_default">默认</string>
+    <string name="context_window_src">上下文窗口 %1$s · %2$s</string>
     <string name="onb_third_party">使用其他模型服务（OpenAI 兼容）</string>
     <string name="web_search_needs_key">需要 DeepSeek API Key</string>
     <string name="web_search_off_desc">当前选用第三方模型。联网搜索由 DeepSeek 提供，需要 DeepSeek API Key；网页读取不受影响。</string>
@@ -715,4 +730,20 @@
     <string name="mode_delete_confirm">删除“%1$s”？正在使用它的对话会改用默认模式。</string>
     <string name="mode_copy_name">%1$s 副本</string>
     <string name="mode_name_required">请填写名称</string>
+    <string name="voice_on_assist">唤起助手时直接语音输入</string>
+    <string name="voice_on_assist_desc">长按电源键或手势唤起后立即开始听，说完自动发送。悬浮球长按也可语音发起任务</string>
+    <string name="voice_input">语音输入</string>
+    <string name="voice_stop">结束语音输入</string>
+    <string name="voice_starting">准备中…</string>
+    <string name="voice_listening">正在听…</string>
+    <string name="voice_sending">即将发送</string>
+    <string name="voice_tap_edit">点此编辑</string>
+    <string name="voice_err_no_recognizer">本机没有可用的语音识别服务，请用键盘输入</string>
+    <string name="voice_err_permission">语音输入需要麦克风权限，点此去设置开启</string>
+    <string name="voice_err_no_match">没有听清，点此重试</string>
+    <string name="voice_err_network">语音识别需要网络，请检查网络后点此重试</string>
+    <string name="voice_err_busy">语音识别正忙，请稍后点此重试</string>
+    <string name="voice_err_audio">无法录音，麦克风可能正被占用。点此重试</string>
+    <string name="voice_err_language">语音识别不支持当前语言，请用键盘输入</string>
+    <string name="voice_err_other">语音识别出错，点此重试</string>
 </resources>

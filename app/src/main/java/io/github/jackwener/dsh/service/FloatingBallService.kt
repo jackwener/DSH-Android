@@ -126,18 +126,27 @@ class FloatingBallService : Service() {
         var lastTap = 0L
         val singleTap = Runnable { open() }
         val doubleTapMs = ViewConfiguration.getDoubleTapTimeout().toLong()
+        // A long press opens the quick panel already listening: speak a task in one step.
+        var longPressed = false
+        val longPress = Runnable { longPressed = true; v.removeCallbacks(singleTap); lastTap = 0; v.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS); openVoice() }
         v.setOnTouchListener { _, e ->
             when (e.action) {
-                MotionEvent.ACTION_DOWN -> { downX = e.rawX; downY = e.rawY; startX = lp.x; startY = lp.y; true }
-                MotionEvent.ACTION_MOVE -> {
-                    lp.x = startX + (e.rawX - downX).toInt(); lp.y = startY + (e.rawY - downY).toInt(); wm.updateViewLayout(v, lp)
-                    if (!dragging && (abs(e.rawX - downX) >= 12 || abs(e.rawY - downY) >= 12)) { dragging = true; render() }
+                MotionEvent.ACTION_DOWN -> {
+                    downX = e.rawX; downY = e.rawY; startX = lp.x; startY = lp.y
+                    longPressed = false; v.postDelayed(longPress, ViewConfiguration.getLongPressTimeout().toLong())
                     true
                 }
-                MotionEvent.ACTION_CANCEL -> { dragging = false; placeCapsule(); render(); true }
+                MotionEvent.ACTION_MOVE -> {
+                    lp.x = startX + (e.rawX - downX).toInt(); lp.y = startY + (e.rawY - downY).toInt(); wm.updateViewLayout(v, lp)
+                    if (!dragging && (abs(e.rawX - downX) >= 12 || abs(e.rawY - downY) >= 12)) { dragging = true; v.removeCallbacks(longPress); render() }
+                    true
+                }
+                MotionEvent.ACTION_CANCEL -> { v.removeCallbacks(longPress); dragging = false; placeCapsule(); render(); true }
                 MotionEvent.ACTION_UP -> {
+                    v.removeCallbacks(longPress)
                     dragging = false
-                    if (abs(e.rawX - downX) < 12 && abs(e.rawY - downY) < 12) {
+                    if (longPressed) Unit
+                    else if (abs(e.rawX - downX) < 12 && abs(e.rawY - downY) < 12) {
                         // A single tap waits out the double-tap window; a second tap inside it sends the screen instead.
                         if (e.eventTime - lastTap < doubleTapMs) { v.removeCallbacks(singleTap); lastTap = 0; sendScreen() }
                         else { lastTap = e.eventTime; v.postDelayed(singleTap, doubleTapMs) }
@@ -402,6 +411,9 @@ class FloatingBallService : Service() {
         if (waiting != null) startActivity(Intent(this, MainActivity::class.java).putExtra(MainActivity.EXTRA_SESSION, waiting).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
         else startActivity(Intent(this, QuickActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
     }
+
+    private fun openVoice() =
+        startActivity(Intent(this, QuickActivity::class.java).putExtra(QuickActivity.EXTRA_VOICE, true).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
 
     override fun onDestroy() {
         destroyed = true

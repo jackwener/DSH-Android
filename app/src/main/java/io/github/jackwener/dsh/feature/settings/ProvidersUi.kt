@@ -14,6 +14,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -38,6 +39,8 @@ import io.github.jackwener.dsh.core.designsystem.DInput
 import io.github.jackwener.dsh.core.designsystem.DSwitch
 import io.github.jackwener.dsh.core.designsystem.Dsh
 import io.github.jackwener.dsh.core.designsystem.DshType
+import io.github.jackwener.dsh.core.designsystem.Fmt
+import io.github.jackwener.dsh.core.designsystem.IconBtn
 import io.github.jackwener.dsh.core.designsystem.Radius
 import io.github.jackwener.dsh.core.designsystem.Segmented
 import io.github.jackwener.dsh.core.designsystem.SettingsCard
@@ -46,11 +49,18 @@ import io.github.jackwener.dsh.core.designsystem.SettingsRow
 import io.github.jackwener.dsh.core.designsystem.Spinner
 import io.github.jackwener.dsh.core.provider.CUSTOM
 import io.github.jackwener.dsh.core.provider.DEEPSEEK_MODELS
+import io.github.jackwener.dsh.core.provider.EffectiveLimits
+import io.github.jackwener.dsh.core.provider.LimitSource
+import io.github.jackwener.dsh.core.provider.ModelLimits
 import io.github.jackwener.dsh.core.provider.NetDiagnose
 import io.github.jackwener.dsh.core.provider.NetDiagnosis
 import io.github.jackwener.dsh.core.provider.PRESETS
 import io.github.jackwener.dsh.core.provider.ProviderConfig
 import io.github.jackwener.dsh.core.provider.ProviderPreset
+import io.github.jackwener.dsh.core.provider.RemoteModel
+import io.github.jackwener.dsh.core.provider.ThirdParty
+import io.github.jackwener.dsh.core.provider.parseTokenInput
+import io.github.jackwener.dsh.core.provider.refreshOffered
 import io.github.jackwener.dsh.core.provider.newRouteId
 import io.github.jackwener.dsh.core.provider.presetOf
 import kotlinx.coroutines.launch
@@ -63,6 +73,17 @@ private const val NET_FAILURE = "\u0000net"
 
 @Composable
 private fun presetName(p: ProviderPreset) = if (p.id == CUSTOM) stringResource(R.string.prov_custom) else p.name
+
+/** Label for where a limit came from (also used by the composer's context ring). */
+fun limitSourceLabel(s: LimitSource) = when (s) {
+    LimitSource.DETECTED -> R.string.limit_src_detected
+    LimitSource.MANUAL -> R.string.limit_src_manual
+    LimitSource.DEFAULT -> R.string.limit_src_default
+}
+
+/** Blank or invalid → null (invalid text is reported on save). */
+private fun tokensOrNull(text: String): Long? = parseTokenInput(text).getOrNull()
+private fun Long.toIntSat(): Int = coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
 
 @Composable
 private fun chevron() = DIcon(R.drawable.dsw_chevron_right_outline, size = 14.dp, tint = Dsh.colors.labelTertiary)
@@ -145,6 +166,31 @@ private fun ProviderEditor(vm: SettingsViewModel, existing: ProviderConfig?, pre
     val selected = remember { mutableStateListOf<String>().apply { addAll(existing?.models ?: preset.models) } }
     val offered = remember { mutableStateListOf<String>().apply { addAll(existing?.models ?: preset.models) } }
     var typed by rememberSaveable { mutableStateOf("") }
+    // Names typed in by hand this visit: kept across a refresh even when unchecked.
+    val manual = remember { mutableStateListOf<String>() }
+    // Kept models the last successful fetch did not return (shown on top, flagged).
+    val missing = remember { mutableStateListOf<String>() }
+    // Limits: provider-level text, per-model override text (window, max output), and /models values.
+    var ctxText by rememberSaveable { mutableStateOf(existing?.contextWindow?.toString().orEmpty()) }
+    var maxText by rememberSaveable { mutableStateOf(existing?.maxTokens?.toString().orEmpty()) }
+    val overrides = remember {
+        mutableStateMapOf<String, Pair<String, String>>().apply {
+            existing?.limits?.forEach { (m, l) -> if (l.contextWindow != null || l.maxTokens != null) put(m, (l.contextWindow?.toString().orEmpty()) to (l.maxTokens?.toString().orEmpty())) }
+        }
+    }
+    val detected = remember {
+        mutableStateMapOf<String, RemoteModel>().apply {
+            existing?.limits?.forEach { (m, l) -> put(m, RemoteModel(m, l.detectedContextWindow, l.detectedMaxTokens)) }
+        }
+    }
+    var editing by remember { mutableStateOf<String?>(null) }
+    fun stored(m: String, withOverride: Boolean = true): ModelLimits {
+        val o = overrides[m].takeIf { withOverride }
+        val d = detected[m]
+        return ModelLimits(o?.first?.let(::tokensOrNull), o?.second?.let(::tokensOrNull)?.toIntSat(), d?.contextWindow, d?.maxTokens)
+    }
+    fun live(m: String, withOverride: Boolean = true): EffectiveLimits =
+        ThirdParty.resolve(stored(m, withOverride), tokensOrNull(ctxText), tokensOrNull(maxText)?.toIntSat())
     var fetchState by remember { mutableStateOf<String?>(null) } // null | "busy" | message
     var fetchOk by remember { mutableStateOf(false) }
     var fetchNet by remember { mutableStateOf<NetDiagnosis?>(null) }
@@ -173,10 +219,18 @@ private fun ProviderEditor(vm: SettingsViewModel, existing: ProviderConfig?, pre
                     if (!isHttpUrl(baseUrl)) { error = R.string.prov_err_url; return@DButton }
                     fetchState = "busy"
                     scope.launch {
-                        vm.fetchModels(baseUrl, key, existing).onSuccess { ids ->
+                        vm.fetchModels(baseUrl, key, existing).onSuccess { fetched ->
+                            val list = fetched.models
                             fetchOk = true
-                            fetchState = context.getString(R.string.prov_fetch_ok, ids.size)
-                            ids.forEach { if (it !in offered) offered.add(it) }
+                            // A bare origin that 404'd but answers under /v1 (#28): adopt the working address.
+                            val fixed = fetched.baseUrl != baseUrl.trim().trimEnd('/')
+                            if (fixed) baseUrl = fetched.baseUrl
+                            fetchState = if (fixed) context.getString(R.string.prov_fetch_ok_v1, list.size, fetched.baseUrl) else context.getString(R.string.prov_fetch_ok, list.size)
+                            // A fresh listing replaces what it reports on (fields it dropped are dropped here too).
+                            list.forEach { detected[it.id] = it }
+                            val r = refreshOffered(offered.toList(), list.map { it.id }, selected.toList() + manual)
+                            offered.clear(); offered.addAll(r.offered)
+                            missing.clear(); missing.addAll(r.missing)
                         }.onFailure { t ->
                             fetchOk = false
                             // Same wording as a failed chat turn (Stream.kt ErrorRow): cause, hint, raw detail.
@@ -198,6 +252,17 @@ private fun ProviderEditor(vm: SettingsViewModel, existing: ProviderConfig?, pre
                 }
                 else -> Text(f, style = DshType.xxs12, color = if (fetchOk) c.labelTertiary else c.error)
             }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(stringResource(R.string.prov_context_window), style = DshType.xs13m, color = c.labelSecondary)
+                    DInput(ctxText, { ctxText = it }, placeholder = stringResource(R.string.prov_limit_auto), keyboardType = KeyboardType.Number)
+                }
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(stringResource(R.string.prov_max_output), style = DshType.xs13m, color = c.labelSecondary)
+                    DInput(maxText, { maxText = it }, placeholder = stringResource(R.string.prov_limit_auto), keyboardType = KeyboardType.Number)
+                }
+            }
+            Text(stringResource(R.string.prov_limits_hint, ThirdParty.DEFAULT_CONTEXT_WINDOW, ThirdParty.DEFAULT_MAX_TOKENS), style = DshType.xxs12, color = c.labelTertiary)
         }
     }
 
@@ -206,13 +271,41 @@ private fun ProviderEditor(vm: SettingsViewModel, existing: ProviderConfig?, pre
     SettingsCard {
         offered.forEachIndexed { i, m ->
             val on = m in selected
-            SettingsRow(m, onClick = { if (on) selected.remove(m) else selected.add(m) }, divider = i > 0,
-                trailing = { DCheckbox(on, { if (it) selected.add(m) else selected.remove(m) }) })
+            val l = live(m)
+            val line = stringResource(R.string.prov_limits_line, Fmt.tokens(l.contextWindow), stringResource(limitSourceLabel(l.contextSource)),
+                Fmt.tokens(l.maxTokens.toLong()), stringResource(limitSourceLabel(l.maxTokensSource)))
+            SettingsRow(m, if (m in missing) stringResource(R.string.prov_model_missing) + " · " + line else line,
+                onClick = { if (on) selected.remove(m) else selected.add(m) }, divider = i > 0,
+                trailing = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        IconBtn(R.drawable.dsw_edit_outline, { editing = if (editing == m) null else m }, size = 32.dp, iconSize = 14.dp,
+                            tint = if (m in overrides) c.link else c.labelTertiary, contentDescription = stringResource(R.string.prov_model_limits))
+                        DCheckbox(on, { if (it) selected.add(m) else selected.remove(m) })
+                    }
+                })
+            if (editing == m) {
+                val base = live(m, withOverride = false)
+                val o = overrides[m] ?: ("" to "")
+                fun set(v: Pair<String, String>) { if (v.first.isBlank() && v.second.isBlank()) overrides.remove(m) else overrides[m] = v }
+                Column(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, bottom = 12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text(stringResource(R.string.prov_context_window), style = DshType.xxs12, color = c.labelSecondary)
+                            DInput(o.first, { set(it to o.second) }, placeholder = base.contextWindow.toString(), keyboardType = KeyboardType.Number)
+                        }
+                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text(stringResource(R.string.prov_max_output), style = DshType.xxs12, color = c.labelSecondary)
+                            DInput(o.second, { set(o.first to it) }, placeholder = base.maxTokens.toString(), keyboardType = KeyboardType.Number)
+                        }
+                    }
+                    Text(stringResource(R.string.prov_model_limits_hint), style = DshType.xxs12, color = c.labelTertiary)
+                }
+            }
         }
         Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             DInput(typed, { typed = it.trim() }, Modifier.weight(1f), placeholder = stringResource(R.string.prov_add_model))
             DButton(stringResource(R.string.prov_add_model_btn), {
-                if (typed.isNotEmpty()) { if (typed !in offered) offered.add(typed); if (typed !in selected) selected.add(typed); typed = "" }
+                if (typed.isNotEmpty()) { if (typed !in offered) offered.add(typed); if (typed !in manual) manual.add(typed); if (typed !in selected) selected.add(typed); typed = "" }
             }, variant = BtnVariant.Outline, size = BtnSize.Sm, enabled = typed.isNotEmpty())
         }
     }
@@ -227,14 +320,17 @@ private fun ProviderEditor(vm: SettingsViewModel, existing: ProviderConfig?, pre
                 !isHttpUrl(baseUrl) -> R.string.prov_err_url
                 needsKey && key.isBlank() -> R.string.prov_err_key
                 selected.isEmpty() -> R.string.prov_err_models
+                (listOf(ctxText, maxText) + overrides.values.flatMap { listOf(it.first, it.second) }).any { parseTokenInput(it).isFailure } -> R.string.prov_err_limits
                 else -> null
             }
             if (error == null) scope.launch {
                 val id = existing?.id ?: newRouteId(preset.id, s.providers.map { it.id })
                 // Keep the user's order of discovery, checked ones only.
                 val models = offered.filter { it in selected }
+                val limits = models.associateWith { stored(it) }.filterValues { !it.isEmpty }
                 vm.saveProvider(ProviderConfig(id, preset.id, name.trim().ifEmpty { defaultName }, baseUrl.trimEnd('/'), models,
-                    enabled = existing?.enabled ?: true, hasKey = existing?.hasKey ?: false), key)
+                    enabled = existing?.enabled ?: true, hasKey = existing?.hasKey ?: false,
+                    contextWindow = tokensOrNull(ctxText), maxTokens = tokensOrNull(maxText)?.toIntSat(), limits = limits), key)
                 onDone()
             }
         }, size = BtnSize.Sm)

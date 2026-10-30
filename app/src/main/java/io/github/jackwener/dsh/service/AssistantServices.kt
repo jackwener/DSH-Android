@@ -38,7 +38,7 @@ class DshVoiceSession(context: Context) : VoiceInteractionSession(context) {
 
 }
 
-/** Required by the system for an assistant to be selectable; DSH has no speech recognizer. */
+/** Required by the system for an assistant to be selectable; DSH has no speech recognizer (VoiceInput skips this stub). */
 class DshRecognitionService : android.speech.RecognitionService() {
     override fun onStartListening(intent: Intent?, listener: Callback?) { listener?.error(android.speech.SpeechRecognizer.ERROR_CLIENT) }
     override fun onCancel(listener: Callback?) {}

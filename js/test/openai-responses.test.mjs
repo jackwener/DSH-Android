@@ -1,4 +1,4 @@
-// Built-engine regression for OpenAI Responses (patch 16); no live API calls.
+// Built-engine regression for OpenAI Responses (patch 17); no live API calls.
 // node --test js/test/openai-responses.test.mjs
 import { test } from 'node:test'
 import assert from 'node:assert/strict'

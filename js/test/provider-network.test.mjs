@@ -1,4 +1,4 @@
-// Patches 14 (llm-service-lite names the transport failure's cause and target) and 15 (dsh-http-proxy
+// Patches 14/16 (llm-service-lite names the transport failure's cause and target) and 15 (dsh-http-proxy
 // matches Android exclusion-list globs such as `192.168.*`). Runs against a built stage tree:
 //   node --test js/test/provider-network.test.mjs
 //   DSH_STAGE_NM=<WORK_DIR>/stage/node_modules node --test js/test/provider-network.test.mjs
@@ -47,8 +47,9 @@ test('TLS certificate errors keep their code and message', () => {
 test('header timeout, uncoded causes, nothing known', () => {
   assert.equal(describeTransportCause(fetchFailed(coded('Headers Timeout Error', { code: 'UND_ERR_HEADERS_TIMEOUT' })), 'http://h:1/v1'), 'UND_ERR_HEADERS_TIMEOUT h:1 (no response headers in time)')
   assert.equal(describeTransportCause(fetchFailed(new Error('unexpected redirect')), 'http://h:1/v1'), 'h:1 (unexpected redirect)')
-  assert.equal(describeTransportCause(new TypeError('fetch failed')), '')
-  assert.equal(classifyTransport(new TypeError('fetch failed')).message, 'llm-service-lite: provider transport failed')
+  // patch 16: no cause at all still names the error itself
+  assert.equal(describeTransportCause(new TypeError('fetch failed')), '(TypeError: fetch failed)')
+  assert.equal(classifyTransport(new TypeError('fetch failed')).message, 'llm-service-lite: provider transport failed: (TypeError: fetch failed)')
 })
 
 test('never leaks the URL path, query or credentials', () => {

@@ -32,6 +32,10 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import io.github.jackwener.dsh.core.designsystem.LocalReducedMotion
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
@@ -178,9 +182,31 @@ private fun BottomDock(vm: HomeViewModel, composer: ComposerState, settings: Set
 @Composable
 fun ComposerSlot(vm: ConversationController, composer: ComposerState, settings: Settings, live: SessionLive, conv: Conversation, hero: Boolean,
                  onAutomation: (() -> Unit)? = null, showChips: Boolean = true, canSendEmpty: Boolean = false,
-                 prepare: (String) -> String = { it }, onManageModes: (() -> Unit)? = null) {
+                 prepare: (String) -> String = { it }, onManageModes: (() -> Unit)? = null,
+                 /** Bumped by a voice summon (assistant gesture, ball long-press): start listening. */
+                 listenRequest: Int = 0) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val modelChangePending by vm.modelChangePending.collectAsStateWithLifecycle()
+    val send = {
+        val text = prepare(composer.outgoingText(context))
+        val images = composer.images.map { it.mime to it.base64 }
+        composer.clear()
+        vm.send(text, images, now = settings.busySend == io.github.jackwener.dsh.core.data.BusySend.Steer)
+    }
+    val voice = io.github.jackwener.dsh.feature.voice.rememberVoiceInput(composer) {
+        // Attachments still loading: leave the spoken text in the draft for a manual send.
+        if (composer.pending == 0 && !composer.isEmpty) send()
+    }
+    val cardShown = live.takeover != null || live.permission != null || live.approval != null || live.question != null
+    // A summon can land just before the panel switches to its recent session (a new composer, so a new
+    // VoiceInput): a request taken in the last moment is replayed on the new one.
+    var handled by remember { mutableIntStateOf(0) }
+    var handledAt by remember { mutableLongStateOf(0L) }
+    LaunchedEffect(listenRequest, voice) {
+        val now = android.os.SystemClock.uptimeMillis()
+        val replay = listenRequest == handled && listenRequest > 0 && now - handledAt < 1500
+        if ((listenRequest > handled || replay) && !cardShown) { if (!replay) handledAt = now; handled = listenRequest; voice.start() }
+    }
     // Queued messages the run never sent (stopped / failed) come back into the composer.
     LaunchedEffect(live.sessionId, live.restoredDraft) {
         val draft = live.restoredDraft ?: return@LaunchedEffect
@@ -194,12 +220,7 @@ fun ComposerSlot(vm: ConversationController, composer: ComposerState, settings: 
         live.question != null -> QuestionCard(live.question, onSubmit = { vm.answer(live.question, it) }, onSkip = { vm.skipQuestion(live.question) })
         else -> Composer(
             composer, live.running, live.preset, vm::setPreset, settings.choice, settings.providers, settings.effort, vm::setModel, vm::setEffort, conv.contextTokens,
-            onSend = {
-                val text = prepare(composer.outgoingText(context))
-                val images = composer.images.map { it.mime to it.base64 }
-                composer.clear()
-                vm.send(text, images, now = settings.busySend == io.github.jackwener.dsh.core.data.BusySend.Steer)
-            },
+            onSend = { voice.cancel(); send() },
             onStop = { vm.stop() },
             hero = hero,
             actions = ComposerActions(
@@ -215,6 +236,7 @@ fun ComposerSlot(vm: ConversationController, composer: ComposerState, settings: 
             modeLocked = !live.modeChangeable,
             onMode = vm::setMode,
             onManageModes = onManageModes,
+            voice = voice,
         )
     }
 }

@@ -18,6 +18,30 @@ class ProvidersTest {
         assertFalse(newRouteId("deepseek-official", emptyList()).startsWith("deepseek"))
     }
 
+    @Test fun bareOriginGetsV1OnlyWhenItHelps() {
+        assertEquals("https://integrate.api.nvidia.com/v1", v1Candidate("https://integrate.api.nvidia.com/ "))
+        assertEquals("http://192.168.1.5:8080/v1", v1Candidate("http://192.168.1.5:8080"))
+        for (u in listOf("https://api.openai.com/v1", "https://gw.example/openai", "https://h?x=1", "ftp://h", "not a url", ""))
+            assertNull(u, v1Candidate(u))
+
+        val asked = mutableListOf<String>()
+        val nim: (String, String?) -> Result<List<String>> = { url, _ ->
+            asked += url
+            if (url.endsWith("/v1")) Result.success(listOf("nvidia/m")) else Result.failure(IllegalStateException("HTTP 404"))
+        }
+        assertEquals(FetchedModels(listOf("nvidia/m"), "https://integrate.api.nvidia.com/v1"), fetchModelsResolving("https://integrate.api.nvidia.com/", "k", nim).getOrThrow())
+        assertEquals(listOf("https://integrate.api.nvidia.com", "https://integrate.api.nvidia.com/v1"), asked)
+        // Not a 404, or the base already has a path: no second request, the original failure stands.
+        asked.clear()
+        val down: (String, String?) -> Result<List<String>> = { url, _ -> asked += url; Result.failure(IllegalStateException("HTTP 401 unauthorized")) }
+        assertEquals("HTTP 401 unauthorized", fetchModelsResolving("https://h", null, down).exceptionOrNull()?.message)
+        assertEquals("HTTP 404", fetchModelsResolving("https://h/api", null, nim).exceptionOrNull()?.message)
+        assertEquals(listOf("https://h", "https://h/api"), asked)
+        // /v1 fails too: the original 404 is reported.
+        val gone: (String, String?) -> Result<List<String>> = { url, _ -> Result.failure(IllegalStateException(if (url.endsWith("/v1")) "HTTP 500" else "HTTP 404")) }
+        assertEquals("HTTP 404", fetchModelsResolving("https://h", null, gone).exceptionOrNull()?.message)
+    }
+
     @Test fun keyEnvIsAValidCredentialRef() {
         assertEquals("DSH_ANDROID_KEY_KIMI_2", keyEnvOf("kimi-2"))
         assertTrue(Regex("^[A-Z_][A-Z0-9_]*$").matches(keyEnvOf("custom-12")))
@@ -29,7 +53,7 @@ class ProvidersTest {
         assertTrue(yml.contains("\"kimi\":{\"displayName\":\"Kimi\",\"interfaceType\":\"openai-chat-completions\",\"baseURL\":\"https://api.moonshot.cn/v1\",\"apiKeyEnv\":\"DSH_ANDROID_KEY_KIMI\""))
         // No key stored → no apiKeyEnv (the request goes unauthenticated, e.g. an open gateway).
         assertFalse(yml.contains("DSH_ANDROID_KEY_CUSTOM"))
-        assertTrue(yml.contains("\"maxTokens\":${ThirdParty.MAX_TOKENS}"))
+        assertTrue(yml.contains("\"maxTokens\":${ThirdParty.DEFAULT_MAX_TOKENS}"))
         assertTrue(yml.contains("- id: compaction-basic"))
         assertTrue(yml.contains("{\"provider\":\"custom\",\"model\":\"b\",\"headroomTokens\":${ThirdParty.COMPACTION_HEADROOM}}"))
         assertFalse(yml.contains("tool-web"))
@@ -56,7 +80,7 @@ class ProvidersTest {
             val model = route.getValue("models").jsonArray.single().jsonObject
             assertEquals("gpt-6.1-terra", model.getValue("id").jsonPrimitive.content)
             assertTrue(model.getValue("capabilities").jsonObject.getValue("responsesEncryptedReplay").jsonPrimitive.boolean)
-            assertEquals(ThirdParty.MAX_TOKENS, model.getValue("defaults").jsonObject.getValue("maxTokens").jsonPrimitive.int)
+            assertEquals(ThirdParty.DEFAULT_MAX_TOKENS, model.getValue("defaults").jsonObject.getValue("maxTokens").jsonPrimitive.int)
         }
     }
 
@@ -71,6 +95,27 @@ class ProvidersTest {
         }
     }
 
+    @Test fun officialOpenAiRetainsProviderAndPerModelLimits() {
+        val p = custom.copy(
+            baseUrl = "https://api.openai.com/v1",
+            models = listOf("gpt-6.1-terra", "gpt-5"),
+            contextWindow = 262144L,
+            maxTokens = 32768,
+            limits = mapOf("gpt-6.1-terra" to ModelLimits(contextWindow = 524288L, maxTokens = 65536)),
+        )
+        val yml = renderProfilePatch(listOf(p), webSearch = true)
+        val config = Json.parseToJsonElement(yml.lineSequence().first { it.startsWith("  config:") }.substringAfter("  config:")).jsonObject
+        val route = config.getValue("providers").jsonObject.getValue(p.id).jsonObject
+        assertEquals("openai-responses", route.getValue("interfaceType").jsonPrimitive.content)
+        val models = route.getValue("models").jsonArray.map { it.jsonObject }
+        for ((model, expected) in models.zip(listOf(524288L to 65536, 262144L to 32768))) {
+            assertEquals(expected.first, model.getValue("contextWindow").jsonPrimitive.long)
+            assertEquals(expected.second, model.getValue("maxTokens").jsonPrimitive.int)
+            assertEquals(expected.second, model.getValue("defaults").jsonObject.getValue("maxTokens").jsonPrimitive.int)
+            assertTrue(model.getValue("capabilities").jsonObject.getValue("responsesEncryptedReplay").jsonPrimitive.boolean)
+        }
+    }
+
     @Test fun choiceFallsBackToDeepSeek() {
         assertEquals("kimi-k3", resolveChoice("kimi", "kimi-k3", listOf(kimi)).model)
         assertEquals(kimi, resolveChoice("kimi", "kimi-k3", listOf(kimi)).provider)
@@ -78,7 +123,7 @@ class ProvidersTest {
         assertNull(resolveChoice("kimi", "gone", listOf(kimi)).provider)
         assertEquals(DEFAULT_DEEPSEEK_MODEL, resolveChoice("kimi", "kimi-k3", emptyList()).model)
         assertEquals("deepseek-v4-pro", resolveChoice("", "deepseek-v4-pro", listOf(kimi)).model)
-        assertEquals(ThirdParty.CONTEXT_WINDOW, resolveChoice("kimi", "kimi-k3", listOf(kimi)).contextWindow)
+        assertEquals(ThirdParty.DEFAULT_CONTEXT_WINDOW, resolveChoice("kimi", "kimi-k3", listOf(kimi)).contextWindow)
     }
 
     @Test fun modelListShapes() {
@@ -90,5 +135,99 @@ class ProvidersTest {
     @Test fun presetsAreHttpsOpenAiCompatible() {
         PRESETS.filter { it.id != CUSTOM }.forEach { assertTrue(it.id, it.baseUrl.startsWith("https://")) }
         assertEquals(PRESETS.size, PRESETS.map { it.id }.toSet().size)
+    }
+
+    @Test fun limitsFromModelsShapes() {
+        // sglang / vLLM
+        assertEquals(RemoteModel("/m/Qwen", 262_144), parseModels("""{"object":"list","data":[{"id":"/m/Qwen","object":"model","owned_by":"sglang","max_model_len":262144}]}""").single())
+        // OpenRouter: root context_length wins, output from top_provider
+        val or = parseModels("""{"data":[{"id":"a/b","context_length":200000,"top_provider":{"context_length":190000,"max_completion_tokens":64000}}]}""").single()
+        assertEquals(RemoteModel("a/b", 200_000, 64_000), or)
+        assertEquals(RemoteModel("x", 128_000), parseModels("""{"data":[{"id":"x","top_provider":{"context_length":128000,"max_completion_tokens":null}}]}""").single())
+        // Moonshot / Groq / Mistral / llama.cpp / Gemini native / numeric strings and floats
+        assertEquals(131_072L, parseModels("""{"data":[{"id":"kimi","context_length":131072}]}""").single().contextWindow)
+        assertEquals(RemoteModel("g", 131_072, 32_768), parseModels("""{"data":[{"id":"g","context_window":131072,"max_completion_tokens":32768}]}""").single())
+        assertEquals(32_000L, parseModels("""{"data":[{"id":"mi","max_context_length":32000}]}""").single().contextWindow)
+        assertEquals(8_192L, parseModels("""{"data":[{"id":"l","meta":{"n_ctx_train":32768,"n_ctx":8192}}]}""").single().contextWindow)
+        assertEquals(RemoteModel("gem", 1_048_576, 65_536), parseModels("""{"models":[{"name":"models/gem","inputTokenLimit":1048576,"outputTokenLimit":65536}]}""").single())
+        assertEquals(65_536L, parseModels("""[{"id":"s","context_length":"65536"}]""").single().contextWindow)
+        assertEquals(65_536L, parseModels("""[{"id":"f","context_length":65536.0}]""").single().contextWindow)
+        // Plain OpenAI / SiliconFlow / DashScope / Ollama: nothing reported; junk values ignored
+        assertEquals(RemoteModel("gpt"), parseModels("""{"data":[{"id":"gpt","object":"model","owned_by":"openai","created":1}]}""").single())
+        assertEquals(RemoteModel("bad"), parseModels("""{"data":[{"id":"bad","context_length":-1,"max_tokens":"lots"}]}""").single())
+        // Keyed object listing
+        assertEquals(listOf("k1"), parseModelIds("""{"models":{"k1":{"context_length":4096}}}"""))
+    }
+
+    @Test fun effectiveLimitsPrecedenceAndClamps() {
+        val d = ThirdParty.resolve(null, null, null)
+        assertEquals(EffectiveLimits(131_072, LimitSource.DEFAULT, 16_384, LimitSource.DEFAULT, 16_384), d)
+        val det = ModelLimits(detectedContextWindow = 262_144, detectedMaxTokens = 32_768)
+        ThirdParty.resolve(det, null, null).let {
+            assertEquals(262_144L, it.contextWindow); assertEquals(LimitSource.DETECTED, it.contextSource)
+            assertEquals(32_768, it.maxTokens); assertEquals(LimitSource.DETECTED, it.maxTokensSource)
+        }
+        // Provider-level beats detected; per-model beats provider-level.
+        ThirdParty.resolve(det, 200_000, 20_000).let { assertEquals(200_000L, it.contextWindow); assertEquals(LimitSource.MANUAL, it.contextSource); assertEquals(20_000, it.maxTokens) }
+        ThirdParty.resolve(det.copy(contextWindow = 1_000_000, maxTokens = 64_000), 200_000, 20_000).let { assertEquals(1_000_000L, it.contextWindow); assertEquals(64_000, it.maxTokens) }
+        // Window bounds.
+        assertEquals(ThirdParty.MIN_CONTEXT_WINDOW, ThirdParty.resolve(ModelLimits(contextWindow = 10), null, null).contextWindow)
+        assertEquals(ThirdParty.MAX_CONTEXT_WINDOW, ThirdParty.resolve(null, 50_000_000, null).contextWindow)
+        // Output: manual ≤ half the window, detected/default ≤ a quarter; headroom ≤ 1/8.
+        assertEquals(65_536, ThirdParty.resolve(ModelLimits(maxTokens = 500_000), 131_072, null).maxTokens)
+        assertEquals(50_000, ThirdParty.resolve(ModelLimits(detectedContextWindow = 200_000, detectedMaxTokens = 128_000), null, null).maxTokens)
+        ThirdParty.resolve(ModelLimits(contextWindow = 8_192), null, null).let {
+            assertEquals(2_048, it.maxTokens); assertEquals(1_024, it.compactionHeadroom)
+            assertTrue(it.contextWindow - it.maxTokens - it.compactionHeadroom > 0)
+        }
+    }
+
+    @Test fun choiceUsesEffectiveWindow() {
+        val p = custom.copy(limits = mapOf("a" to ModelLimits(detectedContextWindow = 262_144)))
+        val a = resolveChoice("custom", "a", listOf(p))
+        assertEquals(262_144L, a.contextWindow); assertEquals(LimitSource.DETECTED, a.contextSource)
+        assertEquals(LimitSource.DEFAULT, resolveChoice("custom", "b", listOf(p)).contextSource)
+        assertEquals(200_000L, resolveChoice("custom", "b", listOf(p.copy(contextWindow = 200_000))).contextWindow)
+        assertNull(resolveChoice("", "deepseek-flash", listOf(p)).contextSource)
+        assertEquals(ModelChoice.DEEPSEEK_CONTEXT, resolveChoice("", "deepseek-flash", listOf(p)).contextWindow)
+    }
+
+    @Test fun patchCarriesPerModelLimits() {
+        val p = custom.copy(maxTokens = 32_768, limits = mapOf("a" to ModelLimits(detectedContextWindow = 262_144), "b" to ModelLimits(contextWindow = 8_192)))
+        val yml = renderProfilePatch(listOf(p), webSearch = true)
+        assertTrue(yml, yml.contains("{\"id\":\"a\",\"contextWindow\":262144,\"maxTokens\":32768,\"defaults\":{\"maxTokens\":32768}}"))
+        // b: 8K window → manual cap is half the window, headroom an eighth.
+        assertTrue(yml, yml.contains("{\"id\":\"b\",\"contextWindow\":8192,\"maxTokens\":4096,\"defaults\":{\"maxTokens\":4096}}"))
+        assertTrue(yml, yml.contains("{\"provider\":\"custom\",\"model\":\"a\",\"headroomTokens\":16384}"))
+        assertTrue(yml, yml.contains("{\"provider\":\"custom\",\"model\":\"b\",\"headroomTokens\":1024}"))
+        // Unconfigured provider: the old defaults.
+        assertTrue(renderProfilePatch(listOf(kimi), true).contains("{\"id\":\"kimi-k3\",\"contextWindow\":131072,\"maxTokens\":16384,\"defaults\":{\"maxTokens\":16384}}"))
+    }
+
+    @Test fun storedProvidersStayReadable() {
+        val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true; encodeDefaults = true }
+        // A v0.2.4 record (no limit fields) still decodes.
+        val old = json.decodeFromString(ProviderConfig.serializer(), """{"id":"custom","preset":"custom","name":"g","baseUrl":"http://x/v1","models":["a"],"enabled":true,"hasKey":false}""")
+        assertEquals(null, old.contextWindow); assertTrue(old.limits.isEmpty())
+        val p = old.copy(contextWindow = 262_144, limits = mapOf("a" to ModelLimits(maxTokens = 8_000, detectedContextWindow = 131_072)))
+        assertEquals(p, json.decodeFromString(ProviderConfig.serializer(), json.encodeToString(ProviderConfig.serializer(), p)))
+    }
+
+    @Test fun refreshReplacesListKeepingCheckedOnTop() {
+        // Stale unchecked models go, new ones come in the fetched order; checked-but-gone stay on top, flagged.
+        val r = refreshOffered(current = listOf("old1", "old2", "keep", "a"), fetched = listOf("a", "n1", "n2"), keep = listOf("keep", "a"))
+        assertEquals(listOf("keep", "a", "n1", "n2"), r.offered)
+        assertEquals(listOf("keep"), r.missing)
+        // A hand-typed name stays even unchecked.
+        assertEquals(listOf("typed", "x"), refreshOffered(listOf("typed", "stale"), listOf("x"), listOf("typed")).offered)
+        // Nothing kept: exactly the fetch.
+        assertEquals(OfferedRefresh(listOf("x", "y"), emptyList()), refreshOffered(listOf("p", "q"), listOf("x", "y"), emptyList()))
+    }
+
+    @Test fun tokenInput() {
+        assertEquals(null, parseTokenInput("  ").getOrThrow())
+        assertEquals(262_144L, parseTokenInput("262,144").getOrThrow())
+        assertTrue(parseTokenInput("128k").isFailure)
+        assertTrue(parseTokenInput("0").isFailure)
     }
 }

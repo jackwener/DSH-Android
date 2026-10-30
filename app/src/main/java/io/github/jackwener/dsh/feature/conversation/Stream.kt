@@ -261,6 +261,8 @@ private fun ErrorRow(e: TurnError, onRetry: (TurnError) -> Unit, onOpenSettings:
     val accountQuota = e.code == "ACCOUNT_QUOTA"
     // A third-party endpoint that could not be reached: what it means + what to check (js patch 14).
     val net = remember(e) { NetDiagnose.ofEngineError(e.code, e.message) }
+    // The provider answered in a shape the adapter cannot read (js patch 16): not the network.
+    val format = remember(e) { NetDiagnose.formatErrorOf(e.code, e.message) }
     val title = when {
         needsSignIn -> stringResource(R.string.acct_model_sign_in_required)
         net != null -> stringResource(R.string.net_title)
@@ -274,6 +276,7 @@ private fun ErrorRow(e: TurnError, onRetry: (TurnError) -> Unit, onOpenSettings:
         needsSignIn -> ""
         accountQuota -> stringResource(R.string.acct_quota_desc)
         net != null -> stringResource(net.cause.message) + (net.cause.hint?.let { " " + stringResource(it) } ?: "")
+        format != null -> stringResource(R.string.err_provider_format, format)
         e.code?.contains("auth", true) == true || e.message.contains("401") -> stringResource(R.string.err_invalid_key)
         e.message.contains("402") || e.message.contains("insufficient", true) -> stringResource(R.string.err_quota)
         else -> e.message

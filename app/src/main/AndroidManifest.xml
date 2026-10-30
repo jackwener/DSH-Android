@@ -35,6 +35,8 @@
     <uses-permission android:name="android.permission.WRITE_CALENDAR" />
     <uses-permission android:name="android.permission.FLASHLIGHT" />
     <uses-permission android:name="android.permission.USE_BIOMETRIC" />
+    <!-- Voice input in the composer (system SpeechRecognizer); asked for on the first mic tap. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <!-- AlarmClock.ACTION_SET_ALARM / ACTION_SET_TIMER handlers (DeskClock HandleApiCalls) require it. -->
     <uses-permission android:name="com.android.alarm.permission.SET_ALARM" />
 
@@ -67,6 +69,9 @@
         <intent><action android:name="android.settings.IGNORE_BATTERY_OPTIMIZATION_SETTINGS" /></intent>
         <intent><action android:name="android.settings.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" /><data android:scheme="package" /></intent>
         <intent><action android:name="android.settings.APPLICATION_DETAILS_SETTINGS" /><data android:scheme="package" /></intent>
+        <!-- Speech recognizers for voice input (VoiceInput). -->
+        <intent><action android:name="android.speech.RecognitionService" /></intent>
+        <intent><action android:name="android.speech.action.RECOGNIZE_SPEECH" /></intent>
     </queries>
 
     <application
