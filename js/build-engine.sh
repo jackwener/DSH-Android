@@ -42,7 +42,7 @@ cp "$JS_DIR/engine/package.json" "$JS_DIR/engine/package-lock.json" "$STAGE/"
 # js/packages/<dir> → node_modules/<package name>: our @dsh-android packages plus the vendored
 # third-party LLM adapter @snnh/dsh-llm-service-lite (MIT; see its package.json "//vendored").
 log "adding @dsh-android packages + vendored @snnh/dsh-llm-service-lite"
-OUR_PKGS=(bundle-android plugin-device plugin-guard plugin-mode plugin-account llm-service-lite)
+OUR_PKGS=(bundle-android plugin-device plugin-guard plugin-mode plugin-account plugin-extensions llm-service-lite)
 for pkg in "${OUR_PKGS[@]}"; do
   node -e '
     const [src, nm, stagePkg] = process.argv.slice(1)
@@ -152,8 +152,22 @@ for pkgdir in "$NM"/[!@.]* "$NM"/@*/*; do
     [[ -d "$pkgdir/$sub" ]] && rm -rf "${pkgdir:?}/$sub"
   done
 done
+# pnpm (plugin installs on the phone): no native builds (ignoreScripts), no reflink (packageImportMethod copy),
+# no Windows process helpers.
+rm -rf "$NM/pnpm/dist/node_modules/node-gyp" "$NM/pnpm/dist/node-gyp-bin" "$NM/pnpm/dist/vendor"
+for d in "$NM"/pnpm/dist/node_modules/@reflink/reflink-*; do [[ -e "$d" ]] && rm -rf "$d"; done
 find "$NM" -type d -empty -delete
 after_kb=$(du -sk "$NM" | cut -f1)
+# After pruning, so it lists what the zip really ships. The phone gate (plugin-extensions/pnpmfile.cjs) turns plugin dependencies on packages the engine
+# ships into peers, so a plugin shares the engine's single instance (cordis, dsh-tools, …).
+node -e '
+  const [nm, out] = process.argv.slice(1)
+  const fs = require("node:fs"), path = require("node:path")
+  const names = fs.readdirSync(path.join(nm, "@deepseek-ai")).map(n => `@deepseek-ai/${n}`)
+    .filter(n => fs.existsSync(path.join(nm, n, "package.json"))).sort()
+  fs.writeFileSync(out, JSON.stringify(names, null, 1) + "\n")
+' "$NM" "$NM/@dsh-android/plugin-extensions/installation-packages.json"
+
 
 # ── 7. verify ────────────────────────────────────────────────────────────────
 links=$(find "$STAGE" -type l | wc -l)
@@ -175,6 +189,12 @@ grep -q 'patch 18' "$NM/@snnh/dsh-llm-service-lite/lib/index.js" || die "llm-ser
 grep -q 'patch 15' "$NM/@deepseek-ai/dsh-http-proxy/lib/index.js" || die "http-proxy exclusion-glob patch missing"
 grep -q 'appendPluginRecord' "$NM/@deepseek-ai/dsh-session/lib/index.js" || die "dsh-session lacks appendPluginRecord (plugin-mode records its selection with it)"
 [[ -f "$NM/@dsh-android/plugin-mode/index.js" ]] || die "plugin-mode missing"
+[[ -f "$NM/@dsh-android/bundle-android/main.mjs" ]] || die "engine entry main.mjs missing"
+[[ -f "$NM/@dsh-android/plugin-extensions/pnpmfile.cjs" && -s "$NM/@dsh-android/plugin-extensions/installation-packages.json" ]] || die "plugin-extensions gate missing"
+grep -q 'js patch 19' "$NM/@deepseek-ai/dsh-tools/lib/index.js" || die "tools owner patch (19) missing"
+PNPM_VERSION="$(node -p 'require(process.argv[1]).dependencies.pnpm' "$JS_DIR/engine/package.json")"
+have_pnpm="$(node "$NM/pnpm/bin/pnpm.mjs" --version 2>/dev/null || true)"
+[[ "$have_pnpm" == "$PNPM_VERSION" ]] || die "bundled pnpm does not run after pruning (got '$have_pnpm', want $PNPM_VERSION)"
 # Our packages pin engines.dsh to the exact bundled dsh: a mismatch makes dsh skip the android bundle at boot.
 for m in "$NM"/@dsh-android/*/package.json; do
   want="$(node -p 'require(process.argv[1]).engines?.dsh ?? ""' "$m")"
@@ -184,7 +204,7 @@ log "no symlinks; entry point and patches verified"
 
 # ── 8. version, zip, digest, report ──────────────────────────────────────────
 INPUT_HASH=$( (cd "$JS_DIR" && cat engine/package-lock.json patches/*.patch \
-  packages/bundle-android/cordis.patch.yml packages/bundle-android/android-env.cjs packages/*/package.json packages/plugin-*/*.js packages/llm-service-lite/lib/index.js scripts/*.mjs build-engine.sh) | sha256sum | cut -c1-10)
+  packages/bundle-android/cordis.patch.yml packages/bundle-android/android-env.cjs packages/bundle-android/main.mjs packages/*/package.json packages/plugin-*/*.js packages/plugin-extensions/*.cjs packages/plugin-extensions/*.mjs packages/plugin-extensions/*.json packages/llm-service-lite/lib/index.js scripts/*.mjs build-engine.sh) | sha256sum | cut -c1-10)
 ENGINE_VERSION="${DSH_VERSION}-a${INPUT_HASH}"
 printf '%s\n' "$ENGINE_VERSION" > "$STAGE/engine-version.txt"
 printf '%s\n' "$ENGINE_VERSION" > "$OUT_DIR/engine-version.txt"
@@ -201,6 +221,7 @@ python3 -I "$JS_DIR/scripts/make-zip.py" "$STAGE" "$OUT_DIR/engine.zip"
   echo "node_modules before prune: $((before_kb / 1024)) MiB"
   echo "node_modules after prune:  $((after_kb / 1024)) MiB"
   echo "files: $(find "$STAGE" -type f | wc -l), symlinks: $links"
+  echo "bundled pnpm $PNPM_VERSION: $(du -sk "$NM/pnpm" | cut -f1) KiB unpacked"
   echo "engine.zip: $(du -k "$OUT_DIR/engine.zip" | cut -f1) KiB ($(stat -c %s "$OUT_DIR/engine.zip") bytes)"
   echo "sha256: $(cut -d' ' -f1 "$OUT_DIR/engine.sha256")"
   echo

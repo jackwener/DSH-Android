@@ -12,6 +12,10 @@
 //    guidance sections (`tool:<name>`) of hidden tools from the assembled prompt;
 //  - records the selection in the session log as the plugin record
 //    `plugin:android-mode/selected { id, name }` (ignorable, never model-visible).
+// Category `extensions` = tools of third-party plugins and MCP servers (`mcp__*`), as told by
+// the androidExtensions service (@dsh-android/plugin-extensions, js patch 19 ownership). A mode
+// whose `tools` list omits it (the app's read-only modes) hides them: nothing says a plugin
+// tool is read-only.
 // A conversation the app has not described (or `mode: null`) is unrestricted.
 
 export const name = 'android-mode'
@@ -30,7 +34,10 @@ export const CATEGORIES = Object.freeze({
   web: n => WEB.has(n),
   subagent: n => SUBAGENT.has(n),
 })
-const CATEGORY_IDS = new Set(Object.keys(CATEGORIES))
+/** Third-party plugin and MCP tools; membership is dynamic (see categoryOf). */
+export const EXTENSIONS = 'extensions'
+const CATEGORY_IDS = new Set([...Object.keys(CATEGORIES), EXTENSIONS])
+const MCP_PREFIX = 'mcp__'
 export const SKILL_TOOL = 'skill'
 export const RECORD_TYPE = 'plugin:android-mode/selected'
 /** After the phone context (plugin-guard, 130), before plan/team policy (500). */
@@ -44,9 +51,13 @@ function log(level, message) {
   process.stderr.write(`[android-mode] ${level === 'info' ? '' : level + ': '}${message}\n`)
 }
 
-/** The category of a built-in tool name, or undefined (device tools and uncategorized tools have none). */
-export function categoryOf(toolName) {
+/**
+ * The category of a tool name, or undefined (device tools and uncategorized tools have none).
+ * [isExtension] says whether a non-built-in tool belongs to a third-party plugin.
+ */
+export function categoryOf(toolName, isExtension = () => false) {
   for (const [id, test] of Object.entries(CATEGORIES)) if (test(toolName)) return id
+  if (toolName.startsWith(MCP_PREFIX) || isExtension(toolName)) return EXTENSIONS
   return undefined
 }
 
@@ -84,12 +95,12 @@ export const restricts = mode => mode !== undefined && (mode.deviceGroups !== nu
  * Whether [mode] excludes the tool [toolName]. [descriptorOf] returns the device descriptor
  * (with its `group`) for device tools, else undefined.
  */
-export function excludes(mode, toolName, descriptorOf = () => undefined) {
+export function excludes(mode, toolName, descriptorOf = () => undefined, isExtension = () => false) {
   if (mode === undefined) return false
   if (toolName === SKILL_TOOL) return !mode.skills
   const device = descriptorOf(toolName)
   if (device !== undefined) return mode.deviceGroups !== null && !mode.deviceGroups.has(device.group)
-  const category = categoryOf(toolName)
+  const category = categoryOf(toolName, isExtension)
   return category !== undefined && mode.tools !== null && !mode.tools.has(category)
 }
 
@@ -119,12 +130,12 @@ const SECTION_TOOL = { jobs: 'job_list' }
  * Drops the `tool:<name>` guidance sections of tools [mode] hides. Most dsh tool sections already
  * render empty for a scope that cannot see their tool; a few (bash, jobs) are unconditional.
  */
-export function withoutHiddenToolSections(sections, mode, descriptorOf = () => undefined) {
+export function withoutHiddenToolSections(sections, mode, descriptorOf = () => undefined, isExtension = () => false) {
   if (!restricts(mode)) return sections
   return sections.filter(section => {
     const m = /^tool:([^:]+)/.exec(String(section?.name ?? ''))
     if (m === null) return true
-    return !excludes(mode, SECTION_TOOL[m[1]] ?? m[1], descriptorOf)
+    return !excludes(mode, SECTION_TOOL[m[1]] ?? m[1], descriptorOf, isExtension)
   })
 }
 
@@ -179,6 +190,7 @@ export function apply(ctx, config = {}) {
   let loggedNames = false
 
   const descriptorOf = toolName => { try { return ctx.get('androidBridge')?.descriptorOf?.(toolName) } catch { return undefined } }
+  const isExtension = toolName => { try { return ctx.get('androidExtensions')?.isExtensionTool?.(toolName) === true } catch { return false } }
   const agents = () => { try { return ctx.get('agents')?.list?.() ?? [] } catch { return [] } }
   const modeOf = agent => { const root = rootSessionId(ctx, agent); return root === undefined ? undefined : modes.get(root) }
 
@@ -216,7 +228,7 @@ export function apply(ctx, config = {}) {
       loggedNames = true
       log('info', `tools seen by modes: ${names.slice().sort().join(', ')}`)
     }
-    const deny = mode === undefined ? [] : names.filter(n => excludes(mode, n, descriptorOf)).sort()
+    const deny = mode === undefined ? [] : names.filter(n => excludes(mode, n, descriptorOf, isExtension)).sort()
     const section = modeSection(mode)
     const key = JSON.stringify([mode?.id, section, deny])
     if (installed.get(agent)?.key === key) return
@@ -266,14 +278,14 @@ export function apply(ctx, config = {}) {
     const assembly = await next()
     const mode = context?.agent === undefined ? undefined : modeOf(context.agent)
     if (!restricts(mode) || !Array.isArray(assembly?.sections)) return assembly
-    return { ...assembly, sections: withoutHiddenToolSections(assembly.sections, mode, descriptorOf) }
+    return { ...assembly, sections: withoutHiddenToolSections(assembly.sections, mode, descriptorOf, isExtension) }
   })
 
   // Backstop: refuse an excluded call even if a tool appeared after the last restriction.
   if (typeof ctx.tools.guard === 'function') {
     ctx.tools.guard(exec => {
       const mode = modeOf(exec.agent)
-      return mode !== undefined && excludes(mode, exec.name, descriptorOf) ? refusalText(exec.name, mode) : undefined
+      return mode !== undefined && excludes(mode, exec.name, descriptorOf, isExtension) ? refusalText(exec.name, mode) : undefined
     })
   }
 }

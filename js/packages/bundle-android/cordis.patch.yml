@@ -1,6 +1,8 @@
 # DSH-Android profile layer. Applied after @deepseek-ai/dsh-base and
-# @deepseek-ai/dsh-sdk-app (see the `android` profile template); the user's
-# profile cordis.patch.yml and $DSH_HOME/cordis.patch.yml still apply on top.
+# @deepseek-ai/dsh-sdk-app (see the `android` profile template); third-party
+# plugin bundles, the profile's cordis.patch.yml (written by dsh's plugin manager
+# and config editor), $DSH_HOME/cordis.patch.yml and the app's overlay
+# $DSH_HOME/android/app-layer.patch.yml (main.mjs passes it as --patch) apply on top.
 #
 # A patch replaces a row's whole `config`, so every config below is complete.
 
@@ -35,9 +37,30 @@
         name: android
         description: No OS sandbox on Android; every mutating action asks for approval.
 
+# ── plugins (ENGINE-CONTRACT §2.6, docs/PLUGINS-CONTRACT.md) ─────────────────
+# The phone side of extensions: android/ext/* SDK methods, the install gates (pnpmfile,
+# binary scan, service precheck), status, skills, MCP helpers, and the androidExtensions
+# service (mode category `extensions`, ask-before-call). It mounts dsh's own plugin manager
+# (pnpm = the bundled pnpm on the node launcher, see main.mjs) and plugin market as its
+# children on first use, so a boot pays nothing for them. dsh-base's own `plugin-manager`
+# row stays off (below), and so do its agent tools (`tool-plugin-manager`).
+- insert:
+    - id: android-extensions
+      name: '@dsh-android/plugin-extensions'
+
+# rc.5's official DeepSeek routes follow the account's `/models` listing and wait up to
+# 5 s for it on the first connect: a network round trip on every cold start. Wait 1 ms:
+# the first connect uses the built-in catalog, the listing loads in the background and
+# applies from then on.
+- id: llm-deepseek
+  config:
+    modelsTimeoutMs: 1
+- id: llm-deepseek-account
+  config:
+    modelsTimeoutMs: 1
+
 # ── rows a phone does not need ───────────────────────────────────────────────
-# Profile/package management is a Web/desktop surface (config-editor stays:
-# dsh-settings, which stores the llm-deepseek settings section, depends on it).
+# Mounted on demand by android-extensions instead (see above).
 - id: plugin-manager
   disabled: true
 # Telemetry export is off on the phone (privacy; no feedback UI wired to it).

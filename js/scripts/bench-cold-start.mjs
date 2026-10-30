@@ -9,7 +9,7 @@
 //   compile-cache  reused DSH_HOME + NODE_COMPILE_CACHE (primed by one untimed run)
 // No API key is needed (initialize does not call the model).
 import { spawn, execFileSync } from 'node:child_process'
-import { mkdirSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, rmSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -22,7 +22,12 @@ const root = join(AGENT, 'toolchains/tmp', `bench-${Date.now()}`)
 const engineDir = join(root, 'engine')
 mkdirSync(root, { recursive: true })
 execFileSync('python3', ['-I', '-c', 'import sys, zipfile; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])', zipPath, engineDir])
-const bin = join(engineDir, 'node_modules/@deepseek-ai/dsh/lib/bin.js')
+// The app's entry: bundle-android/main.mjs (with the android-env preload) when the engine has it, else dsh's bin.js.
+const main = join(engineDir, 'node_modules/@dsh-android/bundle-android/main.mjs')
+const preload = join(engineDir, 'node_modules/@dsh-android/bundle-android/android-env.cjs')
+const entryArgv = existsSync(main)
+  ? ['--expose-internals', '--require', preload, main]
+  : ['--expose-internals', ...(existsSync(preload) ? ['--require', preload] : []), join(engineDir, 'node_modules/@deepseek-ai/dsh/lib/bin.js'), '--profile', 'android']
 
 function boot(dshHome, extraEnv = {}) {
   const home = join(root, 'home'); mkdirSync(home, { recursive: true })
@@ -32,7 +37,7 @@ function boot(dshHome, extraEnv = {}) {
   }
   mkdirSync(env.TMPDIR, { recursive: true })
   const t0 = process.hrtime.bigint()
-  const child = spawn(process.execPath, ['--expose-internals', bin, '--profile', 'android'], { cwd: '/', env, stdio: ['pipe', 'pipe', 'ignore'] })
+  const child = spawn(process.execPath, entryArgv, { cwd: '/', env, stdio: ['pipe', 'pipe', 'ignore'] })
   return new Promise((res, rej) => {
     let buf = ''
     const timer = setTimeout(() => { child.kill('SIGKILL'); rej(new Error('timeout')) }, 120_000)

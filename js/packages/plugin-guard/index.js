@@ -294,6 +294,8 @@ export function apply(ctx, config = {}) {
   let presetsReported = false
 
   const bridge = () => ctx.get('androidBridge')
+  /** Per plugin / MCP server "ask before call" (@dsh-android/plugin-extensions). */
+  const askBeforeCall = toolName => { try { return ctx.get('androidExtensions')?.askBeforeCall?.(toolName) === true } catch { return false } }
   const descriptors = () => { try { return bridge()?.tools?.() ?? [] } catch { return [] } }
   const isUnattended = root => typeof root === 'string' && root.startsWith(AUTO_PREFIX)
   const sessionCwd = agent => {
@@ -395,6 +397,9 @@ export function apply(ctx, config = {}) {
     if (decision?.kind === 'ask') ask = decision
     else if (decision?.kind === 'allow' && askTools.has(exec.name)) {
       if (autoAllowed(exec, preset, unattended)) return decision
+      ask = { kind: 'ask', reason: `${exec.name}: ${argText(exec.arguments)}` }
+    } else if (decision?.kind === 'allow' && askBeforeCall(exec.name)) {
+      // The user turned on "ask before call" for this tool's plugin or MCP server.
       ask = { kind: 'ask', reason: `${exec.name}: ${argText(exec.arguments)}` }
     } else return decision
     const sensitive = bridge()?.descriptorOf?.(exec.name)?.risk === 'sensitive'
