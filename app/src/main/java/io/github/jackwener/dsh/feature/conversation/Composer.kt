@@ -325,7 +325,7 @@ fun Composer(
             if (showChips && mode != null) ModeChip(mode, modes, modeLocked, narrow, onMode, onManageModes, modeOpen, { modeOpen = it }, settled)
             // The context ring and model chip take only the space left, so Send always stays on screen.
             Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.End)) {
-            if (showChips && contextTokens > 0) ContextRing(contextTokens, model.contextWindow)
+            if (showChips && contextTokens > 0) ContextRing(contextTokens, model.contextWindow, model.contextSource)
             if (showChips) Box(Modifier.weight(1f, fill = false)) {
                 // Third-party models have no effort selector (the model family's default level applies).
                 val effortLabel = if (model.isDeepSeek) effort.label else ""
@@ -415,7 +415,7 @@ fun SendButton(running: Boolean, empty: Boolean, onSend: () -> Unit, onStop: () 
 
 /** dsh ContextMeter: 14 dp ring + percentage; tap for the occupancy panel. */
 @Composable
-fun ContextRing(tokens: Long, window: Long) {
+fun ContextRing(tokens: Long, window: Long, source: io.github.jackwener.dsh.core.provider.LimitSource? = null) {
     val c = Dsh.colors
     var open by remember { mutableStateOf(false) }
     val frac = (tokens.toFloat() / window).coerceIn(0f, 1f)
@@ -442,6 +442,9 @@ fun ContextRing(tokens: Long, window: Long) {
                 Box(Modifier.fillMaxWidth().height(4.dp).clip(CircleShape).background(c.borderL2)) {
                     Box(Modifier.fillMaxWidth(frac).height(4.dp).clip(CircleShape).background(c.kindMessages))
                 }
+                // Third-party windows come from /models, the user, or the default: say which.
+                if (source != null) Text(stringResource(R.string.context_window_src, Fmt.tokens(window),
+                    stringResource(io.github.jackwener.dsh.feature.settings.limitSourceLabel(source))), style = DshType.xxs12, color = c.labelTertiary)
             }
         }
     }
