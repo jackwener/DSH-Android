@@ -20,7 +20,6 @@ import kotlin.system.exitProcess
  * Shizuku user service: instantiated by Shizuku in a process running as the shell user (uid 2000),
  * which has the privileges ordinary apps lack (input injection, `svc`, `settings`, trusted displays,
  * task moves across displays). Hidden APIs are called through reflection and fail soft.
- * Display flags, task queries and the mute ledger follow wangzan101/mika ShellService (Apache-2.0).
  */
 class ShellUserService : IShellService.Stub() {
     private class Screen(val display: VirtualDisplay, val reader: ImageReader) {

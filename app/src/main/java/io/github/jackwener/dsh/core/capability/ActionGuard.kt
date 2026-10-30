@@ -13,8 +13,7 @@ enum class ActionOutcome { Effective, NoEffect, ReadChanged, ReadUnchanged }
 /**
  * Loop detection for one session (docs/AGENT-SCREEN-V2.md §3.5). Counts four signals and climbs a
  * ladder for each: reminders at the lower rungs, a stop at the last one. Once stopped, every
- * guarded call is refused until the user speaks again ([reset]). Pure; thresholds as in
- * wangzan101/mika GuardRules (Apache-2.0).
+ * guarded call is refused until the user speaks again ([reset]). Pure.
  */
 class LoopGuard {
     enum class Signal(val ladder: List<Int>) {
@@ -89,8 +88,7 @@ class LoopGuard {
 /**
  * Spacing of outward actions (send, post, follow…) inside one app (§5): the first is immediate,
  * later ones wait a random 8–20 s after the previous one, a bit longer the more were done in the
- * last 30 minutes, never more than 30 s. Time spent between the actions counts. Pure (clock passed in);
- * adapted from wangzan101/mika OutwardPacing (Apache-2.0).
+ * last 30 minutes, never more than 30 s. Time spent between the actions counts. Pure (clock passed in).
  */
 class OutwardPacing(private val random: Random = Random.Default) {
     private class Done(val app: String, val atMs: Long, val gapMs: Long)

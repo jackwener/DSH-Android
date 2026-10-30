@@ -11,7 +11,7 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * Built-in app guides (`assets/knowledge/apps/<id>/APP.md`, from Mika, see assets/knowledge/NOTICE):
+ * Built-in app guides (`assets/knowledge/apps/<id>/APP.md`):
  * facts about an app's UI, indexed by package name on first use. The screen tools append a guide
  * to the result the first time a conversation enters that app; `app_guide` looks one up on demand.
  * Subagents share their conversation's record.

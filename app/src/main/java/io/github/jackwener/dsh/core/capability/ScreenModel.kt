@@ -70,7 +70,6 @@ class Frame(val seq: Int, val packageName: String?, val elements: List<UiElement
  * description and resource id, centre moved at most [maxShift] px, same foreground app) keeps its
  * `e` number, so the ids the model holds are not all invalidated by one refresh. Numbers only go
  * up within one tracker; retired ids remember their element (in the same app) for [resolve].
- * (Idea from wangzan101/mika RefStabilizer, Apache-2.0; simplified.)
  */
 class StableIds(private val maxShift: Int = 48, private val maxRelocate: Int = 500, private val prefix: String = "e") {
     private var next = 1
@@ -169,14 +168,17 @@ class ScreenDiff(val added: List<Int>, val removed: List<Int>, val changed: List
 /**
  * "Too frequent / limit reached" messages that appeared after an action (toasts, dialogs). Only
  * short texts that were not on screen before count: help pages that mention limits do not.
- * (Word list adapted from wangzan101/mika LimitNotice, Apache-2.0.)
  */
 object LimitNotice {
     private val WORDS = listOf(
-        "操作过于频繁", "操作太频繁", "操作频繁", "请求过于频繁", "访问过于频繁", "过于频繁", "太频繁", "频繁操作",
-        "已达上限", "已达到上限", "达到上限", "超过上限", "超出上限", "次数已用完", "次数用完", "额度已用完",
-        "稍后再试", "稍后重试", "明天再来", "明日再来", "明天再试",
-        "toomany", "limitreached", "reachedthelimit", "reachedyourlimit", "dailylimit", "tryagainlater", "tryagaintomorrow", "doingthattoooften",
+        // Chinese: "too often / too fast", "quota used up", "come back later", throttling.
+        "过于频繁", "太频繁", "频繁了", "操作太快", "手速太快", "请求过多", "访问量过大", "限流",
+        "次数已用完", "次数不足", "额度已用完", "今日已用完", "今日上限", "今天的次数",
+        "稍后再试", "稍后重试", "请稍后再", "休息一下", "明天再来", "明日再试", "暂时无法操作", "暂时被限制",
+        // English (compacted: no spaces, lower case).
+        "toomanyrequests", "toomanyattempts", "toomany", "ratelimit", "slowdown", "limitreached", "reachedthelimit",
+        "reachedyourlimit", "dailylimit", "limitexceeded", "tryagainlater", "tryagaintomorrow", "temporarilyblocked",
+        "temporarilyrestricted", "doingthattoooften",
     )
     private val REACHED = Regex("(已达|达到|超过|超出)[^，,。.!！?？]{0,6}上限")
     private const val MAX_CHARS = 120
