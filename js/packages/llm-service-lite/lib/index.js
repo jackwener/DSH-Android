@@ -3392,7 +3392,7 @@ function finishReasonOf$1(reason, sawDone, sawOutput, hasToolCalls) {
 /** Validated token accounting from one provider usage report. */
 function usageOf$1(chunk) {
 	const usage = chunk.usage;
-	if (usage === void 0 || typeof usage.prompt_tokens !== "number" || typeof usage.completion_tokens !== "number") return;
+	if (usage === void 0 || usage === null || typeof usage.prompt_tokens !== "number" || typeof usage.completion_tokens !== "number") return;
 	const prompt = usage.prompt_tokens;
 	const completion = usage.completion_tokens;
 	if (!Number.isSafeInteger(prompt) || prompt < 0 || !Number.isSafeInteger(completion) || completion < 0) throw new LlmError("llm-service-lite: provider returned invalid token usage", "MALFORMED_RESPONSE");
