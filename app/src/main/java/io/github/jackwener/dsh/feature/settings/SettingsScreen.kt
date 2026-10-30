@@ -467,6 +467,13 @@ private fun AboutSection(vm: SettingsViewModel) {
             DButton(stringResource(R.string.doctor_rerun), { vm.runDoctor() }, variant = BtnVariant.Outline, size = BtnSize.Sm, icon = R.drawable.dsw_refresh_outline)
         }
     }
+    // A report for bug reports (also the place 打开自检 from a failed turn leads to). Shown in full before anything leaves the page.
+    val report by vm.diagnostics.collectAsStateWithLifecycle()
+    SettingsCard(Modifier.padding(top = 12.dp)) {
+        SettingsRow(stringResource(R.string.diag_entry), stringResource(R.string.diag_entry_desc), divider = false, onClick = { vm.openDiagnostics() },
+            trailing = { DIcon(R.drawable.dsw_chevron_right_outline, size = 14.dp, tint = c.labelTertiary) })
+    }
+    report?.let { DiagnosticsSheet(it, vm::closeDiagnostics) }
     SettingsGroupTitle(stringResource(R.string.keep_alive))
     KeepAliveCard()
     vm.engineLog?.let { log ->

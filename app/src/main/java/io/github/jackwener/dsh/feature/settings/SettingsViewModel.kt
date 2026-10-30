@@ -21,7 +21,15 @@ import io.github.jackwener.dsh.core.data.UsageEntity
 import io.github.jackwener.dsh.core.engine.EngineManager
 import io.github.jackwener.dsh.core.engine.EngineState
 import io.github.jackwener.dsh.core.model.ToolGroup
+import io.github.jackwener.dsh.R
+import io.github.jackwener.dsh.core.diagnostics.DiagnosticsInput
+import io.github.jackwener.dsh.core.diagnostics.DiagnosticsReport
+import io.github.jackwener.dsh.core.diagnostics.ProviderFacts
 import io.github.jackwener.dsh.core.provider.ProviderConfig
+import io.github.jackwener.dsh.core.provider.VerifyFailure
+import io.github.jackwener.dsh.core.provider.VerifyOutcome
+import io.github.jackwener.dsh.core.provider.probeModel
+import io.github.jackwener.dsh.core.provider.verifyCandidates
 import io.github.jackwener.dsh.core.platform.ShizukuShell
 import io.github.jackwener.dsh.service.FloatingBallService
 import kotlinx.coroutines.Dispatchers
@@ -50,6 +58,8 @@ class SettingsViewModel @Inject constructor(
     private val shizukuInstaller: io.github.jackwener.dsh.core.platform.ShizukuInstaller,
     val account: io.github.jackwener.dsh.core.account.AccountRepository,
     usage: UsageDao,
+    private val sessionDao: io.github.jackwener.dsh.core.data.SessionDao,
+    private val agentScreen: io.github.jackwener.dsh.core.capability.AgentScreen,
 ) : ViewModel() {
     val settings: StateFlow<DshSettings> = repo.settings.stateIn(viewModelScope, SharingStarted.Eagerly, DshSettings())
     val usage: StateFlow<List<UsageEntity>> = usage.observe().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -87,6 +97,51 @@ class SettingsViewModel @Inject constructor(
         val k = key?.trim()?.takeIf { it.isNotEmpty() } ?: existing?.takeIf { it.hasKey }?.let { secrets.read(it.secretName) }
         io.github.jackwener.dsh.core.provider.fetchModelsResolving(baseUrl, k) { u, kk -> io.github.jackwener.dsh.core.provider.fetchModels(u, kk) }
     }
+    private fun keyFor(existing: ProviderConfig?, typed: String?): String? =
+        typed?.trim()?.takeIf { it.isNotEmpty() } ?: existing?.takeIf { it.hasKey }?.let { secrets.read(it.secretName) }
+
+    /** 测试并保存: real chat requests with a tool, [candidates] in order (ModelVerify.kt). [onTesting] runs on an IO thread. */
+    suspend fun verifyModels(baseUrl: String, key: String?, existing: ProviderConfig?, candidates: List<String>, onTesting: (String) -> Unit): VerifyOutcome =
+        withContext(Dispatchers.IO) {
+            val k = keyFor(existing, key)
+            verifyCandidates(candidates, onTesting = onTesting) { probeModel(baseUrl, k, it) }
+        }
+
+    /** Saves a tested provider and, when [main] is set, makes that model the main model. */
+    suspend fun saveTested(p: ProviderConfig, key: String?, main: String?) {
+        saveProvider(p, key)
+        if (main != null) repo.setModel(p.id, main)
+    }
+
+    /** A single-model test from the provider list (重新测试) or the default-model picker; null when idle. */
+    data class ModelCheck(val provider: String, val model: String, val busy: Boolean, val ok: Boolean = false, val message: String? = null)
+    val modelCheck = MutableStateFlow<ModelCheck?>(null)
+
+    /**
+     * Tests [model] of [p] the way 测试并保存 does and records the result. [select]: the user picked
+     * it as the main model; a verified model switches at once, an untested one only after it
+     * passes (or when the provider is unreachable right now: switched, flagged as untested).
+     */
+    fun checkModel(p: ProviderConfig, model: String, select: Boolean) = viewModelScope.launch {
+        if (modelCheck.value?.busy == true) return@launch
+        if (select && model in p.verified) { modelCheck.value = null; repo.setModel(p.id, model); return@launch }
+        modelCheck.value = ModelCheck(p.id, model, busy = true)
+        val f = withContext(Dispatchers.IO) { probeModel(p.baseUrl, keyFor(p, null), model) }
+        repo.updateProvider(p.id) { cur -> cur.copy(verified = if (f == null) (cur.verified + model).distinct() else cur.verified - model) }
+        modelCheck.value = when {
+            f == null -> {
+                if (select) repo.setModel(p.id, model)
+                ModelCheck(p.id, model, busy = false, ok = true, message = context.getString(R.string.prov_test_ok, model))
+            }
+            select && f is VerifyFailure.Network -> {
+                repo.setModel(p.id, model)
+                ModelCheck(p.id, model, busy = false, message = context.getString(R.string.model_pick_offline, model, describeFailure(context, f)))
+            }
+            select -> ModelCheck(p.id, model, busy = false, message = context.getString(R.string.model_pick_failed, model, describeFailure(context, f)))
+            else -> ModelCheck(p.id, model, busy = false, message = describeFailure(context, f))
+        }
+    }
+
     fun setEffort(e: Effort) = viewModelScope.launch { repo.setEffort(e) }
     fun setTheme(t: ThemeMode) = viewModelScope.launch { repo.setTheme(t) }
     fun setWorkDetails(w: WorkDetails) = viewModelScope.launch { repo.setWorkDetails(w) }
@@ -106,6 +161,54 @@ class SettingsViewModel @Inject constructor(
     fun toggleNotificationApp(pkg: String) = viewModelScope.launch {
         val cur = settings.value.notificationBlocked
         repo.setNotificationBlocked(if (pkg in cur) cur - pkg else cur + pkg)
+    }
+
+    // ── 复制诊断信息 ──
+    /** The report shown in the diagnostics sheet; null = closed. Built on request, never sent anywhere by the app. */
+    val diagnostics = MutableStateFlow<String?>(null)
+    fun openDiagnostics() = viewModelScope.launch { diagnostics.value = buildDiagnostics() }
+    fun closeDiagnostics() { diagnostics.value = null }
+
+    /** Collects the facts for [DiagnosticsReport]: versions, device, access states, routes (hosts only), recent run ends, engine errors. */
+    suspend fun buildDiagnostics(): String {
+        val st = settings.value
+        val shell = shizuku.access.refresh()
+        val screenWhy = runCatching { agentScreen.unavailableReason() }.getOrElse { it.message }
+        return withContext(Dispatchers.IO) {
+            fun granted(id: String) = runCatching { PermissionCatalog.byId(id)?.check?.invoke(context) == true }.getOrDefault(false)
+            val choice = st.choice
+            val roles = mutableListOf<Pair<String, String>>()
+            roles += "main model" to (choice.provider?.let { p -> "${p.id} / ${choice.model}" + if (choice.model in p.verified) " (passed test)" else " (not tested)" }
+                ?: "DeepSeek / ${choice.model}, effort ${st.effort.id}")
+            if (st.provider.isNotEmpty() && choice.isDeepSeek) roles += "saved selection" to "${st.provider} / ${st.model} (unavailable, DeepSeek used instead)"
+            val runs = runCatching { sessionDao.recentRunEnds(DiagnosticsReport.RUNS) }.getOrDefault(emptyList())
+                .mapNotNull { DiagnosticsReport.outcomeOf(it.type, it.time, it.json) }
+            DiagnosticsReport.build(DiagnosticsInput(
+                appVersion = io.github.jackwener.dsh.BuildConfig.VERSION_NAME,
+                versionCode = io.github.jackwener.dsh.BuildConfig.VERSION_CODE.toLong(),
+                buildType = io.github.jackwener.dsh.BuildConfig.BUILD_TYPE,
+                engineVersion = runCatching { context.assets.open("engine-version.txt").bufferedReader().use { it.readText().trim() } }.getOrNull(),
+                device = "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}",
+                androidRelease = android.os.Build.VERSION.RELEASE,
+                sdk = android.os.Build.VERSION.SDK_INT,
+                abis = android.os.Build.SUPPORTED_ABIS.toList(),
+                shizuku = shell.reason,
+                accessibility = granted("accessibility"),
+                overlay = granted("overlay"),
+                batteryExempt = granted("battery"),
+                notifications = granted("notifications"),
+                agentScreenUnavailable = screenWhy,
+                agentScreenSetting = st.agentScreen,
+                deepseekCredential = when { hasKey -> "api key"; account.signedIn -> "account"; else -> "none" },
+                roles = roles,
+                providers = st.providers.map { ProviderFacts(it.id, it.preset, it.enabled, it.baseUrl, it.models, it.verified) },
+                runs = runs,
+                engineState = when (val e = engine.state.value) { is EngineState.Failed -> "failed: " + e.message; else -> e.javaClass.simpleName.lowercase() },
+                engineErrors = DiagnosticsReport.errorLines(io.github.jackwener.dsh.core.engine.EngineDiagnostics.logTail(context, 20_000)),
+                lastEngineExit = io.github.jackwener.dsh.core.engine.EngineDiagnostics.exitRecords(context).firstOrNull()?.summary,
+                generatedAt = System.currentTimeMillis(),
+            ))
+        }
     }
 
     /** Validates against DeepSeek's /models before saving. Returns null on success, else the error. */

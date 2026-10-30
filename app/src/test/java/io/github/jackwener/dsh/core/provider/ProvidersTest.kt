@@ -82,7 +82,14 @@ class ProvidersTest {
     }
 
     @Test fun presetsAreHttpsOpenAiCompatible() {
-        PRESETS.filter { it.id != CUSTOM }.forEach { assertTrue(it.id, it.baseUrl.startsWith("https://")) }
+        // Cloud presets are https; the local ones (Ollama, LM Studio) are http on the computer, key optional, address editable.
+        PRESETS.filter { it.id != CUSTOM && it.localHint == null }.forEach { assertTrue(it.id, it.baseUrl.startsWith("https://")) }
+        PRESETS.filter { it.localHint != null }.forEach {
+            assertTrue(it.id, it.baseUrl.startsWith("http://") && it.keyOptional && it.editableUrl && NetDiagnose.isOnDeviceAddress(it.baseUrl))
+        }
+        assertEquals("http://localhost:11434/v1", presetOf("ollama")!!.baseUrl)
+        assertEquals("http://localhost:1234/v1", presetOf("lmstudio")!!.baseUrl)
+        listOf("siliconflow", "ark", "kimi", "zhipu", "minimax").forEach { assertTrue(it, presetOf(it) != null) }
         assertEquals(PRESETS.size, PRESETS.map { it.id }.toSet().size)
     }
 

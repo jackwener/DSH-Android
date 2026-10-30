@@ -143,6 +143,11 @@ class SettingsRepository @Inject constructor(@ApplicationContext private val con
         val next = if (cur.any { c -> c.id == p.id }) cur.map { c -> if (c.id == p.id) p else c } else cur + p
         it[K.providers] = json.encodeToString(providerList, next)
     }
+    /** Read-modify-write of one stored provider (no-op when it is gone), e.g. recording a test result. */
+    suspend fun updateProvider(id: String, transform: (ProviderConfig) -> ProviderConfig) = context.store.edit {
+        val cur = it[K.providers]?.let { s -> runCatching { json.decodeFromString(providerList, s) }.getOrNull() } ?: return@edit
+        it[K.providers] = json.encodeToString(providerList, cur.map { c -> if (c.id == id) transform(c) else c })
+    }
     suspend fun deleteProvider(id: String) = context.store.edit {
         val cur = it[K.providers]?.let { s -> runCatching { json.decodeFromString(providerList, s) }.getOrNull() } ?: emptyList()
         it[K.providers] = json.encodeToString(providerList, cur.filter { c -> c.id != id })

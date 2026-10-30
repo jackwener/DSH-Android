@@ -105,6 +105,9 @@ interface SessionDao {
     suspend fun events(id: String): List<EventEntity>
     @Query("DELETE FROM events WHERE sessionId = :id")
     suspend fun deleteEvents(id: String)
+    /** How the newest runs of top-level conversations ended (诊断信息). */
+    @Query("SELECT e.* FROM events e JOIN sessions s ON s.id = e.sessionId WHERE s.parentId IS NULL AND e.type IN ('turn/end', 'app/error', 'app/stopped') ORDER BY e.time DESC LIMIT :limit")
+    suspend fun recentRunEnds(limit: Int): List<EventEntity>
 }
 
 @Dao
