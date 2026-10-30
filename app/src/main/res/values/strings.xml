@@ -118,6 +118,16 @@
     <string name="turn_stopped">已停止</string>
     <string name="stopped">已停止</string>
     <string name="turn_error_title">本轮运行失败</string>
+    <string name="net_title">连不上模型服务</string>
+    <string name="net_refused">地址能到，但这个端口没有服务在听。</string>
+    <string name="net_refused_hint">用 magpie/局域网网关时，确认它监听 0.0.0.0（或局域网地址）而不是 127.0.0.1，端口填对，手机和电脑在同一网络。</string>
+    <string name="net_unreachable">连不到这个地址。</string>
+    <string name="net_unreachable_hint">检查手机网络、电脑防火墙、是否同一 Wi-Fi；访问境外服务需要代理时，在系统 Wi-Fi 设置里配置 HTTP 代理（引擎下次启动时生效）。</string>
+    <string name="net_dns">域名解析失败。</string>
+    <string name="net_dns_hint">检查地址里的域名拼写和手机网络；局域网网关请直接填电脑的 IP。</string>
+    <string name="net_tls">证书校验失败。</string>
+    <string name="net_tls_hint">局域网网关请用 http://；自签证书不支持。</string>
+    <string name="net_other">网络连接失败。</string>
     <string name="err_engine_title">智能体引擎启动失败</string>
     <string name="err_engine_lost_title">引擎连接已断开</string>
     <string name="err_engine_lost">智能体引擎意外退出，本轮已中断。</string>
@@ -635,6 +645,7 @@
     <string name="prov_base_url">接口地址（Base URL）</string>
     <string name="prov_base_url_hint">OpenAI 兼容地址，通常以 /v1 结尾</string>
     <string name="prov_http_warning">http 为明文传输，API key 和对话内容可能被同一网络中的人看到，仅建议在自己的局域网内使用</string>
+    <string name="prov_local_warning">这是手机自己的地址。电脑上的 magpie 请填电脑的局域网 IP，例如 http://192.168.1.5:端口/v1</string>
     <string name="prov_key_optional">API Key（可选）</string>
     <string name="prov_key_saved">已保存，留空则保持不变</string>
     <string name="prov_get_key">获取 API Key</string>

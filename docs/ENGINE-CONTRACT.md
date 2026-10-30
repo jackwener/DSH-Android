@@ -41,6 +41,7 @@ Environment (set with `Os.setenv` before start):
 | `NODE_COMPILE_CACHE` | `<cacheDir>/node-compile-cache` (V8 code cache) |
 | `NODE_OPTIONS` | `--max-old-space-size=768`; composed only in `EngineRuntimeEnv` (app options + runtime options, de-duplicated) |
 | `DSH_TELEMETRY_DISABLED` | `1` |
+| `HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY` (+ lowercase), `NODE_USE_ENV_PROXY=1` | only when Android has a proxy for the default network (`ConnectivityManager.getDefaultProxy()`, else the `http(s).proxyHost` properties): `http://host:port`; `NO_PROXY` = Android's exclusion list verbatim + loopback. dsh's launcher (`dsh-http-proxy`) installs fetch's global dispatcher from these; Android globs such as `192.168.*` need patch 15. argv also gets `--use-env-proxy` (`NODE_USE_ENV_PROXY` itself is ignored under AT_SECURE). PAC proxies are not applied (logged). Read at engine start; a proxy change applies on the next start. Mirrors what `HttpURLConnection` (获取模型列表) uses, so the connection test and chat take the same route. |
 
 `ENGINE_DIR` = `<filesDir>/engine/<first 16 hex chars of engine.sha256>/`, unpacked from the APK asset `engine.zip` (flat tree, **no symlinks**) when its `.installed` marker is missing; other version directories are deleted. The hash only keys the directory; it is not re-verified on the device (the APK signature covers the asset).
 

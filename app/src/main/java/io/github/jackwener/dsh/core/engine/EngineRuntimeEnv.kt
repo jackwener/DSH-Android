@@ -1,6 +1,8 @@
 package io.github.jackwener.dsh.core.engine
 
 import android.content.Context
+import android.net.ConnectivityManager
+import android.net.Uri
 import android.os.Bundle
 import android.system.Os
 import android.util.Base64
@@ -21,6 +23,8 @@ import java.security.cert.X509Certificate
  *    system may reclaim it; Node keys entries by file content and Node version, so engine updates
  *    simply miss and repopulate.
  *  - NODE_OPTIONS: app options + [RUNTIME_NODE_OPTIONS], de-duplicated by flag name.
+ *  - HTTP(S)_PROXY / NO_PROXY: Android's proxy for the default network ([EngineProxy]), read once
+ *    per engine start; with one, argv also gets `--use-env-proxy`.
  * Flags Node refuses in NODE_OPTIONS (--expose-internals) go in argv: [NODE_ARGV].
  */
 object EngineRuntimeEnv {
@@ -40,8 +44,11 @@ object EngineRuntimeEnv {
     fun nodeArgv(engineDir: File, env: Bundle): List<String> {
         val options = mergeNodeOptions(env.getString("NODE_OPTIONS"), RUNTIME_NODE_OPTIONS).split(' ').filter { it.isNotBlank() }
         val preload = File(engineDir, PRELOAD).takeIf { it.exists() }?.let { listOf("--require", it.path) } ?: emptyList()
-        return NODE_ARGV + options + preload
+        return NODE_ARGV + options + (if (proxyApplied) listOf("--use-env-proxy") else emptyList()) + preload
     }
+
+    /** [apply] exported a proxy; read by [nodeArgv] in the same (engine) process. */
+    @Volatile private var proxyApplied = false
 
     /** Options appended to the app's NODE_OPTIONS. */
     private val RUNTIME_NODE_OPTIONS = emptyList<String>()
@@ -52,8 +59,31 @@ object EngineRuntimeEnv {
         CaBundle.export(context)?.let { vars["NODE_EXTRA_CA_CERTS"] = it.path }
         vars["NODE_COMPILE_CACHE"] = File(context.cacheDir, "node-compile-cache").apply { mkdirs() }.path
         mergeNodeOptions(vars["NODE_OPTIONS"], RUNTIME_NODE_OPTIONS).takeIf { it.isNotEmpty() }?.let { vars["NODE_OPTIONS"] = it }
+        val proxy = systemProxy(context)?.also { Log.i(TAG, "engine proxy ${it.host}:${it.port}, ${it.exclusions.size} exclusions") }
+        val proxyEnv = EngineProxy.env(proxy)
+        EngineProxy.ENV_NAMES.forEach { if (it !in proxyEnv) runCatching { Os.unsetenv(it) } }
+        vars += proxyEnv
+        proxyApplied = proxyEnv.isNotEmpty()
         vars.forEach { (k, v) -> Os.setenv(k, v, true) }
     }
+
+    /**
+     * The proxy HttpURLConnection would use: [ConnectivityManager.getDefaultProxy] (Wi-Fi, global
+     * or VPN proxy of the default network), else the `http(s).proxyHost` properties Android sets in
+     * every app process. A PAC proxy is skipped: Node has no PAC evaluator.
+     */
+    private fun systemProxy(context: Context): EngineProxy.Proxy? = runCatching {
+        val info = context.getSystemService(ConnectivityManager::class.java)?.defaultProxy
+        if (info != null && info.pacFileUrl != null && info.pacFileUrl != Uri.EMPTY) {
+            Log.i(TAG, "PAC proxy configured; not applied to the engine (requests go direct)")
+            return null
+        }
+        if (info != null && !info.host.isNullOrBlank() && info.port > 0)
+            return EngineProxy.Proxy(info.host, info.port, info.exclusionList.orEmpty().toList())
+        val host = System.getProperty("https.proxyHost")?.takeIf { it.isNotBlank() } ?: System.getProperty("http.proxyHost")?.takeIf { it.isNotBlank() } ?: return null
+        val port = (System.getProperty("https.proxyPort") ?: System.getProperty("http.proxyPort"))?.toIntOrNull() ?: 80
+        EngineProxy.Proxy(host, port, EngineProxy.parseNonProxyHosts(System.getProperty("http.nonProxyHosts")))
+    }.onFailure { Log.w(TAG, "reading the system proxy failed; engine connects directly", it) }.getOrNull()
 
     /** Joins option lists; a later `--flag[=value]` replaces an earlier one with the same name. */
     fun mergeNodeOptions(base: String?, extra: List<String>): String {

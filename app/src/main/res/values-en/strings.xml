@@ -118,6 +118,16 @@
     <string name="turn_stopped">Stopped</string>
     <string name="stopped">Stopped</string>
     <string name="turn_error_title">This turn failed</string>
+    <string name="net_title">Can\'t reach the model service</string>
+    <string name="net_refused">The address is reachable, but nothing is listening on this port.</string>
+    <string name="net_refused_hint">For magpie or another LAN gateway: make it listen on 0.0.0.0 (or the LAN address), not 127.0.0.1; check the port; keep the phone and the computer on the same network.</string>
+    <string name="net_unreachable">This address can\'t be reached.</string>
+    <string name="net_unreachable_hint">Check the phone\'s network, the computer\'s firewall and that both are on the same Wi-Fi. If the service needs a proxy, set an HTTP proxy in the system Wi-Fi settings (applies on the next engine start).</string>
+    <string name="net_dns">The host name could not be resolved.</string>
+    <string name="net_dns_hint">Check the host name and the phone\'s network; for a LAN gateway enter the computer\'s IP address.</string>
+    <string name="net_tls">Certificate verification failed.</string>
+    <string name="net_tls_hint">Use http:// for a LAN gateway; self-signed certificates are not supported.</string>
+    <string name="net_other">Network connection failed.</string>
     <string name="err_engine_title">The agent engine failed to start</string>
     <string name="err_engine_lost_title">Engine connection lost</string>
     <string name="err_engine_lost">The agent engine exited unexpectedly; this turn was interrupted.</string>
@@ -635,6 +645,7 @@
     <string name="prov_base_url">Base URL</string>
     <string name="prov_base_url_hint">OpenAI-compatible, usually ending in /v1</string>
     <string name="prov_http_warning">http is unencrypted: the API key and conversations can be seen by others on the same network. Use it only on your own LAN.</string>
+    <string name="prov_local_warning">This is the phone\'s own address. For magpie on your computer, enter the computer\'s LAN IP, e.g. http://192.168.1.5:port/v1</string>
     <string name="prov_key_optional">API Key (optional)</string>
     <string name="prov_key_saved">Saved; leave empty to keep it</string>
     <string name="prov_get_key">Get an API key</string>

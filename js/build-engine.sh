@@ -168,6 +168,8 @@ grep -q 'promptTimeZone' "$NM/@deepseek-ai/dsh-sdk-jsonrpc-server/lib/index.js" 
 [[ ! -e "$NM/@earendil-works/pi-ai" && ! -e "$NM/openai" ]] || die "provider SDK prune failed"
 [[ -f "$NM/@img/sharp-wasm32/package.json" ]] || die "sharp wasm build missing"
 [[ -f "$NM/@snnh/dsh-llm-service-lite/lib/index.js" && -f "$NM/eventsource-parser/package.json" ]] || die "llm-service-lite or eventsource-parser missing"
+grep -q 'describeTransportCause' "$NM/@snnh/dsh-llm-service-lite/lib/index.js" || die "llm-service-lite transport-cause patch missing"
+grep -q 'patch 15' "$NM/@deepseek-ai/dsh-http-proxy/lib/index.js" || die "http-proxy exclusion-glob patch missing"
 log "no symlinks; entry point and patches verified"
 
 # ── 8. version, zip, digest, report ──────────────────────────────────────────

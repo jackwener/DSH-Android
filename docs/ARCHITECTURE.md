@@ -46,6 +46,7 @@ Shizuku 用户服务（shell uid，可选）：ShellUserService
 | `TZ` / `DSH_ANDROID_TZ` | 设备时区；时区变化后在空闲时重启引擎 |
 | `DEEPSEEK_API_KEY` | 已配置 API key 时才设置 |
 | `DSH_ANDROID_KEY_<ID>` | 每个已启用且存了 key 的第三方服务商一个 |
+| `HTTP(S)_PROXY` / `NO_PROXY` | 系统为当前网络设置了代理（Wi-Fi 代理、全局代理、VPN 的代理模式）时才设置，和 `HttpURLConnection`（获取模型列表）走同一条路；排除列表照搬 Android（含 `192.168.*` 这类通配，js patch 15），回环地址总是直连。PAC 不支持。引擎启动时读取，代理变化在下次启动生效 |
 
 启动后先请求 `account/state`，再 `initialize`（provider、model、reasoningEffort 都是进程级的）。模型、思考强度或凭据路由变化时：本代引擎还没开过会话就重新 `initialize`，开过会话就在空闲时重启。第三方服务商的配置（用户 patch 层 + key 环境变量，见下文“模型服务”）只在进程启动时读取，变化后在空闲时重启。
 
