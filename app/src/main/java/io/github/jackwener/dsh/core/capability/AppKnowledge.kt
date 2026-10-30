@@ -38,12 +38,12 @@ class AppKnowledge internal constructor(private val source: () -> List<Pair<Stri
 
     fun forPackage(packageName: String): Entry? = byPackage[packageName]
 
-    /** By id, display name, alias or package (case-insensitive); then by a name containing [query]. */
+    /** By id, display name, alias or package (case-insensitive); then by a name containing [query] ("微信读书" is not 微信). */
     fun find(query: String): Entry? {
         val q = query.trim().lowercase().takeIf { it.isNotEmpty() } ?: return null
         fun names(e: Entry) = (listOf(e.id, e.display) + e.aliases + e.packages).map { it.lowercase() }
         return entries.firstOrNull { e -> q in names(e) }
-            ?: entries.firstOrNull { e -> names(e).any { it.length >= 2 && (q.contains(it) || it.contains(q)) } }
+            ?: entries.firstOrNull { e -> q.length >= 2 && names(e).any { it.contains(q) } }
     }
 
     /**

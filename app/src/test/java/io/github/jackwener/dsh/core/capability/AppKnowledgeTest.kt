@@ -31,6 +31,8 @@ class AppKnowledgeTest {
         assertEquals("wechat", k.find("com.tencent.mm")?.id)
         assertEquals("bilibili", k.find("B站")?.id)
         assertEquals("xiaohongshu", k.find("xhs")?.id)
+        assertEquals("boss-zhipin", k.find("直聘")?.id)
+        assertNull(k.find("微信读书"))
         assertNull(k.find("不存在的应用"))
     }
 
