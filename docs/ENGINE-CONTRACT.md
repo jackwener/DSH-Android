@@ -57,7 +57,7 @@ phone) and fully regenerates it; it holds no secret. Values are JSON (valid YAML
 - id: llm-service-lite          # mounted dormant by bundle-android (@snnh/dsh-llm-service-lite, vendored)
   config: {"providers":{"<route id>":{"displayName":"Kimi","interfaceType":"openai-chat-completions",
            "baseURL":"https://api.moonshot.cn/v1","apiKeyEnv":"DSH_ANDROID_KEY_KIMI","includeUsage":true,
-           "models":[{"id":"kimi-k3","contextWindow":131072,"defaults":{"maxTokens":16384}}]}}}
+           "models":[{"id":"kimi-k3","contextWindow":131072,"maxTokens":16384,"defaults":{"maxTokens":16384}}]}}}
 - id: compaction-basic          # per third-party model: headroomTokens 16384 (compacts at ~75 % of 128K, not 37 %)
   config: {"modelPolicies":[{"provider":"<route id>","model":"kimi-k3","headroomTokens":16384}]}
 - id: tool-web                  # only when web search is unavailable (below)
@@ -65,9 +65,13 @@ phone) and fully regenerates it; it holds no secret. Values are JSON (valid YAML
 ```
 
 or just `[]` when no provider is enabled and web search is available. Only enabled providers with ≥ 1 model are
-written; `apiKeyEnv` only when a key is stored (an open endpoint gets no credential). Every model gets the same
-`contextWindow` 131072 and request cap `maxTokens` 16384 (sent as `max_tokens`; some vendors default to 1–4K and
-truncate tool calls). No reasoning effort is configured: the adapter applies the model family's documented default.
+written; `apiKeyEnv` only when a key is stored (an open endpoint gets no credential). Each model gets its effective
+`contextWindow` and output cap `maxTokens` (also `defaults.maxTokens`, sent as `max_tokens`; some vendors default to
+1–4K and truncate tool calls): per-model override › provider-level override (设置 → 模型服务 「上下文窗口」「最大输出」) ›
+the value `/models` reported (`context_length`, `context_window`, `max_model_len`, `max_context_length`,
+`top_provider.*`, `max_completion_tokens`, …) › 131072 / 16384. Window clamped to 4096–10M; the output cap to half the
+window when set by hand, a quarter otherwise; `headroomTokens` is min(16384, window/8). The composer's context ring
+uses the same window and names its source. No reasoning effort is configured: the adapter applies the model family's documented default.
 Route ids are the preset id (`kimi`, then `kimi-2`, …), never `deepseek-*`.
 
 Web search (`web_search`, DeepSeek search) needs a DeepSeek credential: `DEEPSEEK_API_KEY`, or the account login while

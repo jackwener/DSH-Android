@@ -3,7 +3,9 @@ package io.github.jackwener.dsh.core.provider
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
@@ -68,6 +70,12 @@ data class ProviderConfig(
     val enabled: Boolean = true,
     /** A key is stored for it in SecretStore (the value itself never leaves Keystore-encrypted storage except as env). */
     val hasKey: Boolean = false,
+    /** User-set context window for every model of this route (null = per model / detected / default). */
+    val contextWindow: Long? = null,
+    /** User-set output cap (`max_tokens`) for every model of this route. */
+    val maxTokens: Int? = null,
+    /** Per-model limits: the user's overrides and what `/models` reported. Absent = nothing known. */
+    val limits: Map<String, ModelLimits> = emptyMap(),
 ) {
     /** `apiKeyEnv` the engine resolves per request; set in the `:engine` environment only. */
     val keyEnv: String get() = keyEnvOf(id)
@@ -83,23 +91,83 @@ fun newRouteId(preset: String, existing: Collection<String>): String {
     return generateSequence(2) { it + 1 }.map { "$base-$it" }.first { it !in existing }
 }
 
-/** Fixed facts for every third-party model (no per-model matrices; see MAGPIE-RESEARCH / ARCHITECTURE). */
+/** One model's limits as stored: user overrides and the values the endpoint's `/models` reported. */
+@Serializable
+data class ModelLimits(
+    val contextWindow: Long? = null,
+    val maxTokens: Int? = null,
+    val detectedContextWindow: Long? = null,
+    val detectedMaxTokens: Int? = null,
+) {
+    val isEmpty get() = contextWindow == null && maxTokens == null && detectedContextWindow == null && detectedMaxTokens == null
+}
+
+/** Where an effective limit came from (shown next to the value). */
+enum class LimitSource { DETECTED, MANUAL, DEFAULT }
+
+/** The limits a third-party model actually runs with (UI ring and the engine patch agree on these). */
+data class EffectiveLimits(
+    val contextWindow: Long,
+    val contextSource: LimitSource,
+    val maxTokens: Int,
+    val maxTokensSource: LimitSource,
+    /** compaction-basic `headroomTokens`: dsh compacts at min(80 % window, window − maxTokens − headroom). */
+    val compactionHeadroom: Int,
+)
+
+/** Defaults and sanity bounds for third-party models (no per-model matrices; see ARCHITECTURE). */
 object ThirdParty {
-    /** Advertised context window. Conservative: most current models have ≥128K. */
-    const val CONTEXT_WINDOW = 131_072L
-    /** Request output cap (`max_tokens`): vendors' own defaults are sometimes tiny (1–4K), truncating tool calls. */
-    const val MAX_TOKENS = 16_384
+    /** Context window when neither the user nor `/models` says. Conservative: most current models have ≥128K. */
+    const val DEFAULT_CONTEXT_WINDOW = 131_072L
+    /** Output cap (`max_tokens`) when unset: vendors' own defaults are sometimes tiny (1–4K), truncating tool calls. */
+    const val DEFAULT_MAX_TOKENS = 16_384
     /**
-     * Compaction headroom for these models. dsh's default (64K) on a 128K window would compact at
+     * Compaction headroom. dsh's default (64K) on a 128K window would compact at
      * 128K − 16K − 64K = 48K; with 16K it compacts at ~96K (75 %), still well inside the window.
+     * Capped at 1/8 of the window so tiny windows keep a positive threshold.
      */
     const val COMPACTION_HEADROOM = 16_384
+    const val MIN_CONTEXT_WINDOW = 4_096L
+    const val MAX_CONTEXT_WINDOW = 10_000_000L
+    const val MIN_MAX_TOKENS = 256
+
+    /**
+     * Resolve one model's limits. Precedence: per-model override, provider-level override, the
+     * `/models` value, the default. Bounds: window in [MIN_CONTEXT_WINDOW, MAX_CONTEXT_WINDOW];
+     * output cap at most half the window when the user set it, a quarter otherwise (a listed
+     * `max_completion_tokens` is the model's ceiling, not a good per-request ask, and a big cap
+     * pulls the compaction threshold window − maxTokens − headroom down).
+     */
+    fun resolve(model: ModelLimits?, providerWindow: Long?, providerMaxTokens: Int?): EffectiveLimits {
+        val (rawCtx, ctxSrc) = when {
+            model?.contextWindow != null -> model.contextWindow to LimitSource.MANUAL
+            providerWindow != null -> providerWindow to LimitSource.MANUAL
+            model?.detectedContextWindow != null -> model.detectedContextWindow to LimitSource.DETECTED
+            else -> DEFAULT_CONTEXT_WINDOW to LimitSource.DEFAULT
+        }
+        val ctx = rawCtx.coerceIn(MIN_CONTEXT_WINDOW, MAX_CONTEXT_WINDOW)
+        val (rawMax, maxSrc) = when {
+            model?.maxTokens != null -> model.maxTokens to LimitSource.MANUAL
+            providerMaxTokens != null -> providerMaxTokens to LimitSource.MANUAL
+            model?.detectedMaxTokens != null -> model.detectedMaxTokens to LimitSource.DETECTED
+            else -> DEFAULT_MAX_TOKENS to LimitSource.DEFAULT
+        }
+        val cap = (if (maxSrc == LimitSource.MANUAL) ctx / 2 else ctx / 4).toInt()
+        val max = rawMax.coerceIn(MIN_MAX_TOKENS, cap)
+        return EffectiveLimits(ctx, ctxSrc, max, maxSrc, minOf(COMPACTION_HEADROOM.toLong(), ctx / 8).toInt())
+    }
 }
+
+fun ProviderConfig.limitsOf(model: String): EffectiveLimits = ThirdParty.resolve(limits[model], contextWindow, maxTokens)
 
 /** What the composer / engine route resolves to. `provider == null` is DeepSeek. */
 data class ModelChoice(val provider: ProviderConfig?, val model: String) {
     val isDeepSeek get() = provider == null
-    val contextWindow get() = if (provider == null) DEEPSEEK_CONTEXT else ThirdParty.CONTEXT_WINDOW
+    /** Third-party limits; null for DeepSeek. */
+    val limits: EffectiveLimits? get() = provider?.limitsOf(model)
+    val contextWindow get() = limits?.contextWindow ?: DEEPSEEK_CONTEXT
+    /** Where [contextWindow] came from; null for DeepSeek (a fixed fact). */
+    val contextSource get() = limits?.contextSource
     companion object { const val DEEPSEEK_CONTEXT = 1_000_000L }
 }
 
@@ -144,10 +212,13 @@ fun renderProfilePatch(providers: List<ProviderConfig>, webSearch: Boolean): Str
                         put("includeUsage", true)
                         putJsonArray("models") {
                             p.models.forEach { m ->
+                                val l = p.limitsOf(m)
                                 addJsonObject {
                                     put("id", m)
-                                    put("contextWindow", ThirdParty.CONTEXT_WINDOW)
-                                    putJsonObject("defaults") { put("maxTokens", ThirdParty.MAX_TOKENS) }
+                                    put("contextWindow", l.contextWindow)
+                                    // Capacity and the per-request ask (sent as max_tokens) are the same value.
+                                    put("maxTokens", l.maxTokens)
+                                    putJsonObject("defaults") { put("maxTokens", l.maxTokens) }
                                 }
                             }
                         }
@@ -158,7 +229,7 @@ fun renderProfilePatch(providers: List<ProviderConfig>, webSearch: Boolean): Str
         sb.append("- id: llm-service-lite\n  config: ").append(json.encodeToString(JsonObject.serializer(), providersJson)).append('\n')
         val compaction = buildJsonObject {
             putJsonArray("modelPolicies") {
-                active.forEach { p -> p.models.forEach { m -> addJsonObject { put("provider", p.id); put("model", m); put("headroomTokens", ThirdParty.COMPACTION_HEADROOM) } } }
+                active.forEach { p -> p.models.forEach { m -> addJsonObject { put("provider", p.id); put("model", m); put("headroomTokens", p.limitsOf(m).compactionHeadroom) } } }
             }
         }
         sb.append("- id: compaction-basic\n  config: ").append(json.encodeToString(JsonObject.serializer(), compaction)).append('\n')
@@ -168,12 +239,15 @@ fun renderProfilePatch(providers: List<ProviderConfig>, webSearch: Boolean): Str
     return sb.toString()
 }
 
+/** One `/models` entry: the id and whatever limits the endpoint reports for it. */
+data class RemoteModel(val id: String, val contextWindow: Long? = null, val maxTokens: Int? = null)
+
 /**
  * `GET {baseUrl}/models` (OpenAI shape `{data:[{id}]}`, or a bare array / `{models:[…]}`).
  * Doubles as the connection test. Runs on the caller's thread (call from Dispatchers.IO).
  * https, or http for a user's LAN gateway (network_security_config permits cleartext).
  */
-fun fetchModels(baseUrl: String, key: String?): Result<List<String>> = runCatching {
+fun fetchModels(baseUrl: String, key: String?): Result<List<RemoteModel>> = runCatching {
     val url = URL(baseUrl.trim().trimEnd('/') + "/models")
     val c = url.openConnection() as HttpURLConnection
     try {
@@ -187,19 +261,78 @@ fun fetchModels(baseUrl: String, key: String?): Result<List<String>> = runCatchi
         val code = c.responseCode
         val body = (if (code in 200..299) c.inputStream else c.errorStream)?.use { it.readBytes().decodeToString().take(4_000_000) }.orEmpty()
         if (code !in 200..299) error("HTTP $code ${body.take(160).replace('\n', ' ')}".trim())
-        parseModelIds(body)
+        parseModels(body)
     } finally { c.disconnect() }
 }
 
-fun parseModelIds(body: String): List<String> {
+fun parseModelIds(body: String): List<String> = parseModels(body).map { it.id }
+
+/**
+ * Context-window fields seen in `/models` listings, in order of preference:
+ * OpenRouter / Moonshot / Together / Fireworks `context_length`, Groq `context_window`,
+ * vLLM / sglang `max_model_len`, Mistral / LM Studio `max_context_length`, Anthropic
+ * `max_input_tokens`, llama.cpp `n_ctx`, Gemini `inputTokenLimit`.
+ */
+private val CONTEXT_KEYS = listOf("context_length", "context_window", "max_model_len", "max_context_length", "max_input_tokens", "n_ctx", "inputTokenLimit", "contextWindow", "context_size")
+/** Output-cap fields: OpenAI-style `max_output_tokens`, Groq / OpenRouter `max_completion_tokens`, Gemini `outputTokenLimit`. */
+private val OUTPUT_KEYS = listOf("max_output_tokens", "max_completion_tokens", "outputTokenLimit", "max_tokens", "maxOutputTokens", "maxTokens")
+/** Nested objects that carry the same fields (OpenRouter `top_provider`, llama.cpp `meta`, DeepInfra `metadata`). */
+private val NESTED_KEYS = listOf("top_provider", "meta", "metadata", "limits")
+
+/** A positive whole number from a JSON number or numeric string (`262144`, `262144.0`, `"262144"`). */
+private fun positiveCount(e: JsonElement?): Long? {
+    val p = e as? JsonPrimitive ?: return null
+    val d = p.content.trim().toDoubleOrNull() ?: return null
+    if (!d.isFinite() || d < 1 || d != Math.floor(d) || d > Long.MAX_VALUE / 2) return null
+    return d.toLong()
+}
+
+private fun firstCount(o: JsonObject, keys: List<String>): Long? {
+    keys.forEach { k -> positiveCount(o[k])?.let { return it } }
+    NESTED_KEYS.forEach { n -> (o[n] as? JsonObject)?.let { inner -> keys.forEach { k -> positiveCount(inner[k])?.let { return it } } } }
+    return null
+}
+
+/** Parse a `/models` body into entries (sorted by id, distinct) with any reported limits. */
+fun parseModels(body: String): List<RemoteModel> {
     val root = Json.parseToJsonElement(body)
-    val arr: JsonArray = when {
-        root is JsonArray -> root
-        root is JsonObject && root["data"] is JsonArray -> root["data"]!!.jsonArray
-        root is JsonObject && root["models"] is JsonArray -> root["models"]!!.jsonArray
+    val entries: List<Pair<String?, JsonElement>> = when {
+        root is JsonArray -> root.map { null to it }
+        root is JsonObject && root["data"] is JsonArray -> root["data"]!!.jsonArray.map { null to it }
+        root is JsonObject && root["models"] is JsonArray -> root["models"]!!.jsonArray.map { null to it }
+        root is JsonObject && root["models"] is JsonObject -> root["models"]!!.jsonObject.entries.map { (k, v) -> k to v }
         else -> error("unexpected /models response")
     }
-    return arr.mapNotNull { e ->
-        runCatching { (e as? JsonObject)?.let { o -> (o["id"] ?: o["name"] ?: o["model"])?.jsonPrimitive?.content } ?: e.jsonPrimitive.content }.getOrNull()
-    }.map { it.removePrefix("models/") }.filter { it.isNotBlank() }.distinct().sorted()
+    return entries.mapNotNull { (key, e) ->
+        runCatching {
+            val o = e as? JsonObject
+            val id = o?.let { (it["id"] ?: it["name"] ?: it["model"])?.jsonPrimitive?.content } ?: key ?: e.jsonPrimitive.content
+            val ctx = o?.let { firstCount(it, CONTEXT_KEYS) }
+            val out = o?.let { firstCount(it, OUTPUT_KEYS) }?.coerceAtMost(Int.MAX_VALUE.toLong())?.toInt()
+            RemoteModel(id.removePrefix("models/"), ctx, out)
+        }.getOrNull()
+    }.filter { it.id.isNotBlank() }.distinctBy { it.id }.sortedBy { it.id }
+}
+
+/** The editor's model list after a successful fetch, and which kept entries the endpoint no longer returned. */
+data class OfferedRefresh(val offered: List<String>, val missing: List<String>)
+
+/**
+ * After a successful `/models` fetch the list is exactly what the endpoint returned, except that
+ * [keep] (models the user checked, or typed in by hand) the endpoint did not return stay on top,
+ * flagged as missing, so the user decides about them instead of losing them silently.
+ */
+fun refreshOffered(current: List<String>, fetched: List<String>, keep: Collection<String>): OfferedRefresh {
+    val returned = fetched.toSet()
+    val keepSet = keep.toSet()
+    val missing = (current.filter { it in keepSet } + keep).filter { it !in returned }.distinct()
+    return OfferedRefresh(missing + fetched.distinct(), missing)
+}
+
+/** User text for a token count: digits (separators `,` `_` and spaces ignored); blank = null; else invalid. */
+fun parseTokenInput(text: String): Result<Long?> {
+    val t = text.filter { it != ',' && it != '_' && !it.isWhitespace() }
+    if (t.isEmpty()) return Result.success(null)
+    val n = t.toLongOrNull()?.takeIf { it > 0 } ?: return Result.failure(IllegalArgumentException(text))
+    return Result.success(n)
 }
