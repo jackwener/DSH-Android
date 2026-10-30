@@ -1,0 +1,52 @@
+--- a/@snnh/dsh-llm-service-lite/lib/index.js
++++ b/@snnh/dsh-llm-service-lite/lib/index.js
+@@ -3915,7 +3915,9 @@
+ 		out.push(...reasoningItems(message, replayed, model.reasoningContent, model.encryptedReplay, sameSource));
+ 		const text = textOf(message);
+ 		if (text.length > 0) {
+-			const itemId = replayed?.find((entry) => entry.type === "text")?.itemId;
++			const textReplay = replayed?.find((entry) => entry.type === "text");
++			const itemId = textReplay?.itemId;
++			const phase = textReplay?.phase;
+ 			out.push({
+ 				type: "message",
+ 				role: "assistant",
+@@ -3924,7 +3926,8 @@
+ 					text,
+ 					annotations: []
+ 				}],
+-				...itemId === void 0 ? {} : { id: itemId }
++				...itemId === void 0 ? {} : { id: itemId },
++				...phase === "commentary" || phase === "final_answer" ? { phase } : {}
+ 			});
+ 		}
+ 		const calls = [];
+@@ -4034,6 +4037,8 @@
+ 			type: "function",
+ 			name: tool.name,
+ 			description: tool.description,
++			// DSH-Android (patch 17): preserve Chat Completions tool-schema semantics.
++			strict: false,
+ 			parameters: tool.parameters
+ 		})) },
+ 		...reasoning.reasoning === void 0 ? {} : { reasoning: reasoning.reasoning },
+@@ -4294,6 +4299,8 @@
+ 	*/
+ 	const keepItem = (slot, item) => {
+ 		const id = asText(item["id"]);
++		const phase = item["phase"];
++		if (slot.entry.type === "text" && (phase === "commentary" || phase === "final_answer")) slot.entry.phase = phase;
+ 		if (slot.entry.type !== "reasoning" || item["type"] !== "reasoning") return;
+ 		if (id === void 0 || id.length === 0) return;
+ 		const next = JSON.stringify(item);
+@@ -4340,7 +4347,9 @@
+ 		const authoritative = kind === "text" ? messageItemText(item) : reasoningItemText(item);
+ 		const existing = (key === void 0 ? void 0 : slots.get(key)) ?? (itemId === void 0 ? void 0 : byItemId.get(itemId));
+ 		if (existing === void 0) {
+-			if (authoritative.length === 0) return;
++			// A reasoning item can carry only encrypted state and no visible summary.
++			// Keep an empty durable block so tool follow-ups can replay that state.
++			if (authoritative.length === 0 && !(kind === "reasoning" && encryptedPayloadOf(JSON.stringify(item)) !== void 0)) return;
+ 			const { slot } = ensure(key ?? `item:${kind}:${String(nextIndex)}`, kind);
+ 			sawOutput = true;
+ 			slot.text = authoritative;

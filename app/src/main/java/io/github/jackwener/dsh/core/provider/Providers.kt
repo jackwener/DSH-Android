@@ -19,7 +19,7 @@ import java.net.URI
 import java.net.URL
 
 /**
- * Third-party model providers (OpenAI-compatible Chat Completions endpoints), served in the engine
+ * Third-party model providers (OpenAI Responses or compatible Chat Completions), served in the engine
  * by the vendored `@snnh/dsh-llm-service-lite` row. See docs/ENGINE-CONTRACT.md §1.1.
  *
  * Presets: base URLs follow magpie's provider table (github.com/yetone/magpie,
@@ -59,7 +59,7 @@ const val CUSTOM = "custom"
 
 fun presetOf(id: String?): ProviderPreset? = PRESETS.firstOrNull { it.id == id }
 
-/** One configured provider = one engine route (`id`), all its models on Chat Completions. */
+/** One configured provider = one engine route (`id`); the endpoint determines the wire protocol. */
 @Serializable
 data class ProviderConfig(
     /** Route id: the preset id, `-2`, `-3`… for repeats. Never a DeepSeek route name. */
@@ -120,7 +120,7 @@ data class EffectiveLimits(
 object ThirdParty {
     /** Context window when neither the user nor `/models` says. Conservative: most current models have ≥128K. */
     const val DEFAULT_CONTEXT_WINDOW = 131_072L
-    /** Output cap (`max_tokens`) when unset: vendors' own defaults are sometimes tiny (1–4K), truncating tool calls. */
+    /** Output cap when unset: vendors' own defaults are sometimes tiny (1–4K), truncating tool calls. */
     const val DEFAULT_MAX_TOKENS = 16_384
     /**
      * Compaction headroom. dsh's default (64K) on a 128K window would compact at
@@ -205,21 +205,27 @@ fun renderProfilePatch(providers: List<ProviderConfig>, webSearch: Boolean): Str
         val providersJson = buildJsonObject {
             putJsonObject("providers") {
                 active.forEach { p ->
+                    val baseUrl = p.baseUrl.trim().trimEnd('/')
+                    // OpenAI's newer models require Responses for reasoning with function tools.
+                    // Inspect the actual host: custom routes may use OpenAI and OpenAI presets may use a gateway.
+                    val responses = runCatching { URI(baseUrl).host.equals("api.openai.com", ignoreCase = true) }.getOrDefault(false)
                     putJsonObject(p.id) {
                         put("displayName", p.name)
-                        put("interfaceType", "openai-chat-completions")
-                        put("baseURL", p.baseUrl.trim().trimEnd('/'))
+                        put("interfaceType", if (responses) "openai-responses" else "openai-chat-completions")
+                        put("baseURL", baseUrl)
                         if (p.hasKey) put("apiKeyEnv", p.keyEnv)
-                        put("includeUsage", true)
+                        if (responses) putJsonObject("extraBody") { put("store", false) }
+                        else put("includeUsage", true)
                         putJsonArray("models") {
                             p.models.forEach { m ->
                                 val l = p.limitsOf(m)
                                 addJsonObject {
                                     put("id", m)
                                     put("contextWindow", l.contextWindow)
-                                    // Capacity and the per-request ask (sent as max_tokens) are the same value.
+                                    // Capacity and the per-request ask use the same value on either protocol.
                                     put("maxTokens", l.maxTokens)
                                     putJsonObject("defaults") { put("maxTokens", l.maxTokens) }
+                                    if (responses) putJsonObject("capabilities") { put("responsesEncryptedReplay", true) }
                                 }
                             }
                         }

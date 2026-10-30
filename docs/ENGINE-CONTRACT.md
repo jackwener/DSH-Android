@@ -66,12 +66,17 @@ phone) and fully regenerates it; it holds no secret. Values are JSON (valid YAML
 
 or just `[]` when no provider is enabled and web search is available. Only enabled providers with ≥ 1 model are
 written; `apiKeyEnv` only when a key is stored (an open endpoint gets no credential). Each model gets its effective
-`contextWindow` and output cap `maxTokens` (also `defaults.maxTokens`, sent as `max_tokens`; some vendors default to
+`contextWindow` and output cap `maxTokens` (also `defaults.maxTokens`, sent as `max_tokens` on Chat Completions; some vendors default to
 1–4K and truncate tool calls): per-model override › provider-level override (设置 → 模型服务 「上下文窗口」「最大输出」) ›
 the value `/models` reported (`context_length`, `context_window`, `max_model_len`, `max_context_length`,
 `top_provider.*`, `max_completion_tokens`, …) › 131072 / 16384. Window clamped to 4096–10M; the output cap to half the
 window when set by hand, a quarter otherwise; `headroomTokens` is min(16384, window/8). The composer's context ring
 uses the same window and names its source. No reasoning effort is configured: the adapter applies the model family's documented default.
+
+The exact `api.openai.com` host uses `openai-responses` instead, even for a custom preset. This route omits
+`includeUsage`, sets `extraBody: {"store":false}`, and declares `capabilities: {"responsesEncryptedReplay":true}`
+on every model. The adapter sends `max_output_tokens`, requests encrypted reasoning for reasoning models, and
+replays it with function calls and outputs on the next turn. Other hosts keep Chat Completions regardless of preset name.
 Route ids are the preset id (`kimi`, then `kimi-2`, …), never `deepseek-*`.
 
 Web search (`web_search`, DeepSeek search) needs a DeepSeek credential: `DEEPSEEK_API_KEY`, or the account login while

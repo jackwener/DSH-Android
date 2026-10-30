@@ -5,6 +5,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import kotlinx.serialization.json.*
 
 class ProvidersTest {
     private val kimi = ProviderConfig("kimi", "kimi", "Kimi", "https://api.moonshot.cn/v1/", listOf("kimi-k3"), hasKey = true)
@@ -63,6 +64,56 @@ class ProvidersTest {
         val off = renderProfilePatch(emptyList(), webSearch = false)
         assertTrue(off.contains("- id: tool-web\n  config: {\"search\":false,\"fetch\":true,\"searchTimeoutMs\":60000}"))
         assertFalse(off.contains("llm-service-lite"))
+    }
+
+    @Test fun officialOpenAiUsesStatelessResponsesWithEncryptedReplay() {
+        // The actual endpoint decides the protocol, even for a custom preset or renamed route.
+        for (url in listOf("https://api.openai.com/v1", " https://API.OPENAI.COM/v1/ ")) {
+            val p = custom.copy(baseUrl = url, models = listOf("gpt-6.1-terra"), hasKey = true)
+            val yml = renderProfilePatch(listOf(p), webSearch = true)
+            val config = Json.parseToJsonElement(yml.lineSequence().first { it.startsWith("  config:") }.substringAfter("  config:")).jsonObject
+            val route = config.getValue("providers").jsonObject.getValue(p.id).jsonObject
+            assertEquals("openai-responses", route.getValue("interfaceType").jsonPrimitive.content)
+            assertFalse(route.containsKey("includeUsage"))
+            assertFalse(route.getValue("extraBody").jsonObject.getValue("store").jsonPrimitive.boolean)
+            assertEquals(p.keyEnv, route.getValue("apiKeyEnv").jsonPrimitive.content)
+            val model = route.getValue("models").jsonArray.single().jsonObject
+            assertEquals("gpt-6.1-terra", model.getValue("id").jsonPrimitive.content)
+            assertTrue(model.getValue("capabilities").jsonObject.getValue("responsesEncryptedReplay").jsonPrimitive.boolean)
+            assertEquals(ThirdParty.DEFAULT_MAX_TOKENS, model.getValue("defaults").jsonObject.getValue("maxTokens").jsonPrimitive.int)
+        }
+    }
+
+    @Test fun gatewaysKeepChatCompletionsRegardlessOfPresetOrModelName() {
+        for (url in listOf("https://gw.example/v1", "https://api.openai.com.example.org/v1", "http://127.0.0.1:8080/v1")) {
+            val p = custom.copy(preset = "openai", baseUrl = url, models = listOf("gpt-6.1-terra"))
+            val yml = renderProfilePatch(listOf(p), webSearch = true)
+            assertTrue(yml.contains("\"interfaceType\":\"openai-chat-completions\""))
+            assertTrue(yml.contains("\"includeUsage\":true"))
+            assertFalse(yml.contains("responsesEncryptedReplay"))
+            assertFalse(yml.contains("\"store\""))
+        }
+    }
+
+    @Test fun officialOpenAiRetainsProviderAndPerModelLimits() {
+        val p = custom.copy(
+            baseUrl = "https://api.openai.com/v1",
+            models = listOf("gpt-6.1-terra", "gpt-5"),
+            contextWindow = 262144L,
+            maxTokens = 32768,
+            limits = mapOf("gpt-6.1-terra" to ModelLimits(contextWindow = 524288L, maxTokens = 65536)),
+        )
+        val yml = renderProfilePatch(listOf(p), webSearch = true)
+        val config = Json.parseToJsonElement(yml.lineSequence().first { it.startsWith("  config:") }.substringAfter("  config:")).jsonObject
+        val route = config.getValue("providers").jsonObject.getValue(p.id).jsonObject
+        assertEquals("openai-responses", route.getValue("interfaceType").jsonPrimitive.content)
+        val models = route.getValue("models").jsonArray.map { it.jsonObject }
+        for ((model, expected) in models.zip(listOf(524288L to 65536, 262144L to 32768))) {
+            assertEquals(expected.first, model.getValue("contextWindow").jsonPrimitive.long)
+            assertEquals(expected.second, model.getValue("maxTokens").jsonPrimitive.int)
+            assertEquals(expected.second, model.getValue("defaults").jsonObject.getValue("maxTokens").jsonPrimitive.int)
+            assertTrue(model.getValue("capabilities").jsonObject.getValue("responsesEncryptedReplay").jsonPrimitive.boolean)
+        }
     }
 
     @Test fun choiceFallsBackToDeepSeek() {
