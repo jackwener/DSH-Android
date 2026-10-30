@@ -2,7 +2,7 @@
 
 Raw response bodies from OpenAI-compatible chat-completions endpoints, replayed byte for byte by
 [`../../gateway-replay.test.mjs`](../../gateway-replay.test.mjs) against the real vendored adapter
-(`@snnh/dsh-llm-service-lite` with patches 14, 16 and 17 applied in a built stage tree).
+(`@snnh/dsh-llm-service-lite` with patches 14, 16, 17 and 18 applied in a built stage tree).
 
 ## Adding a case
 
@@ -62,8 +62,9 @@ unknown assistant fields (`reasoning`, `reasoning_details`).
 | Case | Endpoint | Source | Checks |
 |---|---|---|---|
 | `ark-401` | Volcano Engine Ark (ark.cn-beijing.volces.com/api/v3) | from docs | error AUTH |
+| `ark-403-access-denied` | Volcano Engine Ark (ark.cn-beijing.volces.com/api/v3) | from docs | error MODEL_NOT_AVAILABLE |
 | `ark-403-overdue` | Volcano Engine Ark (ark.cn-beijing.volces.com/api/v3) | from docs | error QUOTA |
-| `ark-404-model-not-activated` | Volcano Engine Ark (ark.cn-beijing.volces.com/api/v3) | from docs | error INVALID_REQUEST |
+| `ark-404-model-not-activated` | Volcano Engine Ark (ark.cn-beijing.volces.com/api/v3) | from docs | error MODEL_NOT_AVAILABLE |
 | `ark-429` | Volcano Engine Ark (ark.cn-beijing.volces.com/api/v3) | from docs | error RATE_LIMIT |
 | `ark-reasoning-tools` | Volcano Engine Ark (ark.cn-beijing.volces.com/api/v3) | from docs | reasoning, 1 tool call(s), echo |
 | `azure-400-content-filter` | Azure OpenAI (<resource>.openai.azure.com/openai/v1) | from docs | error INVALID_REQUEST |
@@ -82,6 +83,7 @@ unknown assistant fields (`reasoning`, `reasoning_details`).
 | `gemini-openai-compat-parallel-no-index` | Google Gemini OpenAI compatibility (generativelanguage.googleapis.com/v1beta/openai) | from docs | 2 tool call(s), echo |
 | `glm-400-model` | Zhipu GLM (open.bigmodel.cn/api/paas/v4) | from docs | error INVALID_REQUEST |
 | `glm-401` | Zhipu GLM (open.bigmodel.cn/api/paas/v4) | from docs | error AUTH |
+| `glm-403-no-permission` | Zhipu GLM (open.bigmodel.cn/api/paas/v4) | from docs | error MODEL_NOT_AVAILABLE |
 | `glm-429-arrears` | Zhipu GLM (open.bigmodel.cn/api/paas/v4) | from docs | error QUOTA |
 | `glm-429-concurrency` | Zhipu GLM (open.bigmodel.cn/api/paas/v4) | from docs | error RATE_LIMIT |
 | `glm-empty-arguments` | Zhipu GLM (open.bigmodel.cn/api/paas/v4) | from docs | 1 tool call(s) |
@@ -113,6 +115,8 @@ unknown assistant fields (`reasoning`, `reasoning_details`).
 | `ollama-reasoning-tools-stop` | Ollama (OpenAI compatibility, http://localhost:11434/v1) | from docs | reasoning, 1 tool call(s), echo |
 | `openai-400-context` | OpenAI (api.openai.com/v1) | from docs | error CONTEXT_WINDOW_EXCEEDED |
 | `openai-401` | OpenAI (api.openai.com/v1) | from docs | error AUTH |
+| `openai-403-forbidden` | generic OpenAI-compatible gateway | from docs (synthetic) | error AUTH |
+| `openai-403-project-model-access` | OpenAI (api.openai.com/v1) | from docs | error MODEL_NOT_AVAILABLE |
 | `openai-404-model` | OpenAI (api.openai.com/v1) | from docs | error INVALID_REQUEST |
 | `openai-429-insufficient-quota` | OpenAI (api.openai.com/v1) | from docs | error QUOTA |
 | `openai-429-rate-limit` | OpenAI (api.openai.com/v1) | from docs | error RATE_LIMIT |
@@ -132,13 +136,15 @@ unknown assistant fields (`reasoning`, `reasoning_details`).
 | `quirk-no-tool-call-id` | generic OpenAI-compatible gateway quirk | from docs | 1 tool call(s) |
 | `quirk-unknown-finish-reason` | generic OpenAI-compatible gateway quirk | from docs | text |
 | `qwen-400-arrearage` | Alibaba DashScope compatible-mode (dashscope.aliyuncs.com/compatible-mode/v1) | from docs | error QUOTA |
-| `qwen-403-model-access-denied` | Alibaba DashScope compatible-mode (dashscope.aliyuncs.com/compatible-mode/v1) | from docs | error AUTH |
+| `qwen-400-model-not-activated` | Alibaba DashScope compatible-mode (dashscope.aliyuncs.com/compatible-mode/v1) | from docs (synthetic) | error MODEL_NOT_AVAILABLE |
+| `qwen-403-model-access-denied` | Alibaba DashScope compatible-mode (dashscope.aliyuncs.com/compatible-mode/v1) | from docs | error MODEL_NOT_AVAILABLE |
 | `qwen-thinking-tools` | Alibaba DashScope compatible-mode (dashscope.aliyuncs.com/compatible-mode/v1) | from docs | reasoning, 1 tool call(s), echo |
 | `sglang-400` | SGLang (OpenAI-compatible server) | from docs | error INVALID_REQUEST |
 | `sglang-reasoning-tools` | SGLang (OpenAI-compatible server) | from docs | reasoning, 1 tool call(s), echo |
 | `siliconflow-400-model` | SiliconFlow (api.siliconflow.cn/v1) | from docs | error INVALID_REQUEST |
 | `siliconflow-401` | SiliconFlow (api.siliconflow.cn/v1) | from docs | error AUTH |
 | `siliconflow-403-balance` | SiliconFlow (api.siliconflow.cn/v1) | from docs | error QUOTA |
+| `siliconflow-403-model-not-available` | SiliconFlow (api.siliconflow.cn/v1) | from docs | error MODEL_NOT_AVAILABLE |
 | `siliconflow-429` | SiliconFlow (api.siliconflow.cn/v1) | from docs | error RATE_LIMIT |
 | `siliconflow-503` | SiliconFlow (api.siliconflow.cn/v1) | from docs | error SERVER |
 | `siliconflow-reasoning-tools` | SiliconFlow (api.siliconflow.cn/v1) | from docs | reasoning, 1 tool call(s), echo |

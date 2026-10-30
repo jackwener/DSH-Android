@@ -10,8 +10,9 @@ current upstream release; the line numbers in our patches are against the versio
 | 15 `http-proxy-exclusion-globs` | `@deepseek-ai/dsh-http-proxy` (dsh 0.2.1-rc.2) | DeepSeek Harness (`@deepseek-ai/dsh-*`) | motivated by Android's exclusion list, behaviour is general | yes |
 | 16 `llm-lite-usage-null-parse-errors` | `@snnh/dsh-llm-service-lite` 0.2.1 | snnh/dsh-llm-service-lite | no | yes, as is |
 | 17 `llm-lite-reasoning-echo-gateway-compat` | `@snnh/dsh-llm-service-lite` 0.2.1 | snnh/dsh-llm-service-lite | no | yes; best split into 3 PRs (below) |
+| 18 `llm-lite-route-headers-model-access` | `@snnh/dsh-llm-service-lite` 0.2.1 | snnh/dsh-llm-service-lite | `userAgent` default is ours; the rest no | yes, as 2 PRs (below) |
 
-Only patch 15 targets dsh itself. 14, 16 and 17 target the community adapter; dsh's own
+Only patch 15 targets dsh itself. 14, 16, 17 and 18 target the community adapter; dsh's own
 `dsh-llm-deepseek` adapter is not patched. One dsh-side note belongs with 17 (see "dsh core" below).
 
 Common ground for every PR: the changes carry `DSH-Android (patch N)` comments that should be dropped
@@ -178,6 +179,37 @@ the same model. History without a record keeps the current rule.
 > is preserved as is, so adapters can rely on it.
 
 ---
+
+## 18: route session header / secret headers; MODEL_NOT_AVAILABLE
+
+**What it changes.** (a) Route fields `sessionHeader` (an opaque per-session id, sha256 of route +
+`options.sessionId`, fresh random without a session), `headerEnv` (secret header values by credential
+reference) and `userAgent` (a product token in front of the attribution UA); final headers are
+lower-cased so a declared header replaces a default case-insensitively; listings send them too.
+(b) A 4xx that says the model is not activated / access is denied is `MODEL_NOT_AVAILABLE` instead of
+AUTH / INVALID_REQUEST.
+
+**Draft issue / PR A** (snnh/dsh-llm-service-lite):
+
+> **Per-session routing header and secret headers on a route**
+>
+> OpenCode Go (`https://opencode.ai/zen/go/v1`) refuses chat requests that lack `x-opencode-session`
+> ("Request is missing x-opencode-session … INVALID_REQUEST"); its docs ask clients for a stable
+> per-conversation id there. The adapter receives `options.sessionId` but a route can only declare
+> static headers. Proposal: `sessionHeader: "<name>"` sends a hash of route + session id (stable per
+> session, not the raw id), and `headerEnv: { name: credentialRef }` resolves secret header values
+> like `apiKeyEnv`. Tests: a fake server refusing requests without the header; id stable across two
+> turns and different across sessions.
+
+**Draft issue / PR B**:
+
+> **"Model not enabled for this account" is reported as an authentication failure**
+>
+> DashScope 403 `Model.AccessDenied`, Zhipu `1220 您无权访问…`, SiliconFlow `30011`, Ark 404
+> `ModelNotOpen` ("has not activated the model") and OpenAI's 403 "Project … does not have access to
+> model …" all mean the key is fine but the account may not use this model. They classify as AUTH
+> (or INVALID_REQUEST), so front ends tell the user to fix the key. Proposal: a `MODEL_NOT_AVAILABLE`
+> code (not retryable) keeping the server's message. Fixtures for each provider included.
 
 ## Not upstream material
 

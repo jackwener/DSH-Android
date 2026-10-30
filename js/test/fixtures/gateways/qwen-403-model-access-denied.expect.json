@@ -9,7 +9,7 @@
   "basePath": "/compatible-mode/v1",
   "expect": {
     "error": {
-      "code": "AUTH",
+      "code": "MODEL_NOT_AVAILABLE",
       "status": 403,
       "messageIncludes": "Model access denied"
     }

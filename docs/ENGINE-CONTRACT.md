@@ -34,6 +34,7 @@ Environment (set with `Os.setenv` before start):
 | `DSH_BRIDGE_FD` | fd number of the capability socket (see §3) |
 | `DEEPSEEK_API_KEY` | decrypted key (never logged); **absent** when the user has no API key (account login, or nothing yet) |
 | `DSH_ANDROID_KEY_<ID>` | one per enabled third-party provider with a stored key (`<ID>` = route id upper-cased, non-alphanumerics → `_`); decrypted from Keystore-encrypted storage, never logged, never written to disk in plaintext. Named by the provider's `apiKeyEnv` in the patch layer (§1.1) |
+| `DSH_ANDROID_HDR_<ID>_<HEADER>` | one per secret extra request header of an enabled provider (same mangling over `<route id>_<header name>`); stored and passed like the key. Named by the provider's `headerEnv` (§1.1) |
 | `DSH_ANDROID_PACKAGE` | the app's package name (the sign-in completion page's `intent:` link) |
 | `DSH_ANDROID_LOCALE` | e.g. `zh-CN` (system prompt language hint) |
 | `TZ`, `DSH_ANDROID_TZ` | the device's IANA zone (`TimeZone.getDefault().id`, e.g. `Asia/Shanghai`). Node's ICU finds no zone on Android otherwise (UTC). `android-env.cjs` assigns `process.env.TZ` from `DSH_ANDROID_TZ` when the resolved zone differs, which resets ICU; drives the time context (patch 11), budget day rollover and log times. A zone change needs an engine restart. |
@@ -73,6 +74,20 @@ the value `/models` reported (`context_length`, `context_window`, `max_model_len
 window when set by hand, a quarter otherwise; `headroomTokens` is min(16384, window/8). The composer's context ring
 uses the same window and names its source. No reasoning effort is configured: the adapter applies the model family's documented default.
 Route ids are the preset id (`kimi`, then `kimi-2`, …), never `deepseek-*`.
+
+Provider headers (js patch 18; 设置 → 模型服务 → 高级设置, the OpenCode Go preset): `"headers":{name:value}` for
+plain extra headers, `"headerEnv":{name:"DSH_ANDROID_HDR_…"}` for secret ones (a name containing key / token /
+secret / auth…, or a value starting `sk-` / `Bearer`; the value lives in SecretStore and reaches the engine only as
+env), `"sessionHeader":"x-opencode-session"` when the provider wants a per-conversation id (the engine sends the
+first 32 hex of sha256(tag, route, session id): stable for the conversation, new per conversation, a fresh random id
+for requests outside a session), and `"userAgent":"DSH-Android/<version>"` on every route (engine User-Agent
+`DSH-Android/<version> deepseek-harness/<v> (+url)`). Keys are omitted when empty. 获取模型列表 and 测试并保存 send the same
+extra headers, the same User-Agent and a fresh session id.
+
+Errors: a third-party turn that fails because the account may not use the model (403 `Model.AccessDenied`, 您无权访问,
+未开通 / Ark `ModelNotOpen`, SiliconFlow 30011, an OpenAI project without access) ends with code `MODEL_NOT_AVAILABLE`
+and message `llm-service-lite: model "<id>" is not available to this account: <server text>` (not retried; the app
+says the model is not enabled for the account instead of blaming the key).
 
 Web search (`web_search`, DeepSeek search) needs a DeepSeek credential: `DEEPSEEK_API_KEY`, or the account login while
 the session runs on `deepseek-account`. The app therefore turns the tool off when a third-party model is selected and
