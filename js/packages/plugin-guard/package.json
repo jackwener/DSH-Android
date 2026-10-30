@@ -9,9 +9,10 @@
   "exports": {
     ".": "./index.js",
     "./hardline": "./hardline.js",
+    "./experience": "./experience.js",
     "./package.json": "./package.json"
   },
-  "files": ["index.js", "hardline.js", "package.json"],
+  "files": ["index.js", "hardline.js", "experience.js", "package.json"],
   "engines": {
     "dsh": "0.2.1-rc.2"
   }

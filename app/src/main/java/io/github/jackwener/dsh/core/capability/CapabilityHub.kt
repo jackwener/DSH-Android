@@ -80,6 +80,7 @@ class CapabilityHub @Inject constructor(
     private val guard: ActionGuard,
     private val agentScreen: AgentScreen,
     private val appKnowledge: AppKnowledge,
+    private val experience: AppExperience,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     val allTools: Map<String, Tool> = listOf(files, apps, screen, system, notifications, comms, media, clipboard, browser, ruleTools, knowledge)
@@ -143,6 +144,7 @@ class CapabilityHub @Inject constructor(
             val callId = params["callId"]?.jsonPrimitive?.contentOrNull ?: return
             cancel(callId, params["sessionId"]?.jsonPrimitive?.contentOrNull, params["reason"]?.jsonPrimitive?.contentOrNull ?: "cancelled by the engine")
         }
+        if (method == "experience/notes") scope.launch(Dispatchers.IO) { runCatching { experience.reflected(params) }.onFailure { Log.w(TAG, "experience/notes", it) } }
     }
 
     suspend fun onBridgeRequest(method: String, params: JsonObject): JsonElement = when (method) {
@@ -157,6 +159,7 @@ class CapabilityHub @Inject constructor(
             }
         }
         "capability/invoke" -> encode(invokeFromBridge(params))
+        "experience/turn" -> withContext(Dispatchers.IO) { experience.turnEnded(params) }
         // Also accepted as a request (fire-and-forget clients may prefer an ack).
         "capability/cancel" -> { onBridgeNotification(method, params); buildJsonObject { put("ok", true) } }
         else -> throw JsonRpcException(-32601, "unknown method $method")
@@ -214,7 +217,7 @@ class CapabilityHub @Inject constructor(
         val mainScreen = name.startsWith("screen_") && (args.str("screen") == "main" || agentScreen.current(sessionId) == null)
         _live.update { it + (liveKey to LiveCall(sessionId, name, mainScreen, acts = tool.descriptor.risk != Risk.read)) }
         val result = try {
-            withTimeoutOrNull(budgetMs) { run(tool, name, args, call) }
+            withTimeoutOrNull(budgetMs) { run(tool, name, args, call) }?.also { experience.observe(sessionId, name, args, it) }
         } finally {
             _live.update { it - liveKey }
         }
@@ -228,12 +231,13 @@ class CapabilityHub @Inject constructor(
     }
 
     /**
-     * The user spoke (a new turn or steering): the loop guard and the app-guide cap start over, and
-     * agent-screen actions resume after a 我来接管.
+     * The user spoke (a new turn or steering): the loop guard, the app-guide cap and route tracking
+     * start over ([text] ranks app notes), and agent-screen actions resume after a 我来接管.
      */
-    fun onUserPrompt(sessionId: String) {
+    fun onUserPrompt(sessionId: String, text: String = "") {
         guard.reset(sessionId)
-        appKnowledge.newTurn(sessionId)
+        appKnowledge.newTurn(sessionId, text)
+        experience.newTurn(sessionId, text)
         agentScreen.clearUserTakeover(sessionId)
     }
 

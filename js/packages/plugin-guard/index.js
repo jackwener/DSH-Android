@@ -22,6 +22,7 @@ import { homedir, tmpdir } from 'node:os'
 import { basename, dirname, join, posix } from 'node:path'
 import { format } from 'node:util'
 import { checkCommand, isReadOnlyCommand, refusalText } from './hardline.js'
+import { setupExperience } from './experience.js'
 
 export { checkCommand, isReadOnlyCommand, refusalText } from './hardline.js'
 
@@ -177,6 +178,10 @@ export function screenSection(descriptors = []) {
   const guide = descriptors.some(d => d.name === 'app_guide')
     ? 'The first time you enter an app DSH has a guide for, the guide (facts about its UI) is appended to that result; app_guide(app) looks one up at any time.'
     : 'The first time you enter an app DSH has a guide for, the guide (facts about its UI) is appended to that result.'
+  const notes = descriptors.some(d => d.name === 'app_note')
+    ? '- App notes are UI facts earlier runs recorded on this phone; they are shown with the guide. After you find a non-obvious entry or hit a trap in an app, record ONE concise factual note with app_note (UI facts only: no personal data, nothing specific to this task). ' +
+      'When you used a note, confirm it if it held, update or remove it if it was wrong.\n'
+    : ''
   return `Operating apps on screen:
 - ${where} Pass screen: "main" only to see or act on what the user is looking at ("how do I reply to this?"). Without Shizuku everything happens on the user's screen; the result says so.
 - Login, captcha, payment, a page that blocks screenshots, or a choice only the user can make: call hand_to_user(reason, kind) instead of guessing or typing credentials, then read the screen again when it returns.
@@ -184,7 +189,7 @@ export function screenSection(descriptors = []) {
 - A loop-guard warning in a result means you are repeating yourself without progress: change approach, or stop and report what blocks you. A refused call means stop and report.
 - Waits before sending, posting or replying are deliberate pacing so the app does not flag you as a bot; they are normal.
 - ${guide}
-
+${notes}
 `
 }
 
@@ -423,21 +428,24 @@ export function apply(ctx, config = {}) {
     if (budget.dailyCostLimitCny !== undefined && ledger.state.dailyCostCny >= budget.dailyCostLimitCny) return { kind: 'dailyCostLimitCny', used: Math.round(ledger.state.dailyCostCny * 1e4) / 1e4, limit: budget.dailyCostLimitCny }
     return undefined
   }
-  ctx.on('session/event', (session, event) => {
-    const usage = usageOf(event)
-    if (usage === undefined) return
+  const meter = (root, usage, model) => {
     const input = Number(usage.inputTokens ?? 0)
     const output = Number(usage.outputTokens ?? 0)
     const cacheRead = Number(usage.cacheReadTokens ?? 0)
     const cacheWrite = Number(usage.cacheWriteTokens ?? 0)
-    const model = session.requestHeader?.()?.config?.model
     const p = priceFor(model)
     const cacheWeight = p.input > 0 ? Math.min(1, Math.max(0, p.cacheRead / p.input)) : 1
     const tokens = Math.round(input + cacheWrite + output + cacheRead * cacheWeight)
     if (!Number.isFinite(tokens) || tokens <= 0) return
     const cost = ((input + cacheWrite) * p.input + cacheRead * p.cacheRead + output * p.output) / 1e6
-    ledger.add(rootOfSession(ctx, session), tokens, Number.isFinite(cost) ? cost : 0)
+    ledger.add(root, tokens, Number.isFinite(cost) ? cost : 0)
+  }
+  ctx.on('session/event', (session, event) => {
+    const usage = usageOf(event)
+    if (usage !== undefined) meter(rootOfSession(ctx, session), usage, session.requestHeader?.()?.config?.model)
   })
+  // ── 3b. App 经验库: routes and post-turn reflection (experience.js) ──────────
+  setupExperience(ctx, { bridge, rootOf: agent => rootSessionId(ctx, agent), meter, withinBudget: root => overBudget(root) === undefined, log })
   ctx.on('agent/pre-step', async (input, next) => {
     const sessionId = rootSessionId(ctx, input.agent)
     const over = sessionId === undefined ? undefined : overBudget(sessionId)

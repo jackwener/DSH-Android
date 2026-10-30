@@ -6,6 +6,7 @@ import { screenSection, systemPromptSection } from '../packages/plugin-guard/ind
 const screen = { name: 'screen_read', group: 'screen', risk: 'read', needsUnlock: true }
 const launch = { name: 'app_launch', group: 'apps', risk: 'write', needsUnlock: true }
 const guide = { name: 'app_guide', group: 'apps', risk: 'read', needsUnlock: false }
+const note = { name: 'app_note', group: 'apps', risk: 'read', needsUnlock: false }
 const alarm = { name: 'alarm_set', group: 'system', risk: 'write', needsUnlock: false }
 
 test('screen operation section only when screen tools are registered', () => {
@@ -28,4 +29,12 @@ test('app tools are only mentioned when the Apps group is enabled', () => {
   const text = screenSection([screen, alarm])
   assert.ok(text.includes('Operating apps on screen'))
   assert.ok(!text.includes('app_launch') && !text.includes('app_open_link') && !text.includes('app_guide'))
+})
+
+test('app note guidance only when app_note is registered', () => {
+  const withNote = screenSection([screen, launch, guide, note])
+  for (const s of ['app_note', 'ONE concise factual note', 'no personal data', 'confirm it', 'update or remove'])
+    assert.ok(withNote.includes(s), s)
+  assert.ok(!screenSection([screen, launch, guide]).includes('app_note'))
+  assert.ok(withNote.endsWith('\n\n'))
 })
