@@ -165,8 +165,10 @@ class MainActivity : ComponentActivity() {
                     onAutomation = { nav.navigate("automation") })
             }
             composable("settings?section={section}", arguments = listOf(navArgument("section") { type = NavType.StringType; defaultValue = "" })) { e ->
-                SettingsScreen(SettingsSection.of(e.arguments?.getString("section")), onBack = { nav.popBackStack() }, onNotificationApps = { nav.navigate("notif_apps") })
+                SettingsScreen(SettingsSection.of(e.arguments?.getString("section")), onBack = { nav.popBackStack() }, onNotificationApps = { nav.navigate("notif_apps") },
+                    onAppNotes = { nav.navigate("app_notes") })
             }
+            composable("app_notes") { io.github.jackwener.dsh.feature.settings.AppNotesScreen(onBack = { nav.popBackStack() }) }
             composable("notif_apps") { NotificationAppsScreen(onBack = { nav.popBackStack() }) }
             composable("automation") {
                 AutomationScreen(onBack = { nav.popBackStack() },

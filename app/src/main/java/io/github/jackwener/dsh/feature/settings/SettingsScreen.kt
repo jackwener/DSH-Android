@@ -111,7 +111,7 @@ enum class SettingsSection(val label: Int, val icon: Int) {
  * directly and Back returns to where it came from.
  */
 @Composable
-fun SettingsScreen(initial: SettingsSection?, onBack: () -> Unit, onNotificationApps: () -> Unit, vm: SettingsViewModel = hiltViewModel()) {
+fun SettingsScreen(initial: SettingsSection?, onBack: () -> Unit, onNotificationApps: () -> Unit, onAppNotes: () -> Unit = {}, vm: SettingsViewModel = hiltViewModel()) {
     val c = Dsh.colors
     var section by rememberSaveable { mutableStateOf(initial) }
     val deepLinked = rememberSaveable { initial != null }
@@ -135,7 +135,7 @@ fun SettingsScreen(initial: SettingsSection?, onBack: () -> Unit, onNotification
                 }
                 SettingsSection.General -> GeneralSection(vm)
                 SettingsSection.Model -> provider?.let { ProviderPage(vm, it) { provider = null } } ?: ModelSection(vm) { provider = it }
-                SettingsSection.Agent -> AgentSection(vm)
+                SettingsSection.Agent -> AgentSection(vm, onAppNotes)
                 SettingsSection.Usage -> UsageSection(vm)
                 SettingsSection.Phone -> PhoneSection(vm, onNotificationApps)
                 SettingsSection.About -> AboutSection(vm)
@@ -267,7 +267,7 @@ private fun ModelSection(vm: SettingsViewModel, onProvider: (String) -> Unit) {
 }
 
 @Composable
-private fun AgentSection(vm: SettingsViewModel) {
+private fun AgentSection(vm: SettingsViewModel, onAppNotes: () -> Unit) {
     val c = Dsh.colors
     val s by vm.settings.collectAsStateWithLifecycle()
     val context = LocalContext.current
@@ -278,6 +278,10 @@ private fun AgentSection(vm: SettingsViewModel) {
             val (title, desc) = groupLabel(g)
             SettingsRow(stringResource(title), stringResource(desc), divider = i > 0, trailing = { DSwitch(g in s.enabledGroups, { vm.setGroup(g, it) }) })
         }
+    }
+    SettingsCard(Modifier.padding(top = 8.dp)) {
+        SettingsRow(stringResource(R.string.app_notes), stringResource(R.string.app_notes_desc), divider = false, onClick = onAppNotes,
+            trailing = { DIcon(R.drawable.dsw_chevron_right_outline, size = 14.dp, tint = c.labelTertiary) })
     }
     SettingsGroupTitle(stringResource(R.string.set_agent_loop))
     SettingsCard {
