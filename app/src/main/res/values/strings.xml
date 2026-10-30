@@ -7,6 +7,9 @@
     <string name="engine_running">Agent 引擎运行中</string>
     <string name="monitor_running">正在监听自动化触发条件</string>
     <string name="ball_running">悬浮球已开启</string>
+    <string name="ball_working">智能体正在工作</string>
+    <string name="ball_needs_you">有对话需要你处理</string>
+    <string name="ball_screen_needs_a11y">开启 DSH 的无障碍服务后才能发送当前屏幕</string>
     <string name="channel_engine">Agent 引擎</string>
     <string name="channel_tasks">任务结果</string>
     <string name="channel_attention">需要你处理</string>
@@ -382,7 +385,7 @@
     <string name="busy_steer">插话发送</string>
     <string name="set_entry_points">唤起方式</string>
     <string name="floating_ball">悬浮球</string>
-    <string name="floating_ball_desc">在任何 App 上方点一下即可唤起</string>
+    <string name="floating_ball_desc">在任何 App 上方点一下即可唤起，双击把当前屏幕发给 DSH</string>
     <string name="default_assistant">设为默认数字助手</string>
     <string name="default_assistant_desc">长按电源键或手势唤起，并可读取当前页面</string>
     <string name="key_connected">已连接</string>
