@@ -10,6 +10,7 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import io.github.jackwener.dsh.core.capability.AgentScreen
 import io.github.jackwener.dsh.core.data.Effort
+import io.github.jackwener.dsh.core.provider.reasoning
 import io.github.jackwener.dsh.core.data.SessionEntity
 import io.github.jackwener.dsh.core.data.Settings
 import io.github.jackwener.dsh.core.data.SettingsRepository
@@ -65,6 +66,7 @@ open class ConversationController(
     val currentId: StateFlow<String> = sessionId
 
     val engineState: StateFlow<EngineState> = engine.state
+    val modelMetadata = engine.modelMetadata
     val settings: StateFlow<Settings> = settingsRepo.settings.stateIn(viewModelScope, SharingStarted.Eagerly, Settings())
 
     val live: StateFlow<SessionLive> = sessionId.flatMapLatest { id -> flow { emitAll(store.state(id)) } }
@@ -75,11 +77,11 @@ open class ConversationController(
      * the route is process-wide and switching it restarts the engine. True while the settings differ
      * from the running engine's route for that reason; the composer says the change applies later.
      */
-    val modelChangePending: StateFlow<Boolean> = combine(engine.route, settings, store.status) { route, st, status ->
+    val modelChangePending: StateFlow<Boolean> = combine(engine.route, settings, store.status, engine.modelMetadata) { route, st, status, _ ->
         val want = st.choice
         val differs = route != null && when (val p = want.provider) {
             null -> !route.provider.startsWith("deepseek-") || route.model != want.model || route.effort != st.effort.id
-            else -> route.provider != p.id || route.model != want.model
+            else -> route.provider != p.id || route.model != want.model || route.effort != engine.reasoningEffort(st)
         }
         differs && status.values.any { it != RowStatus.Idle }
     }.stateIn(viewModelScope, SharingStarted.Eagerly, false)
@@ -141,6 +143,20 @@ open class ConversationController(
     /** [provider] "" = DeepSeek. */
     fun setModel(provider: String, m: String) = viewModelScope.launch { settingsRepo.setModel(provider, m) }
     fun setEffort(e: Effort) = viewModelScope.launch { settingsRepo.setEffort(e) }
+    fun setReasoning(id: String) = viewModelScope.launch {
+        val st = settingsRepo.current()
+        val choice = st.choice
+        if (choice.reasoning(modelMetadata.value).efforts.none { it.id == id }) return@launch
+        val p = choice.provider
+        if (p == null) settingsRepo.setEffort(Effort.of(id))
+        else settingsRepo.setProviderEffort(p.id, choice.model, id)
+    }
+
+    /** Read-only adapter metadata; no prompt or external model request is sent. */
+    fun refreshReasoning() = viewModelScope.launch {
+        runCatching { engine.sdk() }
+        engine.scheduleIdleShutdown()
+    }
 
     fun inspect(callId: String) { view.value = SessionView.Trajectory; focusRecord.value = "k$callId" }
 

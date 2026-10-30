@@ -15,6 +15,7 @@ import io.github.jackwener.dsh.core.model.SessionModes
 import io.github.jackwener.dsh.core.model.ToolGroup
 import io.github.jackwener.dsh.core.provider.ModelChoice
 import io.github.jackwener.dsh.core.provider.ProviderConfig
+import io.github.jackwener.dsh.core.provider.ProviderEffort
 import io.github.jackwener.dsh.core.provider.resolveChoice
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
@@ -45,6 +46,7 @@ data class Settings(
     val provider: String = "",
     val model: String = DEFAULT_MODEL,
     val effort: Effort = Effort.High,
+    val providerEfforts: List<ProviderEffort> = emptyList(),
     /** Device tool groups the user switched off (everything else is offered to the agent). */
     val disabledGroups: Set<ToolGroup> = emptySet(),
     /** Apps whose notifications DSH must not read (default: none — every app is readable). */
@@ -82,6 +84,7 @@ data class Settings(
 
 private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 private val providerList = ListSerializer(ProviderConfig.serializer())
+private val providerEffortList = ListSerializer(ProviderEffort.serializer())
 private val modeList = ListSerializer(SessionMode.serializer())
 
 @Singleton
@@ -92,6 +95,7 @@ class SettingsRepository @Inject constructor(@ApplicationContext private val con
         val modes = stringPreferencesKey("session_modes_json")
         val model = stringPreferencesKey("model")
         val effort = stringPreferencesKey("effort")
+        val providerEfforts = stringPreferencesKey("provider_efforts_json")
         val disabledGroups = stringSetPreferencesKey("disabled_groups")
         val notifBlocked = stringSetPreferencesKey("notif_blocked")
         val ball = booleanPreferencesKey("floating_ball")
@@ -117,6 +121,7 @@ class SettingsRepository @Inject constructor(@ApplicationContext private val con
         modes = decodeModes(this[K.modes]),
         model = this[K.model] ?: Settings.DEFAULT_MODEL,
         effort = Effort.of(this[K.effort]),
+        providerEfforts = this[K.providerEfforts]?.let { runCatching { json.decodeFromString(providerEffortList, it) }.getOrNull() } ?: emptyList(),
         disabledGroups = this[K.disabledGroups]?.mapNotNull(ToolGroup::of)?.toSet() ?: emptySet(),
         notificationBlocked = this[K.notifBlocked] ?: emptySet(),
         floatingBall = this[K.ball] ?: false,
@@ -142,6 +147,8 @@ class SettingsRepository @Inject constructor(@ApplicationContext private val con
     suspend fun deleteProvider(id: String) = context.store.edit {
         val cur = it[K.providers]?.let { s -> runCatching { json.decodeFromString(providerList, s) }.getOrNull() } ?: emptyList()
         it[K.providers] = json.encodeToString(providerList, cur.filter { c -> c.id != id })
+        val efforts = it[K.providerEfforts]?.let { raw -> runCatching { json.decodeFromString(providerEffortList, raw) }.getOrNull() } ?: emptyList()
+        it[K.providerEfforts] = json.encodeToString(providerEffortList, efforts.filterNot { e -> e.provider == id })
         if (it[K.provider] == id) { it[K.provider] = ""; it[K.model] = Settings.DEFAULT_MODEL }
     }
     /** Adds or replaces a user mode (built-in ids are refused: built-ins are duplicated, not edited). */
@@ -158,6 +165,11 @@ class SettingsRepository @Inject constructor(@ApplicationContext private val con
         it[K.modes] = json.encodeToString(modeList, decodeModes(it[K.modes]).filter { c -> c.id != id })
     }
     suspend fun setEffort(effort: Effort) = context.store.edit { it[K.effort] = effort.id }
+    suspend fun setProviderEffort(provider: String, model: String, effort: String) = context.store.edit {
+        val current = it[K.providerEfforts]?.let { raw -> runCatching { json.decodeFromString(providerEffortList, raw) }.getOrNull() } ?: emptyList()
+        val next = current.filterNot { e -> e.provider == provider && e.model == model } + ProviderEffort(provider, model, effort)
+        it[K.providerEfforts] = json.encodeToString(providerEffortList, next)
+    }
     suspend fun setGroupEnabled(group: ToolGroup, enabled: Boolean) = context.store.edit {
         val cur = it[K.disabledGroups] ?: emptySet()
         it[K.disabledGroups] = if (enabled) cur - group.id else cur + group.id

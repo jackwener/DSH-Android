@@ -41,6 +41,8 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.github.jackwener.dsh.R
 import io.github.jackwener.dsh.core.data.Settings
+import io.github.jackwener.dsh.core.provider.reasoning
+import io.github.jackwener.dsh.core.provider.savedEffort
 import io.github.jackwener.dsh.core.designsystem.Dsh
 import io.github.jackwener.dsh.core.designsystem.DshType
 import io.github.jackwener.dsh.core.designsystem.IconBtn
@@ -181,6 +183,10 @@ fun ComposerSlot(vm: ConversationController, composer: ComposerState, settings: 
                  prepare: (String) -> String = { it }, onManageModes: (() -> Unit)? = null) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val modelChangePending by vm.modelChangePending.collectAsStateWithLifecycle()
+    val modelMetadata by vm.modelMetadata.collectAsStateWithLifecycle()
+    LaunchedEffect(settings.choice.provider?.id, settings.providers) {
+        if (!settings.choice.isDeepSeek) vm.refreshReasoning()
+    }
     // Queued messages the run never sent (stopped / failed) come back into the composer.
     LaunchedEffect(live.sessionId, live.restoredDraft) {
         val draft = live.restoredDraft ?: return@LaunchedEffect
@@ -193,7 +199,9 @@ fun ComposerSlot(vm: ConversationController, composer: ComposerState, settings: 
         live.approval != null -> ApprovalCard(live.approval) { vm.approve(live.approval, it) }
         live.question != null -> QuestionCard(live.question, onSubmit = { vm.answer(live.question, it) }, onSkip = { vm.skipQuestion(live.question) })
         else -> Composer(
-            composer, live.running, live.preset, vm::setPreset, settings.choice, settings.providers, settings.effort, vm::setModel, vm::setEffort, conv.contextTokens,
+            composer, live.running, live.preset, vm::setPreset, settings.choice, settings.providers,
+            settings.choice.reasoning(modelMetadata), settings.choice.savedEffort(settings.effort, settings.providerEfforts),
+            vm::setModel, vm::setReasoning, conv.contextTokens,
             onSend = {
                 val text = prepare(composer.outgoingText(context))
                 val images = composer.images.map { it.mime to it.base64 }

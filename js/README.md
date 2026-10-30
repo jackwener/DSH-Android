@@ -13,6 +13,7 @@ DeepSeek Harness (dsh) **0.2.1-rc.2**, installed unmodified from npm and customi
 | `packages/plugin-device/` | capability bridge client (`DSH_BRIDGE_FD`) → dynamic dsh tools |
 | `packages/plugin-guard/` | hardline shell floor, approval policy, budgets, phone system prompt |
 | `packages/plugin-mode/` | session modes: per-conversation tool restriction, skills switch, mode prompt section (`android/session/mode`, ENGINE-CONTRACT §2.5) |
+| `packages/plugin-models/` | read-only `android/models/reasoning` SDK extension; the adapter's own reasoning choices drive the Android picker |
 | `packages/plugin-account/` | DeepSeek account login: loopback OAuth callback server + `account/*` SDK methods |
 | `packages/llm-service-lite/` | vendored `@snnh/dsh-llm-service-lite` 0.2.1 (MIT, snnh), with its upstream `lib/index.js` kept verbatim. Android changes are applied by patches 14 (transport diagnostics), 16 (OpenCode session headers) and 17 (nullable stream usage); re-check them on an adapter upgrade. |
 | `patches/*.patch` | unified diffs against `node_modules/`, applied in order with `patch -p1` (dry-run first) |
@@ -26,6 +27,7 @@ DeepSeek Harness (dsh) **0.2.1-rc.2**, installed unmodified from npm and customi
 | `test/provider-network.test.mjs` | patches 16/17 against a built stage tree: `DSH_STAGE_NM=<WORK_DIR>/stage/node_modules node --test js/test/provider-network.test.mjs` |
 | `test/opencode-session.test.mjs` | OpenCode header scope, per-conversation identities and explicit-header preservation: `node --test js/test/opencode-session.test.mjs` |
 | `test/host-opencode-session.mjs` | real built-adapter request/stream regression, no API key or native bindings: after building, `node --test js/test/host-opencode-session.mjs`; `E2E_ENGINE_DIR` can point at an extracted `engine.zip` |
+| `test/model-reasoning.test.mjs` | reasoning metadata projection, validation, cancellation and SDK extension coexistence |
 | `test/host-e2e.mjs` | host end-to-end run of the built `engine.zip` with a fake bridge |
 | `test/host-ac8-resume.mjs` | host repro of engine kill + `session/resume` + continuation |
 

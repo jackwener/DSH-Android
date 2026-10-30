@@ -113,6 +113,10 @@
     - id: android-mode
       name: '@dsh-android/plugin-mode'
 
+    # Resolve the adapter's own reasoning choices for the Android model picker.
+    - id: android-models
+      name: '@dsh-android/plugin-models'
+
     # DeepSeek account login. dsh-base mounts the account provider
     # (`deepseek-account`, OAuth + PKCE against platform.deepseek.com) and the
     # `deepseek-account` model route; this row adds the loopback callback

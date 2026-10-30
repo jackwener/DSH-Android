@@ -27,6 +27,7 @@
     "@dsh-android/plugin-device": "0.1.0",
     "@dsh-android/plugin-guard": "0.1.0",
     "@dsh-android/plugin-mode": "0.1.0",
+    "@dsh-android/plugin-models": "0.1.0",
     "@snnh/dsh-llm-service-lite": "0.2.1"
   }
 }

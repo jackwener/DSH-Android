@@ -5,6 +5,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { resolve } from 'node:path'
 import { pathToFileURL, fileURLToPath } from 'node:url'
+import { reasoningModels } from '../packages/plugin-models/index.js'
 
 const root = fileURLToPath(new URL('../..', import.meta.url))
 const engine = resolve(process.env.E2E_ENGINE_DIR ?? `${root}/toolchains/out/engine-build/stage`)
@@ -27,9 +28,9 @@ function reply() {
   return new Response(events.map(e => `data: ${JSON.stringify(e)}\n\n`).join('') + 'data: [DONE]\n\n', { headers: { 'content-type': 'text/event-stream' } })
 }
 
-async function run(client, sessionId) {
+async function run(client, sessionId, reasoningEffort) {
   const chunks = []
-  for await (const chunk of client.stream({ provider: 'custom', model: 'deepseek-v4.1-flash', sessionId, messages: [{ role: 'user', content: [{ type: 'text', text: 'Reply GO_OK.' }] }], tools: [] })) chunks.push(chunk)
+  for await (const chunk of client.stream({ provider: 'custom', model: 'deepseek-v4.1-flash', sessionId, ...(reasoningEffort ? { reasoningEffort } : {}), messages: [{ role: 'user', content: [{ type: 'text', text: 'Reply GO_OK.' }] }], tools: [] })) chunks.push(chunk)
   assert.equal(chunks.filter(c => c.type === 'text-delta').map(c => c.text).join(''), 'GO_OK')
   assert.equal(chunks.at(-1).type, 'finish')
   const accounting = chunks.filter(c => c.type === 'usage')
@@ -61,4 +62,21 @@ test('built adapter keeps explicit headers and leaves other providers alone', as
   await run(adapter('https://other.example/v1'), 'session-two')
   assert.equal(requests[0].get('x-opencode-session'), 'configured-id')
   assert.equal(requests[1].has('x-opencode-session'), false)
+})
+
+test('Go Flash picker metadata and the actual built request path agree for every selectable effort', async t => {
+  const requests = []
+  t.mock.method(globalThis, 'fetch', async (_url, init) => {
+    requests.push({ headers: new Headers(init.headers), body: JSON.parse(init.body) }); return reply()
+  })
+  const client = adapter('https://opencode.ai/zen/go/v1')
+  const metadata = await reasoningModels({ resolveModelInfo: (...args) => client.resolveModel(...args) }, {
+    routes: [{ provider: 'custom', model: 'deepseek-v4.1-flash' }],
+  })
+  const reasoning = metadata.models[0].reasoning
+  assert.deepEqual(reasoning.efforts.map(e => e.id), ['low', 'high', 'max'])
+  assert.equal(reasoning.defaultEffort, 'high')
+  for (const { id } of reasoning.efforts) await run(client, 'same-conversation', id)
+  assert.deepEqual(requests.map(r => r.body.reasoning_effort), ['low', 'high', 'max'])
+  assert.ok(requests.every(r => r.body.thinking?.type === 'enabled' && r.headers.get('x-opencode-session') === 'same-conversation'))
 })

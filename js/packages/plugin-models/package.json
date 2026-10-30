@@ -1,0 +1,12 @@
+{
+  "name": "@dsh-android/plugin-models",
+  "version": "0.1.0",
+  "description": "Expose adapter-owned reasoning choices to the Android model picker.",
+  "type": "module",
+  "private": true,
+  "license": "MIT",
+  "main": "./index.js",
+  "exports": { ".": "./index.js", "./package.json": "./package.json" },
+  "files": ["index.js", "package.json"],
+  "engines": { "dsh": "0.2.1-rc.2" }
+}
