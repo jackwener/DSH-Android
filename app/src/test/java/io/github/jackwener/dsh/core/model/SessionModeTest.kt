@@ -72,13 +72,14 @@ class SessionModeTest {
         assertEquals(listOf("web"), p["tools"]!!.jsonArray.map { it.jsonPrimitive.content })
         assertFalse(p["skills"]!!.jsonPrimitive.boolean)
         // Category ids are the engine's (js/packages/plugin-mode CATEGORIES).
-        assertEquals(listOf("shell", "files_read", "files_write", "web", "subagent"), EngineTool.entries.map { it.id })
+        assertEquals(listOf("shell", "files_read", "files_write", "web", "subagent", "extensions"), EngineTool.entries.map { it.id })
     }
 
     @Test fun `user modes round-trip through settings storage`() {
         val stored = encodeModes(listOf(custom, SessionModes.Code.duplicate("u_2", "编程 副本")))
         val back = decodeModes(stored)
-        assertEquals(custom, back[0])
+        // Reading stamps the tool-category version (see ExtensionToolsModeTest).
+        assertEquals(custom.copy(toolsVersion = SessionModes.TOOLS_VERSION), back[0])
         assertEquals("u_2", back[1].id)
         assertFalse(back[1].builtIn)
         assertEquals(SessionModes.Code.engineTools, back[1].engineTools)

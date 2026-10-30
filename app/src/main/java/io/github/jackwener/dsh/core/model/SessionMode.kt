@@ -12,8 +12,17 @@ import kotlinx.serialization.json.putJsonArray
  * id to dsh tool names). Tools outside every category (ask_user_question, todo, goals, …) stay.
  */
 enum class EngineTool(val id: String) {
-    Shell("shell"), FilesRead("files_read"), FilesWrite("files_write"), Web("web"), Subagent("subagent");
-    companion object { fun of(id: String) = entries.firstOrNull { it.id == id } }
+    Shell("shell"), FilesRead("files_read"), FilesWrite("files_write"), Web("web"), Subagent("subagent"),
+    /**
+     * 扩展工具 (PLUGINS-DESIGN §8.2): every tool a third-party plugin registers and every `mcp__*`
+     * tool. Nobody can promise those are read-only, so read-only modes leave this out.
+     */
+    Extensions("extensions");
+    companion object {
+        fun of(id: String) = entries.firstOrNull { it.id == id }
+        /** The categories that existed before [Extensions] (modes stored with all of them get it added, see [SessionModes.migrate]). */
+        val legacy: Set<String> = setOf(Shell.id, FilesRead.id, FilesWrite.id, Web.id, Subagent.id)
+    }
 }
 
 /** The fixed icon set a mode can use (ids are stored; the drawable mapping lives in the UI). */
@@ -44,6 +53,8 @@ data class SessionMode(
     val preset: String? = null,
     val skills: Boolean = true,
     val builtIn: Boolean = false,
+    /** Which [EngineTool] set the stored [engineTools] was chosen from ([SessionModes.TOOLS_VERSION]; 0 = before 扩展工具). */
+    val toolsVersion: Int = 0,
 ) {
     val isDefault: Boolean get() = id == SessionModes.DEFAULT_ID
 
@@ -75,6 +86,19 @@ object SessionModes {
     const val CHAT_ID = "chat"
     /** User modes get ids with this prefix, so they never collide with a future built-in. */
     const val CUSTOM_PREFIX = "u_"
+    /** Bumped when [EngineTool] gains a category that existing all-on selections should include. */
+    const val TOOLS_VERSION = 1
+
+    /**
+     * A user mode stored before 扩展工具 existed: if it had every built-in category on, it gets
+     * [EngineTool.Extensions] too (it meant "everything"); otherwise it stays as chosen.
+     */
+    fun migrate(m: SessionMode): SessionMode {
+        if (m.toolsVersion >= TOOLS_VERSION) return m
+        val tools = m.engineTools
+        val next = if (tools != null && tools.containsAll(EngineTool.legacy)) tools + EngineTool.Extensions.id else tools
+        return m.copy(engineTools = next, toolsVersion = TOOLS_VERSION)
+    }
 
     /** 默认: today's behaviour — every tool, the settings' permission default, no extra prompt. */
     val Default = SessionMode(DEFAULT_ID, icon = ModeIcon.Default.id, builtIn = true)
@@ -85,7 +109,7 @@ object SessionModes {
         prompt = "Focus on getting things done on this phone with the device tools: settings, apps, notifications, messages, files, " +
             "media and operating other apps on screen. Prefer doing the task over explaining how to do it, and keep the user informed in one line per step.",
         deviceGroups = ToolGroup.entries.map { it.id }.toSet(),
-        engineTools = setOf(EngineTool.FilesRead.id, EngineTool.Web.id, EngineTool.Subagent.id),
+        engineTools = setOf(EngineTool.FilesRead.id, EngineTool.Web.id, EngineTool.Subagent.id, EngineTool.Extensions.id),
         preset = PermissionPreset.Ask.id, skills = true,
     )
 

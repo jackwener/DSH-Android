@@ -130,15 +130,16 @@ class EngineManager @Inject constructor(
     /** web_search needs a DeepSeek credential: the API key, or the account while on the account route. */
     private fun webSearch(st: io.github.jackwener.dsh.core.data.Settings, hasKey: Boolean) = hasKey || st.choice.isDeepSeek
 
-    private fun profilePatch(st: io.github.jackwener.dsh.core.data.Settings, hasKey: Boolean) =
-        renderProfilePatch(st.providers, webSearch(st, hasKey), io.github.jackwener.dsh.core.provider.appProductToken(io.github.jackwener.dsh.BuildConfig.VERSION_NAME))
+    private fun profilePatch(st: io.github.jackwener.dsh.core.data.Settings, hasKey: Boolean) = io.github.jackwener.dsh.core.extensions.appendPatchRows(
+        renderProfilePatch(st.providers, webSearch(st, hasKey), io.github.jackwener.dsh.core.provider.appProductToken(io.github.jackwener.dsh.BuildConfig.VERSION_NAME)),
+        io.github.jackwener.dsh.core.extensions.ExtensionsEngineInputs.patchRows(st.mcpServers, File(context.filesDir, "dsh-home").path))
 
-    /** Provider keys and secret header values for the engine environment (env var name → value). */
+    /** Provider keys and secret header values, plus the extensions' environment (plugin registries, MCP header secrets): env var name → value. */
     private fun providerKeys(st: io.github.jackwener.dsh.core.data.Settings): Map<String, String> {
         val enabled = st.providers.filter { it.enabled }
         val keys = enabled.filter { it.hasKey }.mapNotNull { p -> secrets.read(p.secretName)?.let { p.keyEnv to it } }
         val headers = enabled.flatMap { p -> p.headers.filter { it.secret }.mapNotNull { h -> secrets.read(p.headerSecretName(h.name))?.let { p.headerEnv(h.name) to it } } }
-        return (keys + headers).toMap()
+        return (keys + headers).toMap() + io.github.jackwener.dsh.core.extensions.ExtensionsEngineInputs.env(st.pluginRegistry, st.pluginRegistryCustom, st.mcpServers, secrets::read)
     }
 
     /** What a running process has baked in at start: the patch layer and the provider keys (hashed, never stored). */
@@ -433,6 +434,7 @@ class EngineManager @Inject constructor(
         putString("NODE_OPTIONS", "--max-old-space-size=768")
         putString("DSH_TELEMETRY_DISABLED", "1")
         putString("NARB_DISABLE_NATIVE_CACHE", "1")
+        if (io.github.jackwener.dsh.core.extensions.SafeModeRequest.take(context, restarts.open)) putString(io.github.jackwener.dsh.core.extensions.SafeModeRequest.ENV, "1")
     }
 
     private fun Bundle.pfd(key: String): ParcelFileDescriptor =
