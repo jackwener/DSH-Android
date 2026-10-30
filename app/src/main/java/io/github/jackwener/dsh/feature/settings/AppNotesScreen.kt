@@ -46,6 +46,7 @@ import io.github.jackwener.dsh.core.designsystem.BtnVariant
 import io.github.jackwener.dsh.core.designsystem.DButton
 import io.github.jackwener.dsh.core.designsystem.DDialog
 import io.github.jackwener.dsh.core.designsystem.DIcon
+import io.github.jackwener.dsh.core.designsystem.DSwitch
 import io.github.jackwener.dsh.core.designsystem.DTopBar
 import io.github.jackwener.dsh.core.designsystem.Dsh
 import io.github.jackwener.dsh.core.designsystem.DshType
@@ -65,7 +66,14 @@ import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 @HiltViewModel
-class AppNotesViewModel @Inject constructor(@ApplicationContext private val context: Context, private val notes: AppNotes) : ViewModel() {
+class AppNotesViewModel @Inject constructor(
+    @ApplicationContext private val context: Context,
+    private val notes: AppNotes,
+    private val repo: io.github.jackwener.dsh.core.data.SettingsRepository,
+) : ViewModel() {
+    val reflect: StateFlow<Boolean> = repo.settings.map { it.reflectExperience }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), true)
+    fun setReflect(on: Boolean) { viewModelScope.launch { repo.setReflectExperience(on) } }
+
     class AppGroup(val pkg: String, val label: String, val icon: ImageBitmap?, val notes: List<AppNotes.Note>)
 
     private val icons = HashMap<String, ImageBitmap?>()
@@ -94,6 +102,7 @@ class AppNotesViewModel @Inject constructor(@ApplicationContext private val cont
 fun AppNotesScreen(onBack: () -> Unit, vm: AppNotesViewModel = hiltViewModel()) {
     val c = Dsh.colors
     val apps by vm.apps.collectAsStateWithLifecycle()
+    val reflect by vm.reflect.collectAsStateWithLifecycle()
     var open by rememberSaveable { mutableStateOf<String?>(null) }
     /** "" = everything, else a package. */
     var confirm by remember { mutableStateOf<String?>(null) }
@@ -107,6 +116,12 @@ fun AppNotesScreen(onBack: () -> Unit, vm: AppNotesViewModel = hiltViewModel()) 
         }
         LazyColumn(Modifier.fillMaxSize().padding(horizontal = 16.dp).navigationBarsPadding()) {
             item { Text(stringResource(R.string.app_notes_desc), Modifier.padding(start = 4.dp, top = 4.dp, bottom = 12.dp), style = DshType.xs13, color = c.labelTertiary) }
+            if (group == null) item {
+                SettingsCard(Modifier.padding(bottom = 12.dp)) {
+                    SettingsRow(stringResource(R.string.reflect_experience), stringResource(R.string.reflect_experience_desc), divider = false,
+                        trailing = { DSwitch(reflect, vm::setReflect) })
+                }
+            }
             val list = apps
             when {
                 list == null -> item { Box(Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) { io.github.jackwener.dsh.core.designsystem.Spinner(20.dp) } }

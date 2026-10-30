@@ -22,6 +22,7 @@ import { homedir, tmpdir } from 'node:os'
 import { basename, dirname, join, posix } from 'node:path'
 import { format } from 'node:util'
 import { checkCommand, isReadOnlyCommand, refusalText } from './hardline.js'
+import { setupExperience } from './experience.js'
 
 export { checkCommand, isReadOnlyCommand, refusalText } from './hardline.js'
 
@@ -427,21 +428,24 @@ export function apply(ctx, config = {}) {
     if (budget.dailyCostLimitCny !== undefined && ledger.state.dailyCostCny >= budget.dailyCostLimitCny) return { kind: 'dailyCostLimitCny', used: Math.round(ledger.state.dailyCostCny * 1e4) / 1e4, limit: budget.dailyCostLimitCny }
     return undefined
   }
-  ctx.on('session/event', (session, event) => {
-    const usage = usageOf(event)
-    if (usage === undefined) return
+  const meter = (root, usage, model) => {
     const input = Number(usage.inputTokens ?? 0)
     const output = Number(usage.outputTokens ?? 0)
     const cacheRead = Number(usage.cacheReadTokens ?? 0)
     const cacheWrite = Number(usage.cacheWriteTokens ?? 0)
-    const model = session.requestHeader?.()?.config?.model
     const p = priceFor(model)
     const cacheWeight = p.input > 0 ? Math.min(1, Math.max(0, p.cacheRead / p.input)) : 1
     const tokens = Math.round(input + cacheWrite + output + cacheRead * cacheWeight)
     if (!Number.isFinite(tokens) || tokens <= 0) return
     const cost = ((input + cacheWrite) * p.input + cacheRead * p.cacheRead + output * p.output) / 1e6
-    ledger.add(rootOfSession(ctx, session), tokens, Number.isFinite(cost) ? cost : 0)
+    ledger.add(root, tokens, Number.isFinite(cost) ? cost : 0)
+  }
+  ctx.on('session/event', (session, event) => {
+    const usage = usageOf(event)
+    if (usage !== undefined) meter(rootOfSession(ctx, session), usage, session.requestHeader?.()?.config?.model)
   })
+  // ── 3b. App 经验库: routes and post-turn reflection (experience.js) ──────────
+  setupExperience(ctx, { bridge, rootOf: agent => rootSessionId(ctx, agent), meter, withinBudget: root => overBudget(root) === undefined, log })
   ctx.on('agent/pre-step', async (input, next) => {
     const sessionId = rootSessionId(ctx, input.agent)
     const over = sessionId === undefined ? undefined : overBudget(sessionId)

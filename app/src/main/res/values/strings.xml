@@ -245,6 +245,8 @@
     <string name="app_note_kind_trap">易错</string>
     <string name="app_note_kind_fact">事实</string>
     <string name="app_note_kind_route">路线</string>
+    <string name="reflect_experience">任务结束后自动总结经验</string>
+    <string name="reflect_experience_desc">在 App 里顺利完成任务后，用一次简短的模型调用总结 0–3 条界面经验（消耗少量额度）</string>
     <string name="tool_app_info">应用信息</string>
     <string name="tool_app_launch">打开应用</string>
     <string name="tool_app_open_link">打开链接</string>

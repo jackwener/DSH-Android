@@ -60,6 +60,8 @@ data class Settings(
     val allowExternalApps: Boolean = false,
     /** 在后台屏操作 App: with Shizuku, apps the agent opens run on its own virtual screen (AgentScreen). */
     val agentScreen: Boolean = true,
+    /** 任务结束后自动总结经验: after a turn that worked in an app, one short model call distills App 经验 notes. */
+    val reflectExperience: Boolean = true,
     /** Third-party OpenAI-compatible providers (keys live in SecretStore, never here). */
     val providers: List<ProviderConfig> = emptyList(),
 ) {
@@ -92,6 +94,7 @@ class SettingsRepository @Inject constructor(@ApplicationContext private val con
         val preset = stringPreferencesKey("default_preset")
         val externalApps = booleanPreferencesKey("allow_external_apps")
         val agentScreen = booleanPreferencesKey("agent_screen")
+        val reflect = booleanPreferencesKey("reflect_experience")
     }
 
     val settings: Flow<Settings> = context.store.data.map { it.toSettings() }
@@ -115,6 +118,7 @@ class SettingsRepository @Inject constructor(@ApplicationContext private val con
         defaultPreset = PermissionPreset.of(this[K.preset]),
         allowExternalApps = this[K.externalApps] ?: false,
         agentScreen = this[K.agentScreen] ?: true,
+        reflectExperience = this[K.reflect] ?: true,
     )
 
     /** [provider] "" = DeepSeek. */
@@ -146,4 +150,5 @@ class SettingsRepository @Inject constructor(@ApplicationContext private val con
     suspend fun setDefaultPreset(p: PermissionPreset) = context.store.edit { it[K.preset] = p.id }
     suspend fun setAllowExternalApps(on: Boolean) = context.store.edit { it[K.externalApps] = on }
     suspend fun setAgentScreen(on: Boolean) = context.store.edit { it[K.agentScreen] = on }
+    suspend fun setReflectExperience(on: Boolean) = context.store.edit { it[K.reflect] = on }
 }

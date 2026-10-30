@@ -229,7 +229,7 @@ class SessionStore @Inject constructor(
         val appPrompt = text.startsWith(APP_PROMPT_PREFIX)
         // Steering a running turn (also a queued message sent now) stays part of the same task.
         if (!appPrompt && (!live.running || live.waitingForNetwork)) autoContinued.remove(sessionId)
-        if (!appPrompt) capabilities.onUserPrompt(sessionId)
+        if (!appPrompt) capabilities.onUserPrompt(sessionId, text)
         // A prompt the app sent for the user is not re-sent verbatim by 重试 (that asks to continue).
         val retryText = text.takeUnless { appPrompt }
         if (existing == null) dao.upsert(SessionEntity(sessionId, text.lineSequence().first().take(40), now, now, ruleId, running = true, preset = live.preset.id))

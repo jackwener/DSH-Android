@@ -245,6 +245,8 @@
     <string name="app_note_kind_trap">Trap</string>
     <string name="app_note_kind_fact">Fact</string>
     <string name="app_note_kind_route">Route</string>
+    <string name="reflect_experience">Summarize experience after each task</string>
+    <string name="reflect_experience_desc">After a task in an app goes well, one short model call distills 0–3 UI notes (uses a little quota)</string>
     <string name="tool_app_info">App info</string>
     <string name="tool_app_launch">Open app</string>
     <string name="tool_app_open_link">Open link</string>

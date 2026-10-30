@@ -58,6 +58,8 @@ class AppNotes internal constructor(
     /** Every note, in storage order ([forPackages] sorts for display). */
     val all: StateFlow<List<Note>> get() = state.asStateFlow()
 
+    fun isInstalled(pkg: String) = versionOf(pkg) != null
+
     fun isStale(n: Note): Boolean = n.appVersion.isNotEmpty() && versionOf(n.pkg)?.let { it != n.appVersion } == true
 
     /** Notes for [pkgs], current ones first, then by last confirmation and uses. */
@@ -70,7 +72,7 @@ class AppNotes internal constructor(
         val clean = clean(text)
         problem(clean)?.let { return Outcome.Rejected(it) }
         val notes = state.value
-        duplicateOf(clean, notes.filter { it.pkg == pkg })?.let { return Outcome.Duplicate(it) }
+        duplicateOf(clean, notes.filter { it.pkg == pkg && it.kind != Kind.route })?.let { return Outcome.Duplicate(it) }
         val now = clock()
         val note = Note("n${nextId++}", pkg, versionOf(pkg).orEmpty(), clean, kind, now, now)
         save(evict(notes + note, note.id))
@@ -84,8 +86,23 @@ class AppNotes internal constructor(
         val old = get(id) ?: return Outcome.Rejected("No note $id.")
         val clean = clean(text)
         problem(clean)?.let { return Outcome.Rejected(it) }
-        duplicateOf(clean, state.value.filter { it.pkg == old.pkg && it.id != old.id })?.let { return Outcome.Duplicate(it) }
+        duplicateOf(clean, state.value.filter { it.pkg == old.pkg && it.id != old.id && it.kind != Kind.route })?.let { return Outcome.Duplicate(it) }
         Outcome.Saved(change(id) { it.copy(text = clean, kind = kind ?: it.kind, lastConfirmedAt = clock(), appVersion = versionOf(it.pkg) ?: it.appVersion) }!!)
+    }
+
+    /**
+     * A tap path that reached [steps].last() from the app's launch screen. One route per target: the
+     * same path again counts as a confirmation, a different one replaces the old (UIs change).
+     */
+    fun addRoute(pkg: String, steps: List<String>): Outcome = synchronized(lock) {
+        if (steps.size < 2) return Outcome.Rejected("A route needs at least two steps.")
+        val text = routeText(steps)
+        val old = state.value.firstOrNull { it.pkg == pkg && it.kind == Kind.route && routeTarget(it.text) == steps.last() }
+        when {
+            old == null -> add(pkg, text, Kind.route)
+            old.text == text -> Outcome.Saved(confirm(old.id)!!)
+            else -> update(old.id, text)
+        }
     }
 
     fun remove(id: String): Note? = synchronized(lock) { get(id)?.also { n -> save(state.value.filter { it.id != n.id }) } }
@@ -96,13 +113,16 @@ class AppNotes internal constructor(
 
     /**
      * The model-facing block for an app's notes ([max] lines at most), or null when there are none.
+     * Over the cap, notes sharing words with [query] (the user's request) come first.
      */
-    fun notice(pkgs: Collection<String>, label: String, max: Int = MAX_NOTICE): String? {
+    fun notice(pkgs: Collection<String>, label: String, max: Int = MAX_NOTICE, query: String? = null): String? {
         val notes = forPackages(pkgs).takeIf { it.isNotEmpty() } ?: return null
+        val shown = if (notes.size > max && !query.isNullOrBlank()) rank(notes, query).take(max) else notes.take(max)
         return buildString {
             append("Notes on $label from earlier runs on this phone (UI facts you recorded; check them against the screen):\n")
-            notes.take(max).forEach { append(line(it)).append('\n') }
+            shown.forEach { append(line(it)).append('\n') }
             if (notes.size > max) append("(+${notes.size - max} more: app_guide lists all)\n")
+            if (shown.any { it.kind == Kind.route }) append("(路线) lines are tap paths that worked before from the app's start page: hints only, verify each step on screen.\n")
             append("When a note helped, app_note confirm(id); when it is wrong, update or remove it; add a note for a non-obvious entry or trap you find.")
         }
     }
@@ -179,6 +199,16 @@ class AppNotes internal constructor(
                 "Not stored: the note looks like it contains personal data (an email address, phone number or long number). " +
                     "Notes are UI facts only; describe the screen without names, numbers or account details."
             else -> null
+        }
+
+        fun routeText(steps: List<String>) = "到「${steps.last()}」：${steps.joinToString(" → ")}"
+        fun routeTarget(text: String): String? = text.takeIf { it.startsWith("到「") }?.substringAfter("到「")?.substringBefore("」：", "")?.ifEmpty { null }
+
+        /** [notes] (already in display order) by character pairs shared with [query], most first; ties keep their order. */
+        fun rank(notes: List<Note>, query: String): List<Note> {
+            val q = bigrams(normalize(query))
+            return notes.withIndex().sortedWith(compareByDescending<IndexedValue<Note>> { minOf((bigrams(normalize(it.value.text)) intersect q).size, 5) }
+                .thenBy { it.index }).map { it.value }
         }
 
         /** Letters and digits only, lowercased: "点 右上角「+」" equals "点右上角+". */

@@ -38,8 +38,8 @@ class AppKnowledge internal constructor(
     val entries: List<Entry> by lazy { source().mapNotNull { (id, text) -> runCatching { parse(id, text) }.getOrNull() }.sortedBy { it.id } }
     private val byPackage by lazy { entries.flatMap { e -> e.packages.map { it to e } }.toMap() }
 
-    /** Per conversation: guides already given, and how many were appended automatically this turn. */
-    private class Visits { val given = HashSet<String>(); var appended = 0 }
+    /** Per conversation: guides already given, how many were appended automatically this turn, and the turn's request. */
+    private class Visits { val given = HashSet<String>(); var appended = 0; var prompt: String? = null }
     private val visits = HashMap<String, Visits>()
 
     private fun visits(sessionId: String) = visits.getOrPut(sessionId.substringBefore('/')) { Visits() }
@@ -62,7 +62,8 @@ class AppKnowledge internal constructor(
      */
     fun firstVisitNotice(sessionId: String, packageName: String): String? {
         val e = forPackage(packageName)
-        val mine = notes?.notice(listOf(packageName), e?.display ?: labelOf(packageName))
+        val prompt = synchronized(visits) { visits[sessionId.substringBefore('/')]?.prompt }
+        val mine = notes?.notice(listOf(packageName), e?.display ?: labelOf(packageName), query = prompt)
         if (e == null && mine == null) return null
         val key = e?.id ?: packageName
         synchronized(visits) {
@@ -88,8 +89,10 @@ class AppKnowledge internal constructor(
         return listOfNotNull(mine, guide).joinToString("\n\n")
     }
 
-    /** The user spoke: the per-turn cap starts again. */
-    fun newTurn(sessionId: String) { synchronized(visits) { visits[sessionId.substringBefore('/')]?.appended = 0 } }
+    /** The user spoke: the per-turn cap starts again, and [prompt] ranks the notes shown this turn. */
+    fun newTurn(sessionId: String, prompt: String? = null) {
+        synchronized(visits) { visits(sessionId).let { it.appended = 0; it.prompt = prompt } }
+    }
 
     companion object {
         const val DIR = "knowledge/apps"

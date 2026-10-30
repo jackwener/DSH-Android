@@ -3,6 +3,7 @@ package io.github.jackwener.dsh.core.capability.tools
 import android.content.Context
 import android.content.Intent
 import dagger.hilt.android.qualifiers.ApplicationContext
+import io.github.jackwener.dsh.core.capability.AppExperience
 import io.github.jackwener.dsh.core.capability.AppKnowledge
 import io.github.jackwener.dsh.core.capability.AppNotes
 import io.github.jackwener.dsh.core.capability.CallContext
@@ -25,6 +26,7 @@ class KnowledgeTools @Inject constructor(
     @ApplicationContext private val context: Context,
     private val knowledge: AppKnowledge,
     private val notes: AppNotes,
+    private val experience: AppExperience,
 ) : ToolSet {
     private val pm get() = context.packageManager
 
@@ -77,9 +79,13 @@ class KnowledgeTools @Inject constructor(
                     "add" -> {
                         val app = args.reqStr("app")
                         val pkg = resolve(app) ?: return@withContext ToolResult.error("not_found", "No installed app matches \"$app\"; pass its package name (app_list).")
-                        outcome(notes.add(pkg, args.reqStr("text"), kind ?: AppNotes.Kind.fact), "Noted")
+                        val k = kind ?: AppNotes.Kind.fact
+                        outcome(notes.add(pkg, args.reqStr("text"), k), "Noted").also { if (it.ok && k == AppNotes.Kind.entry) experience.noteUsed(call.sessionId, pkg) }
                     }
-                    "confirm" -> notes.confirm(args.reqStr("id"))?.let { ToolResult.text("Confirmed ${it.id} (used ${it.uses}×).") } ?: missing(args.reqStr("id"))
+                    "confirm" -> notes.confirm(args.reqStr("id"))?.let {
+                        experience.noteUsed(call.sessionId, it.pkg)
+                        ToolResult.text("Confirmed ${it.id} (used ${it.uses}×).")
+                    } ?: missing(args.reqStr("id"))
                     "update" -> outcome(notes.update(args.reqStr("id"), args.reqStr("text"), kind), "Updated")
                     "remove" -> notes.remove(args.reqStr("id"))?.let { ToolResult.text("Removed ${it.id}.") } ?: missing(args.reqStr("id"))
                     else -> throw InvalidArgsException("unknown action '$action'")

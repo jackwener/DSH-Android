@@ -163,6 +163,9 @@ A `socketpair(AF_UNIX, SOCK_STREAM)`; Node opens it with `new net.Socket({ fd })
 ### Node → App requests
 - `capability/list {}` → `{ tools: ToolDescriptor[] }`
 - `capability/invoke { sessionId, callId, tool, args, timeoutMs? }` → `ToolResult` (`timeoutMs`: the budget the plugin uses for this call, see §3.1)
+- `experience/turn { sessionId, ok }` → `{ reflect: boolean, package?, label? }` — a root turn that used app/screen
+  tools ended (`ok`: `turn/end` reason `completed`). The app records the turn's tap route (App 经验库) and says whether
+  the plugin should reflect on it (successful, in an app, setting 任务结束后自动总结经验 on).
 
 ```ts
 interface ToolDescriptor {
@@ -220,6 +223,8 @@ later, or send an SMS twice after a retry). The rules:
 ### Node → App notifications
 - `capability/cancel { sessionId, callId, reason? }` — the plugin gave up on this call (§3.1); the app cancels it.
 - `budget/exceeded { sessionId, kind, used, limit }` — a budget refused a step; the app shows it in the conversation.
+- `experience/notes { sessionId, package, notes: [{ kind: "entry"|"trap"|"fact", text }] }` — the post-turn
+  reflection's findings (≤3); the app stores them like `app_note` add (dedupe, personal-data filter).
 
 ### App → Node notifications
 - `capability/changed {}` — tool set changed (tool groups toggled); the plugin re-lists.
@@ -236,7 +241,8 @@ later, or send an SMS twice after a retry). The rules:
   cwd and any `cd` earlier in the command); approval policy (§2); token/cost budget enforcement from `budget/update`;
   system-prompt section describing the phone context and the tool-priority rule (system API > intent/deeplink >
   Shizuku > accessibility clicks), whose "works while locked" examples are derived from `needsUnlock:false`
-  descriptors; unattended-run context; dsh `ctx.logger` warnings/errors mirrored to stderr (`[dsh:<name>] warn: …` in
+  descriptors; unattended-run context; post-turn reflection for the App 经验库 (`experience.js`: one tool-free call
+  with the session's model over a ≤3k-char step trace, metered into the budget ledger); dsh `ctx.logger` warnings/errors mirrored to stderr (`[dsh:<name>] warn: …` in
   engine.log).
 - Profile also mounts `dsh-time-context` and `dsh-tool-ask-user`, and disables `otel` and `llm-pi-ai` (cold start:
   ~1000 → ~500 modules at boot; build-engine prunes the provider SDKs only pi-ai reaches). Third-party models go
