@@ -83,9 +83,9 @@ class SettingsViewModel @Inject constructor(
     }
     fun setProviderEnabled(p: ProviderConfig, on: Boolean) = viewModelScope.launch { repo.saveProvider(p.copy(enabled = on)) }
     /** `GET {baseUrl}/models` with [key] (or the stored key of [existing]); also the connection test. */
-    suspend fun fetchModels(baseUrl: String, key: String?, existing: ProviderConfig?): Result<List<String>> = withContext(Dispatchers.IO) {
+    suspend fun fetchModels(baseUrl: String, key: String?, existing: ProviderConfig?): Result<io.github.jackwener.dsh.core.provider.FetchedModels> = withContext(Dispatchers.IO) {
         val k = key?.trim()?.takeIf { it.isNotEmpty() } ?: existing?.takeIf { it.hasKey }?.let { secrets.read(it.secretName) }
-        io.github.jackwener.dsh.core.provider.fetchModels(baseUrl, k)
+        io.github.jackwener.dsh.core.provider.fetchModelsResolving(baseUrl, k)
     }
     fun setEffort(e: Effort) = viewModelScope.launch { repo.setEffort(e) }
     fun setTheme(t: ThemeMode) = viewModelScope.launch { repo.setTheme(t) }

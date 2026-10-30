@@ -36,6 +36,22 @@ class NetDiagnosisTest {
         assertNull(NetDiagnose.ofEngineError(null, "boom"))
     }
 
+    @Test fun causelessTransportStillShowsTheErrorName() {
+        // js patch 16: a fetch failure without any cause names itself instead of a bare host:port (#28).
+        val d = engine("integrate.api.nvidia.com:443 (TypeError: fetch failed)")!!
+        assertEquals(NetCause.Other, d.cause)
+        assertEquals("integrate.api.nvidia.com:443 (TypeError: fetch failed)", d.detail)
+    }
+
+    @Test fun providerFormatErrorsAreNotNetworkErrors() {
+        val msg = "llm-service-lite: could not parse the provider's response: TypeError: Cannot read properties of null (reading 'prompt_tokens')"
+        assertEquals("TypeError: Cannot read properties of null (reading 'prompt_tokens')", NetDiagnose.formatErrorOf("MALFORMED_RESPONSE", msg))
+        assertNull(NetDiagnose.ofEngineError("MALFORMED_RESPONSE", msg))
+        assertEquals("provider stream contains invalid JSON", NetDiagnose.formatErrorOf("MALFORMED_RESPONSE", "llm-service-lite: provider stream contains invalid JSON"))
+        assertNull(NetDiagnose.formatErrorOf("TRANSPORT", msg))
+        assertNull(NetDiagnose.formatErrorOf(null, msg))
+    }
+
     @Test fun javaExceptionsFromTheConnectionTest() {
         assertEquals(NetCause.Refused, NetDiagnose.ofException(ConnectException("failed to connect to /192.168.1.5 (port 8080) after 10000ms: isConnected failed: ECONNREFUSED (Connection refused)"))!!.cause)
         assertEquals(NetCause.Unreachable, NetDiagnose.ofException(ConnectException("failed to connect: isConnected failed: EHOSTUNREACH (No route to host)"))!!.cause)
