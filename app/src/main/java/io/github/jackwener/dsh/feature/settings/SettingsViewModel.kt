@@ -132,8 +132,6 @@ class SettingsViewModel @Inject constructor(
         PermissionCatalog.forGroups(settings.value.enabledGroups).forEach {
             checks += DoctorCheck(it.title(zh), it.check(context), it.why(zh), it.intent(context))
         }
-        val (tip, intent) = PermissionCatalog.vendorKeepAlive(context)
-        checks += DoctorCheck(if (zh) "厂商后台限制" else "Vendor background limits", null, tip, intent)
         val shell = shizuku.access.refresh()
         checks += DoctorCheck("Shizuku", if (shell == io.github.jackwener.dsh.core.platform.ShellState.NotInstalled) null else shell.ready,
             shellStateLabel(context, shell), shellFixIntent(shizuku.access, shell, shizukuInstaller.bundled))

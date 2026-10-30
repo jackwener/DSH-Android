@@ -403,8 +403,8 @@ private fun PhoneSection(vm: SettingsViewModel, onNotificationApps: () -> Unit) 
     SettingsCard {
         SettingsRow(stringResource(R.string.notification_apps), stringResource(R.string.notification_apps_desc), divider = false, onClick = onNotificationApps,
             trailing = { DIcon(R.drawable.dsw_chevron_right_outline, size = 14.dp, tint = c.labelTertiary) })
-        val (tip, intent) = remember { PermissionCatalog.vendorKeepAlive(context) }
-        SettingsRow(stringResource(R.string.keep_alive), tip, onClick = { runCatching { context.startActivity(intent) } },
+        val kind = remember { RomKeepAlive.kinds(KeepAliveLauncher.rom.vendor).first() }
+        SettingsRow(stringResource(R.string.keep_alive), keepAliveHint(kind, zh), onClick = { KeepAliveLauncher.open(context, kind) },
             trailing = { DIcon(R.drawable.dsw_chevron_right_outline, size = 14.dp, tint = c.labelTertiary) })
     }
     SettingsGroupTitle(stringResource(R.string.shz_group))
@@ -454,6 +454,8 @@ private fun AboutSection(vm: SettingsViewModel) {
             DButton(stringResource(R.string.doctor_rerun), { vm.runDoctor() }, variant = BtnVariant.Outline, size = BtnSize.Sm, icon = R.drawable.dsw_refresh_outline)
         }
     }
+    SettingsGroupTitle(stringResource(R.string.keep_alive))
+    KeepAliveCard()
     vm.engineLog?.let { log ->
         SettingsGroupTitle(stringResource(R.string.engine_log))
         CodeCard(log, label = "engine.log", maxHeight = 320.dp)
@@ -462,6 +464,45 @@ private fun AboutSection(vm: SettingsViewModel) {
         SettingsGroupTitle(stringResource(R.string.engine_last_exit))
         CodeCard(record, label = "exit / tombstone", maxHeight = 320.dp)
     }
+}
+
+/** Vendor keep-alive: detected ROM, recents-lock tip and one button per setting worth changing. */
+@Composable
+private fun KeepAliveCard() {
+    val c = Dsh.colors
+    val context = LocalContext.current
+    val zh = isZh()
+    val tick = resumeTick()
+    val rom = KeepAliveLauncher.rom
+    val exempt = remember(tick) { KeepAliveLauncher.batteryExempt(context) }
+    SettingsCard {
+        SettingsRow(stringResource(R.string.keep_alive_device, rom.label(zh)),
+            stringResource(R.string.keep_alive_desc) + "\n" + RomKeepAlive.recentsHint(rom.vendor).text(zh), divider = false)
+        RomKeepAlive.kinds(rom.vendor).forEach { kind ->
+            val battery = kind == RomKeepAlive.Kind.Battery
+            SettingsRow(stringResource(when (kind) {
+                RomKeepAlive.Kind.AutoStart -> R.string.keep_alive_autostart
+                RomKeepAlive.Kind.Background -> R.string.keep_alive_background
+                RomKeepAlive.Kind.Battery -> R.string.keep_alive_battery
+            }), keepAliveHint(kind, zh),
+                leading = { StateDot(if (!battery) DotKind.Idle else if (exempt) DotKind.Done else DotKind.Error) },
+                trailing = {
+                    if (battery && exempt) Text(stringResource(R.string.keep_alive_exempt), style = DshType.xs13, color = c.labelTertiary)
+                    else DButton(stringResource(R.string.keep_alive_open), { KeepAliveLauncher.open(context, kind) }, variant = BtnVariant.Outline, size = BtnSize.Sm)
+                })
+        }
+    }
+}
+
+/** The vendor hint, prefixed with "App info" when no vendor screen resolves and App info is what opens. */
+@Composable
+private fun keepAliveHint(kind: RomKeepAlive.Kind, zh: Boolean): String {
+    val context = LocalContext.current
+    val vendor = KeepAliveLauncher.rom.vendor
+    val hint = RomKeepAlive.hint(vendor, kind).text(zh)
+    val direct = remember(kind) { kind == RomKeepAlive.Kind.Battery || KeepAliveLauncher.hasVendorScreen(context, kind) }
+    return if (direct || RomKeepAlive.targets(vendor, kind).firstOrNull() == RomKeepAlive.APP_DETAILS) hint
+    else stringResource(R.string.keep_alive_via_app_info, hint)
 }
 
 /** Notification whitelist: which apps' notifications the agent may read (default none). */

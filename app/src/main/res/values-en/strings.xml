@@ -445,6 +445,14 @@
     <string name="notification_apps">Apps whose notifications can be read (all by default)</string>
     <string name="notification_apps_desc">All apps\' notifications are readable by default; exclude the ones you want kept private</string>
     <string name="keep_alive">Keep running in background</string>
+    <string name="keep_alive_device">This device: %1$s</string>
+    <string name="keep_alive_desc">Many ROMs kill DSH in the background, interrupting automations and long tasks. Open each setting below:</string>
+    <string name="keep_alive_autostart">Autostart</string>
+    <string name="keep_alive_background">Background &amp; battery</string>
+    <string name="keep_alive_battery">Battery optimisation</string>
+    <string name="keep_alive_open">Open</string>
+    <string name="keep_alive_exempt">Exempt</string>
+    <string name="keep_alive_via_app_info">In App info: %1$s</string>
     <string name="shizuku_missing">Not installed (optional)</string>
     <string name="shizuku_stopped">Installed, not running</string>
     <string name="shizuku_unauthorized">Not authorized</string>
