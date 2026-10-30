@@ -4,6 +4,7 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.os.Bundle
+import android.view.Display
 import android.view.accessibility.AccessibilityNodeInfo
 import dagger.hilt.android.qualifiers.ApplicationContext
 import io.github.jackwener.dsh.core.platform.ShizukuShell
@@ -35,7 +36,10 @@ class TextInput @Inject constructor(@ApplicationContext private val context: Con
      * is re-read: if it changed at all, an earlier path did commit something (masked/reformatting
      * fields fail a strict check), so we stop rather than type the text a second time.
      */
-    suspend fun type(svc: DshAccessibilityService, target: AccessibilityNodeInfo?, text: String, append: Boolean): Typed? {
+    suspend fun type(svc: DshAccessibilityService, target: AccessibilityNodeInfo?, text: String, append: Boolean, displayId: Int = Display.DEFAULT_DISPLAY): Typed? {
+        // The input connection, the keyboard and `ime set` belong to the user's focused field: on the
+        // agent screen only paths bound to the target node (or to that display) are safe.
+        val main = displayId == Display.DEFAULT_DISPLAY
         val before = target?.text?.toString()
         val full = if (append) (before.orEmpty() + text) else text
         fun done(method: String) = Typed(method, readBack(target))
@@ -52,11 +56,11 @@ class TextInput @Inject constructor(@ApplicationContext private val context: Con
         }
 
         target?.let { focus(it) }
-        if (svc.commitViaA11yInput(text, replace = !append)) {
+        if (main && svc.commitViaA11yInput(text, replace = !append)) {
             if (verify(target, text, trustWithoutNode = true)) return done("a11y_input" + unverified(target))
             if (changed()) return done("a11y_input (partial: the field reformatted the text; check it)")
         }
-        if (DshInputMethodService.isCurrent(context) && DshInputMethodService.instance?.commit(text, replace = !append) == true) {
+        if (main && DshInputMethodService.isCurrent(context) && DshInputMethodService.instance?.commit(text, replace = !append) == true) {
             if (verify(target, text, trustWithoutNode = true)) return done("dsh_ime" + unverified(target))
             if (changed()) return done("dsh_ime (partial: the field reformatted the text; check it)")
         }
@@ -64,11 +68,11 @@ class TextInput @Inject constructor(@ApplicationContext private val context: Con
         if (shizuku.available) {
             if (text.all { it.code in 0x20..0x7e }) {
                 if (!append && target != null) clear(target)
-                if (shizuku.exec("input text ${shellQuote(text.replace(" ", "%s"))}").code == 0) {
+                if (shizuku.exec((if (main) "input text " else "input -d $displayId text ") + shellQuote(text.replace(" ", "%s"))).code == 0) {
                     if (verify(target, text, trustWithoutNode = true)) return done("shizuku_input" + unverified(target))
                     if (changed()) return done("shizuku_input (partial: the field reformatted the text; check it)")
                 }
-            } else if (viaImeSwitch(text, !append)) {
+            } else if (main && viaImeSwitch(text, !append)) {
                 if (verify(target, text, trustWithoutNode = true)) return done("shizuku_ime" + unverified(target))
                 if (changed()) return done("shizuku_ime (partial: the field reformatted the text; check it)")
             }

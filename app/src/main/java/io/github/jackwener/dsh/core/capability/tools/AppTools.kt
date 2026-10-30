@@ -10,6 +10,8 @@ import android.net.Uri
 import android.os.Environment
 import androidx.core.content.FileProvider
 import dagger.hilt.android.qualifiers.ApplicationContext
+import io.github.jackwener.dsh.core.capability.AgentScreen
+import io.github.jackwener.dsh.core.capability.AppKnowledge
 import io.github.jackwener.dsh.core.capability.CallContext
 import io.github.jackwener.dsh.core.capability.InvalidArgsException
 import io.github.jackwener.dsh.core.capability.Tool
@@ -40,8 +42,15 @@ import javax.inject.Singleton
 class AppTools @Inject constructor(
     @ApplicationContext private val context: Context,
     private val shizuku: ShizukuShell,
+    private val agent: AgentScreen,
+    private val knowledge: AppKnowledge,
 ) : ToolSet {
     private val pm get() = context.packageManager
+
+    private companion object {
+        const val SCREEN = "screen"
+        const val SCREEN_DESC = "Where to open it: \"agent\" = your own background screen (default when Shizuku is ready), \"main\" = the user's screen"
+    }
 
     private fun label(ai: ApplicationInfo) = pm.getApplicationLabel(ai).toString()
 
@@ -81,7 +90,7 @@ class AppTools @Inject constructor(
         val out = r.output
         if (r.code != 0 || out.contains("Error") || (out.contains("Status:") && !out.contains("Status: ok")))
             throw IllegalStateException(out.lines().firstOrNull { it.contains("Error") || it.contains("Status") }?.trim() ?: out.take(300))
-        return "ok (via Shizuku)" + if (displayId == null) confirm(expect) else ""
+        return "ok (via Shizuku)" + if (displayId == null) confirm(expect) else confirmOn(displayId, expect)
     }
 
     private suspend fun confirm(expect: String?): String {
@@ -90,8 +99,36 @@ class AppTools @Inject constructor(
         return " — but $expect is not in front yet (it may still be loading, or Android blocked it); check with screen_read"
     }
 
+    private suspend fun confirmOn(displayId: Int, expect: String?): String {
+        val svc = DshAccessibilityService.instance ?: return ""
+        if (expect == null) return ""
+        repeat(10) { if (runCatching { svc.snapshot(displayId).packageName }.getOrNull() == expect) return ""; kotlinx.coroutines.delay(250) }
+        return " — but $expect is not in front of the agent screen yet (it may still be loading); check with screen_read"
+    }
+
     private suspend fun launchResult(prefix: String, intent: Intent, displayId: Int? = null, expect: String? = null): ToolResult =
         try { ToolResult.text(prefix + start(intent, displayId, expect)) } catch (e: LaunchBlocked) { ToolResult.error("needs_user", e.message ?: "blocked") }
+
+    /**
+     * Opens [intent] where this conversation works: its agent screen (created on first use when
+     * [create]) or the user's screen. Never takes an app away from the user: one they are using on
+     * their screen is not started on the agent screen. Adds app knowledge on the first visit.
+     */
+    private suspend fun open(call: CallContext, args: JsonObject, verb: String, intent: Intent, expect: String?, create: Boolean): ToolResult {
+        val t = agent.target(call.sessionId, args.str("screen"), create)
+        val name = expect?.let { agent.label(it) }
+        val result = if (t.agent) {
+            if (agent.userTookOver(call.sessionId)) return ToolResult.error("user_took_over",
+                "The user took the app over from the agent screen and is using it on their own screen. Do not operate it; wait for their message or ask them.")
+            if (expect != null && agent.inUseOnMain(expect)) return ToolResult.error("app_in_use",
+                "The user is using $name ($expect) on their screen right now, so it was not opened on the agent screen (that would take it away from them). " +
+                    "Wait and try again later, ask the user, or pass screen: \"main\" to work on their screen.")
+            launchResult("$verb${name?.let { " $it" } ?: ""} on the agent screen (the user's screen is not affected): ", intent, t.displayId, expect)
+                .also { if (it.ok) agent.mute(call.sessionId, expect) }
+        } else launchResult("$verb${name?.let { " $it" } ?: ""} on the user's screen: ", intent, expect = expect)
+        val known = expect?.takeIf { result.ok }?.let { knowledge.firstVisitNotice(call.sessionId, it) }
+        return (t.note?.let { result.prependText(it) } ?: result).let { r -> known?.let { r.appendText(it) } ?: r }
+    }
 
     private fun targetOf(intent: Intent): String? = intent.`package` ?: intent.component?.packageName ?: runCatching {
         pm.resolveActivity(intent, PackageManager.MATCH_DEFAULT_ONLY)?.activityInfo?.packageName?.takeIf { it != "android" }
@@ -130,27 +167,31 @@ class AppTools @Inject constructor(
                 })
             }
         },
-        object : Tool("app_launch", ToolGroup.Apps, Risk.write, true, "Open an app by package name (optionally a specific exported activity, or on the agent's virtual screen).", {
+        object : Tool("app_launch", ToolGroup.Apps, Risk.write, true,
+            "Open an app by package name (optionally a specific exported activity). With Shizuku it opens on your own background screen, " +
+                "so the user keeps using their phone; the screen_* tools then act there. The result says which screen was used.", {
             string("package", "Package name", required = true)
             string("activity", "Fully-qualified exported activity (optional)")
-            int("displayId", "Virtual screen id from vscreen_start (optional)")
+            string(SCREEN, SCREEN_DESC, enum = listOf("agent", "main"))
         }) {
             override suspend fun invoke(args: JsonObject, call: CallContext): ToolResult {
                 val p = args.reqStr("package")
                 val intent = args.str("activity")?.let { a -> Intent().setComponent(ComponentName(p, if (a.startsWith(".")) p + a else a)) }
                     ?: pm.getLaunchIntentForPackage(p) ?: throw InvalidArgsException("No launchable activity for $p")
-                return launchResult("Launched $p: ", intent, args.int("displayId"), expect = p)
+                return open(call, args, "Launched", intent, p, create = true)
             }
         },
         object : Tool("app_open_link", ToolGroup.Apps, Risk.write, true,
-            "Open a URI/deep link (https:, tel:, geo:, mailto:, app schemes like weixin://, alipays://, etc.).", {
+            "Open a URI/deep link (https:, tel:, geo:, mailto:, app schemes like weixin://, alipays://, etc.). " +
+                "Like app_launch it opens on your background screen when there is one.", {
                 string("uri", "The URI", required = true)
                 string("package", "Restrict to this app (optional)")
+                string(SCREEN, SCREEN_DESC, enum = listOf("agent", "main"))
             }) {
             override suspend fun invoke(args: JsonObject, call: CallContext): ToolResult {
                 val intent = Intent(Intent.ACTION_VIEW, Uri.parse(args.reqStr("uri")))
                 args.str("package")?.let { intent.setPackage(it) }
-                return launchResult("Opened: ", intent, expect = targetOf(intent))
+                return open(call, args, "Opened", intent, targetOf(intent), create = true)
             }
         },
         object : Tool("app_send_intent", ToolGroup.Apps, Risk.write, true,
@@ -160,6 +201,7 @@ class AppTools @Inject constructor(
                 string("type", "MIME type")
                 string("package", "Target package")
                 obj("extras", "String extras {key: value}")
+                string(SCREEN, "Which screen: \"agent\" = your background screen if this conversation has one (default), \"main\" = the user's screen", enum = listOf("agent", "main"))
             }) {
             override suspend fun invoke(args: JsonObject, call: CallContext): ToolResult {
                 val intent = Intent(args.reqStr("action"))
@@ -178,7 +220,7 @@ class AppTools @Inject constructor(
                         else -> p.contentOrNull?.let { intent.putExtra(k, it) }
                     }
                 }
-                return launchResult("Sent: ", intent, expect = targetOf(intent))
+                return open(call, args, "Sent", intent, targetOf(intent), create = false)
             }
         },
         object : Tool("share_to_app", ToolGroup.Apps, Risk.write, true, "Share files and/or text to another app (opens the share target).", {

@@ -256,8 +256,6 @@
     <string name="tool_rule_list">自动化列表</string>
     <string name="tool_rule_update">修改自动化</string>
     <string name="tool_rule_delete">删除自动化</string>
-    <string name="tool_vscreen_start">启动独立屏幕</string>
-    <string name="tool_vscreen_stop">关闭独立屏幕</string>
     <string name="tool_schedule">定时任务</string>
     <string name="tool_skill">技能</string>
     <string name="tool_subagent">子智能体</string>
@@ -413,8 +411,6 @@
     <string name="grp_browser_desc">在内置网页中浏览、点击、截图</string>
     <string name="grp_rules">自动化</string>
     <string name="grp_rules_desc">创建和管理自动化任务</string>
-    <string name="grp_vscreen">独立屏幕（实验）</string>
-    <string name="grp_vscreen_desc">在虚拟屏上操作 App，需要 Shizuku</string>
     <string name="set_agent_loop">运行限制</string>
     <string name="session_limit">单个会话 token 上限</string>
     <string name="daily_limit">每日 token 上限</string>

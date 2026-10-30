@@ -256,8 +256,6 @@
     <string name="tool_rule_list">List automations</string>
     <string name="tool_rule_update">Update automation</string>
     <string name="tool_rule_delete">Delete automation</string>
-    <string name="tool_vscreen_start">Start agent screen</string>
-    <string name="tool_vscreen_stop">Stop agent screen</string>
     <string name="tool_schedule">Schedule</string>
     <string name="tool_skill">Skill</string>
     <string name="tool_subagent">Subagent</string>
@@ -413,8 +411,6 @@
     <string name="grp_browser_desc">Browse, click and capture in the built-in web view</string>
     <string name="grp_rules">Automations</string>
     <string name="grp_rules_desc">Create and manage automation tasks</string>
-    <string name="grp_vscreen">Agent screen (experimental)</string>
-    <string name="grp_vscreen_desc">Operate apps on a virtual display; needs Shizuku</string>
     <string name="set_agent_loop">Run limits</string>
     <string name="session_limit">Per-session token limit</string>
     <string name="daily_limit">Daily token limit</string>

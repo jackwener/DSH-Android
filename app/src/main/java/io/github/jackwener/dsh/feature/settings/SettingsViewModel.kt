@@ -91,6 +91,7 @@ class SettingsViewModel @Inject constructor(
     fun setBusySend(b: BusySend) = viewModelScope.launch { repo.setBusySend(b) }
     fun setDefaultPreset(p: PermissionPreset) = viewModelScope.launch { repo.setDefaultPreset(p) }
     fun setAllowExternalApps(on: Boolean) = viewModelScope.launch { repo.setAllowExternalApps(on) }
+    fun setAgentScreen(on: Boolean) { viewModelScope.launch { repo.setAgentScreen(on) } }
     fun restartEngine() = viewModelScope.launch { sessions.restartEngine() }
     val engineLog: String? get() = io.github.jackwener.dsh.core.engine.EngineDiagnostics.logTail(context, 4000)
     val lastEngineExit: String? get() = ReliabilityDoctor.lastExitText(context)

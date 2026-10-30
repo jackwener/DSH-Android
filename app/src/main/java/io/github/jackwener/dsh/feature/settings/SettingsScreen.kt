@@ -308,7 +308,6 @@ private fun groupLabel(g: ToolGroup) = when (g) {
     ToolGroup.Clipboard -> R.string.grp_clip to R.string.grp_clip_desc
     ToolGroup.Browser -> R.string.grp_browser to R.string.grp_browser_desc
     ToolGroup.Rules -> R.string.grp_rules to R.string.grp_rules_desc
-    ToolGroup.VScreen -> R.string.grp_vscreen to R.string.grp_vscreen_desc
 }
 
 @Composable
@@ -408,6 +407,11 @@ private fun PhoneSection(vm: SettingsViewModel, onNotificationApps: () -> Unit) 
     }
     SettingsGroupTitle(stringResource(R.string.shz_group))
     ShellAccessCard()
+    val s by vm.settings.collectAsStateWithLifecycle()
+    SettingsCard(Modifier.padding(top = 8.dp)) {
+        SettingsRow(stringResource(R.string.agent_screen_setting), stringResource(R.string.agent_screen_setting_desc), divider = false,
+            trailing = { DSwitch(s.agentScreen, vm::setAgentScreen) })
+    }
 }
 
 @Composable

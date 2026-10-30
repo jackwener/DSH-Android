@@ -73,14 +73,13 @@ Shizuku 用户服务（shell uid，可选）：ShellUserService
 |---|---|
 | files | `file_search` `file_read` `file_list` `file_stat`（读）；`file_write` `file_move` `file_mkdir` `archive_extract` `archive_create`（写）；`file_delete`（危险）。`file_read` 能抽取 PDF、docx、xlsx、pptx 的文本 |
 | apps | `app_list` `app_info`；`app_launch` `app_open_link` `app_send_intent` `share_to_app`（需解锁） |
-| screen | `screen_read` `screen_capture` `screen_wait` `screen_tap` `screen_swipe` `screen_scroll` `screen_type` `screen_key`（全部需解锁） |
+| screen | `screen_read` `screen_capture` `screen_wait` `screen_tap` `screen_swipe` `screen_scroll` `screen_type` `screen_key`（全部需解锁）；`hand_to_user`（交给用户处理：登录、验证码、付款等）。参数 `screen: agent / main`，有后台屏时默认后台屏（见 `docs/AGENT-SCREEN-V2.md`） |
 | system | `device_status` `setting_get`；`sound_mode` `volume_set` `dnd_set` `brightness_set` `flashlight` `wifi_toggle` `bluetooth_toggle` `mobile_data_toggle` `alarm_set`；`location_get`（敏感）；`setting_put`（危险，仅 Shizuku） |
 | notifications | `notification_list`（敏感）；`notification_dismiss` `notification_open`；`notification_reply`（危险） |
 | comms | `contacts_search` `sms_read` `calendar_read` `call_log_read`（敏感）；`calendar_add`；`sms_send`（危险） |
 | media / clipboard | `media_control`；`clipboard_get`（敏感）`clipboard_set` |
 | browser | `browser_open` `browser_read` `browser_screenshot` `browser_scroll` `browser_back` `browser_click` `browser_type`：App 内一个不显示在屏幕上的 WebView |
 | rules | `rule_create` `rule_list` `rule_update` `rule_delete` |
-| vscreen | `vscreen_start` `vscreen_stop`：通过 Shizuku 以 shell 身份创建私有虚拟屏，屏幕和 App 工具可以指定 `displayId`。实验功能，默认关闭 |
 
 风险等级 `read / write / sensitive / dangerous` 定义在 `core/model/Models.kt`。
 
@@ -92,7 +91,7 @@ Shizuku 用户服务（shell uid，可选）：ShellUserService
 **执行路径**：工具优先用系统 API 或 Intent，其次是 Shizuku，最后是无障碍。这条规则也写进了 `plugin-guard` 的 system prompt。
 - 无障碍（`DshAccessibilityService`）：读界面元素树、手势、截图（Android 14+ 遇到 `FLAG_SECURE` 页面时显示“请你来操作”的接管卡片）。没开无障碍但 Shizuku 可用时，点按和滑动改用 `input` 命令。
 - `screen_type` 逐级回退，每一步都回读字段内容确认：`ACTION_SET_TEXT` → 无障碍输入连接（Android 13+）→ DSH 输入法（当前就是它时）→ Shizuku `input text`（ASCII），或用 `ime set` 临时切到 DSH 输入法再切回 → 剪贴板粘贴。
-- Shizuku（`core/platform/ShellAccess`、`ShizukuShell`、`ShellUserService`）：只和官方 Shizuku App 通信，不自带 ADB 客户端。工具分为三类（`ShellUse`）：不需要、可选（Wi‑Fi、蓝牙、移动数据、剪贴板、`setting_get`、`location_get`；没有 Shizuku 时打开系统面板让用户点，或走普通 API）、必需（`setting_put`、`vscreen_start`）。必需 Shizuku 的调用会在输入框位置显示 Shizuku 卡片，Shizuku 就绪后自动继续。APK 内置官方 Shizuku 安装包（构建时由 `tools/fetch-shizuku.sh` 下载并校验哈希和签名），通过 `PackageInstaller` 在 App 内安装或升级。
+- Shizuku（`core/platform/ShellAccess`、`ShizukuShell`、`ShellUserService`）：只和官方 Shizuku App 通信，不自带 ADB 客户端。工具分为三类（`ShellUse`）：不需要、可选（Wi‑Fi、蓝牙、移动数据、剪贴板、`setting_get`、`location_get`；没有 Shizuku 时打开系统面板让用户点，或走普通 API）、必需（`setting_put`）。后台屏（`core/capability/AgentScreen`）在 Shizuku 就绪时由 `app_launch` / `app_open_link` 自动创建，没有 Shizuku 时退回主屏。必需 Shizuku 的调用会在输入框位置显示 Shizuku 卡片，Shizuku 就绪后自动继续。APK 内置官方 Shizuku 安装包（构建时由 `tools/fetch-shizuku.sh` 下载并校验哈希和签名），通过 `PackageInstaller` 在 App 内安装或升级。
 - 锁屏：`needsUnlock` 的工具在锁屏或灭屏时挂起，发通知“解锁后继续”，收到 `USER_PRESENT`/`SCREEN_ON` 后执行；超过预算时间返回 `waiting_for_user`，不执行任何操作。
 
 ## 自动化（core/trigger/）

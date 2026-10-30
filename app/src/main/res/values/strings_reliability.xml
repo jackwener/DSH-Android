@@ -10,10 +10,6 @@
     <string name="err_bg_start">系统不允许在后台启动引擎（通常是电池优化被重新开启）。已发通知，点它即可执行。</string>
     <string name="deferred_title">点此执行：%1$s</string>
     <string name="deferred_text">系统阻止了后台启动，点一下由你来启动这次自动化。授予“不受电池优化限制”可避免这种情况。</string>
-    <string name="takeover_title">请你来操作</string>
-    <string name="takeover_body">这一步需要你在手机上亲自完成，完成后点“继续”。</string>
-    <string name="takeover_notif">当前页面不允许自动操作，请你来完成这一步，然后回到 DSH 点“继续”。</string>
-    <string name="takeover_stop">停止</string>
     <string name="ime_label">DSH 输入法</string>
     <string name="ime_bar">DSH 输入法（供智能体输入文字）· 点此切回你的键盘</string>
     <string name="engine_last_exit">上次引擎异常退出</string>

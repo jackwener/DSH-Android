@@ -167,7 +167,7 @@ A `socketpair(AF_UNIX, SOCK_STREAM)`; Node opens it with `new net.Socket({ fd })
 ```ts
 interface ToolDescriptor {
   name: string            // e.g. "file_search"
-  group: string           // files | apps | screen | system | notifications | comms | media | clipboard | browser | rules | vscreen
+  group: string           // files | apps | screen | system | notifications | comms | media | clipboard | browser | rules
   description: string     // model-facing, English
   inputSchema: object     // JSON Schema
   risk: "read" | "write" | "sensitive" | "dangerous"

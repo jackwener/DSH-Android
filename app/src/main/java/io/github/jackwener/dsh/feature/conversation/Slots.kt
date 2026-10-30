@@ -60,6 +60,7 @@ import io.github.jackwener.dsh.core.session.Block
 import io.github.jackwener.dsh.core.session.PendingApproval
 import io.github.jackwener.dsh.core.session.PendingPermission
 import io.github.jackwener.dsh.core.session.PendingTakeover
+import io.github.jackwener.dsh.core.session.TakeoverAnswer
 import io.github.jackwener.dsh.core.session.PendingQuestion
 import io.github.jackwener.dsh.core.session.ToolState
 import io.github.jackwener.dsh.core.session.parseArgs
@@ -189,19 +190,40 @@ private fun SystemPermissionCard(p: PendingPermission, onAnswer: (Boolean) -> Un
     }
 }
 
-/** Manual takeover (AutoGLM-style): 请你来操作，完成后点继续 — the screen step waits for the user. */
+/**
+ * Takeover card (docs/AGENT-SCREEN-V2.md §2): 跳过 / 我来处理, then — with the app on the user's
+ * screen — 不做了 / 我自己做完了 / 处理好了.
+ */
 @Composable
-fun TakeoverCard(t: PendingTakeover, onAnswer: (Boolean) -> Unit) {
+fun TakeoverCard(t: PendingTakeover, onAnswer: (TakeoverAnswer) -> Unit) {
     val c = Dsh.colors
-    var answered by remember(t.requestKey) { mutableStateOf(false) }
+    var answered by remember(t.requestKey, t.stage) { mutableStateOf(false) }
     ReenableAfter(answered) { answered = false }
+    fun answer(a: TakeoverAnswer) { answered = true; onAnswer(a) }
     AttentionCard(stringResource(R.string.takeover_title), answered, body = {
-        Text(stringResource(R.string.takeover_body), style = DshType.s14m.copy(lineHeight = DshType.base16.lineHeight), color = c.labelPrimary)
-        Text(t.reason, style = DshType.xs13, color = c.labelSecondary)
+        Text(t.reason, style = DshType.s14m.copy(lineHeight = DshType.base16.lineHeight), color = c.labelPrimary)
+        Tag(stringResource(takeoverKind(t.kind)), Tone.Warn)
+        if (t.stage == PendingTakeover.Stage.HandedOver)
+            Text(stringResource(if (t.moved) R.string.takeover_moved else R.string.takeover_here), style = DshType.xs13, color = c.labelSecondary)
     }) {
-        DButton(stringResource(R.string.takeover_stop), { answered = true; onAnswer(false) }, variant = BtnVariant.Outline, enabled = !answered)
-        DButton(stringResource(R.string.continue_), { answered = true; onAnswer(true) }, enabled = !answered)
+        if (t.stage == PendingTakeover.Stage.Asking) {
+            DButton(stringResource(R.string.takeover_skip), { answer(TakeoverAnswer.Skip) }, variant = BtnVariant.Outline, enabled = !answered)
+            DButton(stringResource(R.string.takeover_start), { answer(TakeoverAnswer.Start) }, enabled = !answered)
+        } else {
+            DButton(stringResource(R.string.takeover_abort), { answer(TakeoverAnswer.Abort) }, variant = BtnVariant.Outline, enabled = !answered)
+            DButton(stringResource(R.string.takeover_done_by_user), { answer(TakeoverAnswer.DoneByUser) }, variant = BtnVariant.Outline, enabled = !answered)
+            DButton(stringResource(R.string.takeover_handled), { answer(TakeoverAnswer.Handled) }, enabled = !answered)
+        }
     }
+}
+
+private fun takeoverKind(kind: String) = when (kind) {
+    "login" -> R.string.takeover_kind_login
+    "captcha" -> R.string.takeover_kind_captcha
+    "payment" -> R.string.takeover_kind_payment
+    "secure_page" -> R.string.takeover_kind_secure_page
+    "choose" -> R.string.takeover_kind_choose
+    else -> R.string.takeover_kind_other
 }
 
 /** dsh QuestionComposer — replaces the composer: options with index badges, custom answer, pager. */

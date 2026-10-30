@@ -15,7 +15,6 @@ import io.github.jackwener.dsh.core.capability.tools.NotificationTools
 import io.github.jackwener.dsh.core.capability.tools.RuleTools
 import io.github.jackwener.dsh.core.capability.tools.ScreenTools
 import io.github.jackwener.dsh.core.capability.tools.SystemTools
-import io.github.jackwener.dsh.core.capability.tools.VirtualScreenTools
 import io.github.jackwener.dsh.core.data.RuleDao
 import io.github.jackwener.dsh.core.data.SettingsRepository
 import io.github.jackwener.dsh.core.engine.JsonRpcException
@@ -70,11 +69,12 @@ class CapabilityHub @Inject constructor(
     private val sessions: Lazy<SessionStore>,
     files: FileTools, apps: AppTools, screen: ScreenTools, system: SystemTools, notifications: NotificationTools,
     comms: CommsTools, media: MediaTools, clipboard: ClipboardTools, browser: BrowserTools, ruleTools: RuleTools,
-    vscreen: VirtualScreenTools,
     private val shellGate: ShellGate,
+    private val guard: ActionGuard,
+    private val agentScreen: AgentScreen,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-    val allTools: Map<String, Tool> = listOf(files, apps, screen, system, notifications, comms, media, clipboard, browser, ruleTools, vscreen)
+    val allTools: Map<String, Tool> = listOf(files, apps, screen, system, notifications, comms, media, clipboard, browser, ruleTools)
         .flatMap { it.tools }.associateBy { it.name }
     @Volatile private var bridge: JsonRpcPeer? = null
 
@@ -207,7 +207,22 @@ class CapabilityHub @Inject constructor(
         }
     }
 
+    /**
+     * The user spoke (a new turn or steering): the loop guard starts over and agent-screen actions
+     * resume after a 我来接管.
+     */
+    fun onUserPrompt(sessionId: String) {
+        guard.reset(sessionId)
+        agentScreen.clearUserTakeover(sessionId)
+    }
+
+    /** Screen and app calls pass the loop guard (docs/AGENT-SCREEN-V2.md §3.5): refused once stopped, reminders appended. */
     private suspend fun run(tool: Tool, name: String, args: JsonObject, call: CallContext): ToolResult {
+        guard.before(call.sessionId, tool, args)?.let { return it }
+        return guard.after(call.sessionId, tool, args, execute(tool, name, args, call))
+    }
+
+    private suspend fun execute(tool: Tool, name: String, args: JsonObject, call: CallContext): ToolResult {
         val sessionId = call.sessionId
         if (tool.needsUnlock && lock.isLocked) {
             val notifId = sessionId.hashCode() + 1

@@ -10,10 +10,6 @@
     <string name="err_bg_start">Android did not allow starting the engine in the background (usually battery optimization was turned back on). Tap the notification to run it.</string>
     <string name="deferred_title">Tap to run: %1$s</string>
     <string name="deferred_text">Android blocked a background start; tap to start this automation yourself. Granting Unrestricted battery avoids this.</string>
-    <string name="takeover_title">Your turn</string>
-    <string name="takeover_body">Please do this step on the phone yourself, then tap Continue.</string>
-    <string name="takeover_notif">This screen cannot be operated automatically. Do this step yourself, then come back to DSH and tap Continue.</string>
-    <string name="takeover_stop">Stop</string>
     <string name="ime_label">DSH keyboard</string>
     <string name="ime_bar">DSH keyboard (lets the agent type) · tap to switch back to your keyboard</string>
     <string name="engine_last_exit">Last engine exit</string>

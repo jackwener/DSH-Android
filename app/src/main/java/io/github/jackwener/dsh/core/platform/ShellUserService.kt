@@ -1,24 +1,45 @@
 package io.github.jackwener.dsh.core.platform
 
 import android.annotation.SuppressLint
+import android.content.ComponentName
 import android.graphics.Bitmap
 import android.graphics.PixelFormat
 import android.hardware.display.DisplayManager
 import android.hardware.display.VirtualDisplay
 import android.media.ImageReader
+import android.os.Binder
+import android.os.Build
 import android.os.Looper
+import android.util.Log
 import java.io.ByteArrayOutputStream
+import java.io.File
 import java.util.concurrent.TimeUnit
 import kotlin.system.exitProcess
 
 /**
  * Shizuku user service: instantiated by Shizuku in a process running as the shell user (uid 2000),
- * which has the privileges ordinary apps lack (input injection, `svc`, `settings`, trusted displays).
+ * which has the privileges ordinary apps lack (input injection, `svc`, `settings`, trusted displays,
+ * task moves across displays). Hidden APIs are called through reflection and fail soft.
+ * Display flags, task queries and the mute ledger follow wangzan101/mika ShellService (Apache-2.0).
  */
 class ShellUserService : IShellService.Stub() {
-    private val displays = HashMap<Int, Pair<VirtualDisplay, ImageReader>>()
+    private class Screen(val display: VirtualDisplay, val reader: ImageReader) {
+        /** The last frame read: ImageReader only hands out a frame once, and a still screen sends no new ones. */
+        var last: Bitmap? = null
+    }
+    private val displays = HashMap<Int, Screen>()
+    private val muted = MuteLedger(File("/data/local/tmp/dsh_audio_mute"))
 
-    override fun destroy() { displays.values.forEach { it.first.release(); it.second.close() }; exitProcess(0) }
+    init {
+        // A previous service process died with apps still muted: give them their sound back (usually nothing to do).
+        runCatching { muted.restoreAll(::appops) }
+    }
+
+    override fun destroy() {
+        runCatching { muted.restoreAll(::appops) }
+        synchronized(displays) { displays.values.forEach { it.display.release(); it.reader.close() } }
+        exitProcess(0)
+    }
 
     override fun exec(cmd: String, timeoutMs: Long): String {
         val p = ProcessBuilder("sh", "-c", cmd).redirectErrorStream(true).start()
@@ -42,32 +63,216 @@ class ShellUserService : IShellService.Stub() {
     @SuppressLint("WrongConstant")
     override fun createDisplay(width: Int, height: Int, dpi: Int): Int {
         if (Looper.myLooper() == null) Looper.prepare()
-        val ctx = SystemContext.get()
-        val dm = ctx.getSystemService(DisplayManager::class.java)
+        val dm = SystemContext.get().getSystemService(DisplayManager::class.java)
         val reader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2)
-        // PUBLIC | OWN_CONTENT_ONLY | TRUSTED(1 shl 10): lets other apps' activities run on it.
-        val flags = DisplayManager.VIRTUAL_DISPLAY_FLAG_PUBLIC or DisplayManager.VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY or (1 shl 10)
-        val vd = dm.createVirtualDisplay("dsh-agent", width, height, dpi, reader.surface, flags) ?: return -1
-        val id = vd.display.displayId
-        displays[id] = vd to reader
-        return id
+        // Newest flag set first; an older or stricter build that rejects it gets the previous one.
+        for (flags in displayFlags()) {
+            val vd = try { dm.createVirtualDisplay("dsh-agent", width, height, dpi, reader.surface, flags) } catch (t: Throwable) {
+                Log.w(TAG, "createVirtualDisplay(flags=0x${flags.toString(16)}) failed", t); null
+            } ?: continue
+            val id = vd.display.displayId
+            synchronized(displays) { displays[id] = Screen(vd, reader) }
+            setImePolicy(id)
+            return id
+        }
+        reader.close()
+        return -1
     }
 
     override fun releaseDisplay(displayId: Int) {
-        displays.remove(displayId)?.let { it.first.release(); it.second.close() }
+        synchronized(displays) { displays.remove(displayId) }?.let { it.display.release(); it.reader.close(); it.last?.recycle() }
     }
 
-    override fun captureDisplay(displayId: Int): ByteArray? {
-        val reader = displays[displayId]?.second ?: return null
-        val image = reader.acquireLatestImage() ?: return null
-        image.use {
-            val plane = it.planes[0]
-            val padding = plane.rowStride - plane.pixelStride * it.width
-            val bmp = Bitmap.createBitmap(it.width + padding / plane.pixelStride, it.height, Bitmap.Config.ARGB_8888)
-            bmp.copyPixelsFromBuffer(plane.buffer)
-            val cropped = Bitmap.createBitmap(bmp, 0, 0, it.width, it.height)
-            return ByteArrayOutputStream().also { o -> cropped.compress(Bitmap.CompressFormat.JPEG, 80, o) }.toByteArray()
+    override fun captureDisplay(displayId: Int, maxWidth: Int): ByteArray? {
+        val frame = frame(displayId) ?: return null
+        val out = ByteArrayOutputStream()
+        synchronized(frame) {
+            if (frame.isRecycled) return null
+            val scaled = if (maxWidth in 1 until frame.width) Bitmap.createScaledBitmap(frame, maxWidth, frame.height * maxWidth / frame.width, true) else frame
+            scaled.compress(Bitmap.CompressFormat.JPEG, if (scaled === frame) 80 else 70, out)
+            if (scaled !== frame) scaled.recycle()
         }
+        return out.toByteArray()
+    }
+
+    override fun frameBlank(displayId: Int): Int {
+        val bmp = frame(displayId) ?: return -1
+        synchronized(bmp) {
+            if (bmp.isRecycled) return -1
+            for (y in 0 until 32) for (x in 0 until 32) {
+                val p = bmp.getPixel(x * (bmp.width - 1) / 31, y * (bmp.height - 1) / 31)
+                if ((p shr 16 and 0xff) + (p shr 8 and 0xff) + (p and 0xff) > 6) return 0
+            }
+        }
+        return 1
+    }
+
+    /** The newest frame of [displayId] (or the last one when nothing changed since). */
+    private fun frame(displayId: Int): Bitmap? {
+        val s = synchronized(displays) { displays[displayId] } ?: return null
+        synchronized(s) {
+            val image = runCatching { s.reader.acquireLatestImage() }.getOrNull() ?: return s.last
+            image.use {
+                val plane = it.planes[0]
+                val padding = plane.rowStride - plane.pixelStride * it.width
+                val bmp = Bitmap.createBitmap(it.width + padding / plane.pixelStride, it.height, Bitmap.Config.ARGB_8888)
+                bmp.copyPixelsFromBuffer(plane.buffer)
+                val cropped = if (padding == 0) bmp else Bitmap.createBitmap(bmp, 0, 0, it.width, it.height).also { bmp.recycle() }
+                s.last?.let { old -> synchronized(old) { old.recycle() } }
+                s.last = cropped
+                return cropped
+            }
+        }
+    }
+
+    // ---- tasks --------------------------------------------------------------------------------
+
+    @get:SuppressLint("PrivateApi") private val taskManager: Any by lazy { Class.forName("android.app.ActivityTaskManager").getMethod("getService").invoke(null)!! }
+    @get:SuppressLint("PrivateApi") private val taskInfo: Class<*> by lazy { Class.forName("android.app.TaskInfo") }
+
+    override fun tasks(): String? = try {
+        val f = { name: String -> runCatching { taskInfo.getField(name) }.getOrNull() }
+        val id = f("taskId")!!; val display = f("displayId")!!
+        val top = f("topActivity"); val base = f("baseActivity"); val type = f("topActivityType"); val visible = f("isVisible")
+        allTasks().joinToString("\n") { t ->
+            val topC = top?.get(t) as? ComponentName
+            val pkg = topC?.packageName ?: (base?.get(t) as? ComponentName)?.packageName ?: ""
+            val standard = type?.getInt(t)?.let { it == 0 || it == 1 } ?: true // ACTIVITY_TYPE_UNDEFINED / STANDARD
+            val vis = visible?.getBoolean(t)?.let { if (it) 1 else 0 } ?: -1
+            "${id.getInt(t)}\t${display.getInt(t)}\t$pkg\t${topC?.className ?: ""}\t${if (standard) 1 else 0}\t$vis"
+        }
+    } catch (t: Throwable) {
+        Log.w(TAG, "tasks failed", t); null
+    }
+
+    /** IActivityTaskManager.getTasks, whichever overload this Android has (the display filter, when present, gets INVALID_DISPLAY). */
+    private fun allTasks(): List<Any> {
+        val m = taskManager.javaClass.methods.filter { it.name == "getTasks" }.maxByOrNull { it.parameterTypes.size } ?: return emptyList()
+        var ints = 0
+        val args: List<Any?> = m.parameterTypes.map { p ->
+            when (p) {
+                Int::class.javaPrimitiveType -> if (ints++ == 0) MAX_TASKS else -1
+                Boolean::class.javaPrimitiveType -> false
+                else -> null
+            }
+        }
+        return (m.invoke(taskManager, *args.toTypedArray()) as? List<*>).orEmpty().filterNotNull()
+    }
+
+    override fun moveTask(taskId: Int, displayId: Int): Boolean {
+        val viaApi = runCatching {
+            if (Build.VERSION.SDK_INT >= 31) {
+                taskManager.javaClass.getMethod("moveRootTaskToDisplay", Int::class.java, Int::class.java).invoke(taskManager, taskId, displayId)
+            } else {
+                // Android 10/11 move stacks, not tasks: look the task's stack up first.
+                val t = allTasks().first { taskInfo.getField("taskId").getInt(it) == taskId }
+                val stack = taskInfo.getField("stackId").getInt(t)
+                taskManager.javaClass.getMethod("moveStackToDisplay", Int::class.java, Int::class.java).invoke(taskManager, stack, displayId)
+            }
+            true
+        }.onFailure { Log.w(TAG, "moveTask via API failed, trying am", it) }.getOrDefault(false)
+        return viaApi || exec("am display move-stack $taskId $displayId", 10_000).substringBefore('\n') == "0"
+    }
+
+    // ---- sound --------------------------------------------------------------------------------
+
+    override fun setAudioMuted(pkg: String, muted: Boolean): Boolean {
+        if (!PKG.matches(pkg)) return false
+        val user = Binder.getCallingUid() / 100_000
+        return synchronized(this.muted) {
+            if (muted) {
+                if (!this.muted.contains(pkg)) {
+                    val got = exec("appops get --user $user $pkg PLAY_AUDIO", 10_000)
+                    if (got.substringBefore('\n') != "0") return false
+                    this.muted.put(pkg, MuteLedger.parseMode(got.substringAfter('\n')), user)
+                }
+                appops(pkg, "ignore", user)
+            } else {
+                val entry = this.muted.get(pkg) ?: return true
+                appops(pkg, MuteLedger.restoreMode(entry.first), entry.second).also { if (it) this.muted.remove(pkg) }
+            }
+        }
+    }
+
+    private fun appops(pkg: String, mode: String, user: Int): Boolean = exec("appops set --user $user $pkg PLAY_AUDIO $mode", 10_000).substringBefore('\n') == "0"
+
+    // ---- display setup ----------------------------------------------------------------------------
+
+    /** Most capable first: Android 14 adds its own focus (no keyboard stealing), 13 its own display group. */
+    private fun displayFlags(): List<Int> {
+        val base = PUBLIC or OWN_CONTENT_ONLY or SUPPORTS_TOUCH or ROTATES_WITH_CONTENT or DESTROY_CONTENT_ON_REMOVAL or TRUSTED
+        val t = base or OWN_DISPLAY_GROUP or ALWAYS_UNLOCKED or TOUCH_FEEDBACK_DISABLED
+        val u = t or OWN_FOCUS or STEAL_TOP_FOCUS_DISABLED
+        return listOfNotNull(
+            u.takeIf { Build.VERSION.SDK_INT >= 34 },
+            t.takeIf { Build.VERSION.SDK_INT >= 33 },
+            base,
+            PUBLIC or OWN_CONTENT_ONLY or TRUSTED,
+        )
+    }
+
+    /** IWindowManager.setDisplayImePolicy(LOCAL): the keyboard opens on the agent display, never on the user's. */
+    @SuppressLint("PrivateApi")
+    private fun setImePolicy(displayId: Int) {
+        if (Build.VERSION.SDK_INT < 31) return
+        runCatching {
+            val wm = Class.forName("android.view.WindowManagerGlobal").getMethod("getWindowManagerService").invoke(null)!!
+            wm.javaClass.getMethod("setDisplayImePolicy", Int::class.java, Int::class.java).invoke(wm, displayId, 0)
+        }.onFailure { Log.w(TAG, "setDisplayImePolicy failed", it) }
+    }
+
+    private companion object {
+        const val TAG = "DshShell"
+        const val MAX_TASKS = 100
+        val PKG = Regex("[A-Za-z0-9_.]+")
+        // DisplayManager.VIRTUAL_DISPLAY_FLAG_* (several are hidden)
+        const val PUBLIC = 1 shl 0
+        const val OWN_CONTENT_ONLY = 1 shl 3
+        const val SUPPORTS_TOUCH = 1 shl 6
+        const val ROTATES_WITH_CONTENT = 1 shl 7
+        const val DESTROY_CONTENT_ON_REMOVAL = 1 shl 8
+        const val TRUSTED = 1 shl 10
+        const val OWN_DISPLAY_GROUP = 1 shl 11
+        const val ALWAYS_UNLOCKED = 1 shl 12
+        const val TOUCH_FEEDBACK_DISABLED = 1 shl 13
+        const val OWN_FOCUS = 1 shl 14
+        const val STEAL_TOP_FOCUS_DISABLED = 1 shl 16
+    }
+}
+
+/**
+ * Packages muted on the agent display, with their previous PLAY_AUDIO mode and user, kept in a file
+ * so a restarted service can give the sound back. Lines: "pkg\tmode\tuser".
+ */
+internal class MuteLedger(private val file: File) {
+    private val entries = LinkedHashMap<String, Pair<String, Int>>()
+
+    init {
+        runCatching {
+            file.takeIf { it.exists() }?.readLines()?.forEach { l ->
+                val p = l.split('\t')
+                if (p.size >= 2) entries[p[0]] = p[1] to (p.getOrNull(2)?.toIntOrNull() ?: 0)
+            }
+        }
+    }
+
+    fun contains(pkg: String) = pkg in entries
+    fun get(pkg: String) = entries[pkg]
+    fun put(pkg: String, mode: String, user: Int) { entries[pkg] = mode to user; save() }
+    fun remove(pkg: String) { entries.remove(pkg); save() }
+
+    fun restoreAll(set: (String, String, Int) -> Boolean) = synchronized(this) {
+        entries.entries.toList().forEach { (pkg, e) -> if (set(pkg, restoreMode(e.first), e.second)) entries.remove(pkg) }
+        save()
+    }
+
+    private fun save() { runCatching { file.writeText(entries.entries.joinToString("") { "${it.key}\t${it.value.first}\t${it.value.second}\n" }) } }
+
+    companion object {
+        /** `appops get` output → mode ("PLAY_AUDIO: ignore; time=…" → ignore); not set → default. */
+        fun parseMode(output: String): String = Regex("PLAY_AUDIO: ([a-z_]+)").find(output)?.groupValues?.get(1) ?: "default"
+        /** "default" (never set) is written back as allow, which is what default means for PLAY_AUDIO. */
+        fun restoreMode(mode: String) = if (mode == "default") "allow" else mode
     }
 }
 

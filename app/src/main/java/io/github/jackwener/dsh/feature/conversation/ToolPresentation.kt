@@ -83,7 +83,7 @@ object ToolPresentation {
         "clipboard_get", "clipboard_set" -> ToolInfo(R.drawable.dsw_copy_outline, titleOf(name), Activity.Clipboard, BodyKind.Text)
         "media_control" -> ToolInfo(R.drawable.dsw_play_outline, R.string.tool_media, Activity.Media, BodyKind.Gesture)
         "rule_create", "rule_list", "rule_update", "rule_delete" -> ToolInfo(R.drawable.dsw_clock_outline, titleOf(name), Activity.Rules, BodyKind.InOut)
-        "vscreen_start", "vscreen_stop" -> ToolInfo(R.drawable.dsw_fullscreen_outline, titleOf(name), Activity.Other, BodyKind.Text)
+        "hand_to_user" -> ToolInfo(R.drawable.dsw_user_outline, R.string.tool_hand_to_user, Activity.Other, BodyKind.Text)
         "schedule_create", "schedule_update", "schedule_delete", "schedule_list" -> ToolInfo(R.drawable.dsw_clock_outline, R.string.tool_schedule, Activity.Rules, BodyKind.InOut)
         "skill" -> ToolInfo(R.drawable.dsw_skill_outline, R.string.tool_skill, Activity.Other, BodyKind.InOut)
         else -> if ("agent" in name || "subagent" in name || name == "send_message")
@@ -133,8 +133,6 @@ object ToolPresentation {
         "rule_list" -> R.string.tool_rule_list
         "rule_update" -> R.string.tool_rule_update
         "rule_delete" -> R.string.tool_rule_delete
-        "vscreen_start" -> R.string.tool_vscreen_start
-        "vscreen_stop" -> R.string.tool_vscreen_stop
         else -> R.string.tool_generic
     }
 
@@ -158,6 +156,7 @@ object ToolPresentation {
             "screen_key" -> a.str("key")
             "app_launch", "app_info", "share_to_app" -> a.str("package")
             "app_open_link" -> a.str("uri")
+            "hand_to_user" -> a.str("reason")
             "app_send_intent" -> a.str("action")
             "browser_open" -> a.str("url")
             "browser_click" -> a.str("id")?.let { "[$it]" }

@@ -24,9 +24,6 @@ import javax.inject.Singleton
 
 private val Context.store by preferencesDataStore("settings")
 
-/** The agent's own virtual display needs Shizuku and is experimental: off until asked for. */
-private val DEFAULT_DISABLED = setOf(ToolGroup.VScreen)
-
 enum class ThemeMode { System, Light, Dark }
 
 /** dsh "工作步骤展示": how much process detail completed turns keep open. */
@@ -59,6 +56,8 @@ data class Settings(
     val defaultPreset: PermissionPreset = PermissionPreset.Full,
     /** 允许其他 App 调用: whether the exported RUN_TASK entry accepts tasks from other apps. Off by default. */
     val allowExternalApps: Boolean = false,
+    /** 在后台屏操作 App: with Shizuku, apps the agent opens run on its own virtual screen (AgentScreen). */
+    val agentScreen: Boolean = true,
     /** Third-party OpenAI-compatible providers (keys live in SecretStore, never here). */
     val providers: List<ProviderConfig> = emptyList(),
 ) {
@@ -89,6 +88,7 @@ class SettingsRepository @Inject constructor(@ApplicationContext private val con
         val busySend = stringPreferencesKey("busy_send")
         val preset = stringPreferencesKey("default_preset")
         val externalApps = booleanPreferencesKey("allow_external_apps")
+        val agentScreen = booleanPreferencesKey("agent_screen")
     }
 
     val settings: Flow<Settings> = context.store.data.map { it.toSettings() }
@@ -100,7 +100,7 @@ class SettingsRepository @Inject constructor(@ApplicationContext private val con
         providers = this[K.providers]?.let { runCatching { json.decodeFromString(providerList, it) }.getOrNull() } ?: emptyList(),
         model = this[K.model] ?: Settings.DEFAULT_MODEL,
         effort = Effort.of(this[K.effort]),
-        disabledGroups = this[K.disabledGroups]?.mapNotNull(ToolGroup::of)?.toSet() ?: DEFAULT_DISABLED,
+        disabledGroups = this[K.disabledGroups]?.mapNotNull(ToolGroup::of)?.toSet() ?: emptySet(),
         notificationBlocked = this[K.notifBlocked] ?: emptySet(),
         floatingBall = this[K.ball] ?: false,
         dailyTokenLimit = this[K.dailyTokens] ?: 0,
@@ -110,6 +110,7 @@ class SettingsRepository @Inject constructor(@ApplicationContext private val con
         busySend = this[K.busySend]?.let { v -> BusySend.entries.firstOrNull { it.name == v } } ?: BusySend.Queue,
         defaultPreset = PermissionPreset.of(this[K.preset]),
         allowExternalApps = this[K.externalApps] ?: false,
+        agentScreen = this[K.agentScreen] ?: true,
     )
 
     /** [provider] "" = DeepSeek. */
@@ -126,7 +127,7 @@ class SettingsRepository @Inject constructor(@ApplicationContext private val con
     }
     suspend fun setEffort(effort: Effort) = context.store.edit { it[K.effort] = effort.id }
     suspend fun setGroupEnabled(group: ToolGroup, enabled: Boolean) = context.store.edit {
-        val cur = it[K.disabledGroups] ?: DEFAULT_DISABLED.map { g -> g.id }.toSet()
+        val cur = it[K.disabledGroups] ?: emptySet()
         it[K.disabledGroups] = if (enabled) cur - group.id else cur + group.id
     }
     suspend fun setNotificationBlocked(apps: Set<String>) = context.store.edit { it[K.notifBlocked] = apps }
@@ -139,4 +140,5 @@ class SettingsRepository @Inject constructor(@ApplicationContext private val con
     suspend fun setBusySend(v: BusySend) = context.store.edit { it[K.busySend] = v.name }
     suspend fun setDefaultPreset(p: PermissionPreset) = context.store.edit { it[K.preset] = p.id }
     suspend fun setAllowExternalApps(on: Boolean) = context.store.edit { it[K.externalApps] = on }
+    suspend fun setAgentScreen(on: Boolean) = context.store.edit { it[K.agentScreen] = on }
 }

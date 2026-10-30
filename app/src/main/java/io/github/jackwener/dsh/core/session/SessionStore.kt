@@ -92,7 +92,7 @@ class SessionStore @Inject constructor(
     private val approvals = ConcurrentHashMap<String, CompletableDeferred<ApprovalOutcome>>()
     private val questions = ConcurrentHashMap<String, CompletableDeferred<JsonElement>>()
     private val permissions = ConcurrentHashMap<String, CompletableDeferred<Boolean>>()
-    private val takeovers = ConcurrentHashMap<String, CompletableDeferred<Boolean>>()
+    private val takeovers = ConcurrentHashMap<String, CompletableDeferred<TakeoverAnswer>>()
     /**
      * Sessions whose task was already continued automatically once (after an engine loss or an
      * offline failure). Kept across the continuation turn and after it, so a continuation that
@@ -229,6 +229,7 @@ class SessionStore @Inject constructor(
         val appPrompt = text.startsWith(APP_PROMPT_PREFIX)
         // Steering a running turn (also a queued message sent now) stays part of the same task.
         if (!appPrompt && (!live.running || live.waitingForNetwork)) autoContinued.remove(sessionId)
+        if (!appPrompt) capabilities.onUserPrompt(sessionId)
         // A prompt the app sent for the user is not re-sent verbatim by 重试 (that asks to continue).
         val retryText = text.takeUnless { appPrompt }
         if (existing == null) dao.upsert(SessionEntity(sessionId, text.lineSequence().first().take(40), now, now, ruleId, running = true, preset = live.preset.id))
@@ -382,7 +383,7 @@ class SessionStore @Inject constructor(
         approvals.values.forEach { it.complete(ApprovalOutcome.Reject) }
         questions.values.forEach { it.completeExceptionally(JsonRpcException(-32000, "cancelled")) }
         permissions.values.forEach { it.complete(false) }
-        takeovers.values.forEach { it.complete(false) }
+        takeovers.values.forEach { it.complete(TakeoverAnswer.Abort) }
         states.values.filter { it.value.hasPendingRequest || it.value.waitingForUnlock }.forEach { f ->
             mutate(f.value.sessionId) { it.withoutAnyPending().copy(waitingForUnlock = false) }
         }
@@ -621,22 +622,36 @@ class SessionStore @Inject constructor(
     fun answerPermission(requestKey: String, granted: Boolean) { permissions[requestKey]?.complete(granted) }
 
     /**
-     * A screen step cannot be automated (FLAG_SECURE / black screenshot, or input the agent cannot
-     * deliver): pause the call with a 请你来操作 card until the user has done it and taps 继续 (true)
-     * or 停止 (false). AutoGLM-style manual takeover.
+     * A step only the user can do (hand_to_user, a protected page): the 我来处理 / 跳过 card. On 我来处理
+     * [handOver] puts the app on the user's screen (false: it already is there) and the card turns into
+     * 处理好了 / 我自己做完了 / 不做了. Returns the final answer; [TakeoverAnswer.Abort] also when the
+     * request is cancelled with its engine generation.
      */
-    suspend fun requestTakeover(sessionId: String, toolName: String, reason: String): Boolean {
+    suspend fun requestTakeover(sessionId: String, toolName: String, reason: String, kind: String, handOver: suspend () -> Boolean): TakeoverAnswer {
         val owner = rootOf(sessionId)
         val key = UUID.randomUUID().toString()
-        val deferred = CompletableDeferred<Boolean>()
-        takeovers[key] = deferred
-        return awaitCard(owner, PendingTakeover(key, owner, toolName, reason), key, takeovers, deferred) {
+        var card = PendingTakeover(key, owner, toolName, reason, kind)
+        try {
+            var deferred = CompletableDeferred<TakeoverAnswer>().also { takeovers[key] = it }
+            mutate(owner) { it.withPending(card) }
             Notifications.post(context, Notifications.CHANNEL_ATTENTION, owner.hashCode() + 2,
-                context.getString(R.string.takeover_title), context.getString(R.string.takeover_notif), owner)
+                context.getString(R.string.takeover_title), reason, owner)
+            val first = deferred.await()
+            if (first != TakeoverAnswer.Start) return first
+            deferred = CompletableDeferred<TakeoverAnswer>().also { takeovers[key] = it }
+            card = card.copy(stage = PendingTakeover.Stage.HandedOver, moved = handOver())
+            mutate(owner) { it.withTakeover(card) }
+            return deferred.await()
+        } finally {
+            takeovers.remove(key)
+            withContext(NonCancellable) {
+                runCatching { androidx.core.app.NotificationManagerCompat.from(context).cancel(owner.hashCode() + 2) }
+                mutate(owner) { it.withoutPending(key) }
+            }
         }
     }
 
-    fun answerTakeover(requestKey: String, done: Boolean) { takeovers[requestKey]?.complete(done) }
+    fun answerTakeover(requestKey: String, answer: TakeoverAnswer) { takeovers[requestKey]?.complete(answer) }
 
     /** Engine refused a step because a token/cost budget is exhausted. */
     suspend fun onBudgetExceeded(p: JsonObject) {

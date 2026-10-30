@@ -5,6 +5,10 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
+import android.graphics.BitmapFactory
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
+import io.github.jackwener.dsh.core.capability.AgentScreen
 import io.github.jackwener.dsh.core.data.Effort
 import io.github.jackwener.dsh.core.data.SessionEntity
 import io.github.jackwener.dsh.core.data.Settings
@@ -20,6 +24,7 @@ import io.github.jackwener.dsh.core.session.Projector
 import io.github.jackwener.dsh.core.session.RowStatus
 import io.github.jackwener.dsh.core.session.SessionLive
 import io.github.jackwener.dsh.core.session.SessionStore
+import io.github.jackwener.dsh.core.session.TakeoverAnswer
 import io.github.jackwener.dsh.core.session.Trajectory
 import io.github.jackwener.dsh.core.session.TurnError
 import kotlinx.coroutines.Dispatchers
@@ -38,6 +43,7 @@ import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import javax.inject.Inject
 
 /** Which representation of the session the top-bar toggle shows. */
@@ -126,7 +132,7 @@ open class ConversationController(
     fun answer(q: PendingQuestion, answers: Map<String, Pair<List<String>, String?>>) = store.answerQuestion(q.requestKey, answers)
     fun skipQuestion(q: PendingQuestion) = store.answerQuestion(q.requestKey, q.questions.associate { it.id to (emptyList<String>() to null) })
     fun answerPermission(requestKey: String, granted: Boolean) = store.answerPermission(requestKey, granted)
-    fun answerTakeover(requestKey: String, done: Boolean) = store.answerTakeover(requestKey, done)
+    fun answerTakeover(requestKey: String, answer: TakeoverAnswer) = store.answerTakeover(requestKey, answer)
     fun removeQueued(id: String) = store.removeQueued(sessionId.value, id)
     fun sendQueuedNow(id: String) = viewModelScope.launch { store.sendQueuedNow(sessionId.value, id) }
     fun setPreset(p: PermissionPreset) = viewModelScope.launch { store.setPreset(sessionId.value, p) }
@@ -144,7 +150,20 @@ class HomeViewModel @Inject constructor(
     store: SessionStore,
     engine: EngineManager,
     settings: SettingsRepository,
+    private val agentScreen: AgentScreen,
 ) : ConversationController(store, engine, settings) {
+    /** The open conversation's agent display (live preview), or null. */
+    val agentDisplay: StateFlow<Int?> = combine(currentId, agentScreen.displays) { id, m -> m[id] }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
+    /** One preview frame of the agent screen, [maxWidth] px wide; null when there is none. */
+    suspend fun agentFrame(displayId: Int, maxWidth: Int): ImageBitmap? = agentScreen.frame(displayId, maxWidth)?.let { jpeg ->
+        withContext(Dispatchers.Default) { BitmapFactory.decodeByteArray(jpeg, 0, jpeg.size)?.asImageBitmap() }
+    }
+
+    /** 我来接管: the agent screen's app moves to the user's screen; the agent stops acting there until the user writes. */
+    fun takeOverAgentScreen(onDone: (Boolean) -> Unit) = viewModelScope.launch { onDone(agentScreen.handToUser(id, byUser = true) != null) }
+
     val sessions: StateFlow<List<SessionEntity>> = store.conversations.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
     val rowStatus: StateFlow<Map<String, RowStatus>> = store.status
 

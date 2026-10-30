@@ -45,13 +45,25 @@ data class PendingPermission(
     val what: String,
 )
 
-/** A screen step the agent cannot do itself; the call waits until the user did it by hand (继续) or stops. */
+/**
+ * A step the agent hands to the user (login, captcha, payment, protected page…). [Asking]: 我来处理 / 跳过;
+ * [HandedOver]: the app is on the user's screen ([moved]) — 处理好了 / 我自己做完了 / 不做了.
+ */
 data class PendingTakeover(
     val requestKey: String,
     val sessionId: String,
     val toolName: String,
     val reason: String,
-)
+    /** login / captcha / payment / secure_page / choose / other. */
+    val kind: String = "other",
+    val stage: Stage = Stage.Asking,
+    val moved: Boolean = false,
+) {
+    enum class Stage { Asking, HandedOver }
+}
+
+/** The user's answers on the takeover card, in card order. */
+enum class TakeoverAnswer { Start, Skip, Handled, DoneByUser, Abort }
 
 data class QueuedMessage(val id: String, val text: String)
 
@@ -104,6 +116,9 @@ data class SessionLive(
         permissions = permissions.filterNot { it.requestKey == requestKey },
         takeovers = takeovers.filterNot { it.requestKey == requestKey },
     ).synced()
+
+    /** Replaces a pending takeover in place (its card moves to the next stage). */
+    fun withTakeover(t: PendingTakeover): SessionLive = copy(takeovers = takeovers.map { if (it.requestKey == t.requestKey) t else it }).synced()
 
     fun withoutAnyPending(): SessionLive = copy(approvals = emptyList(), questions = emptyList(), permissions = emptyList(), takeovers = emptyList()).synced()
 

@@ -12,6 +12,8 @@ import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
+import io.github.jackwener.dsh.core.capability.Frame
+import io.github.jackwener.dsh.core.capability.UiElement
 import io.github.jackwener.dsh.core.trigger.TriggerEvents
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -34,6 +36,12 @@ class DshAccessibilityService : AccessibilityService() {
     override fun onInterrupt() {}
 
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
+        // A click on the user's own screen: what opens there next is the user's doing (AgentScreen.pullBack).
+        if (event.eventType == AccessibilityEvent.TYPE_VIEW_CLICKED) {
+            val pkg = event.packageName?.toString()
+            if (pkg != packageName && clickedOnMain(event, pkg)) lastMainClickAt = android.os.SystemClock.elapsedRealtime()
+            return
+        }
         if (event.eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) return
         val pkg = event.packageName?.toString() ?: return
         if (pkg == packageName || pkg == _foreground.value || pkg == SYSTEM_UI || pkg in imePackages()) return
@@ -46,39 +54,42 @@ class DshAccessibilityService : AccessibilityService() {
         TriggerEvents.appOpened(pkg)
     }
 
+    /** The event's display is API 33+; before that, a click counts as the user's when its app has a window on the main screen. */
+    private fun clickedOnMain(event: AccessibilityEvent, pkg: String?): Boolean = when {
+        Build.VERSION.SDK_INT >= 33 -> event.displayId == Display.DEFAULT_DISPLAY
+        Build.VERSION.SDK_INT >= 30 -> runCatching {
+            windowsOnAllDisplays.get(Display.DEFAULT_DISPLAY).orEmpty().any { it.root?.packageName?.toString() == pkg }
+        }.getOrDefault(false)
+        else -> false
+    }
+
     private fun imePackages(): Set<String> = runCatching {
         getSystemService(InputMethodManager::class.java).enabledInputMethodList.map { it.packageName }.toSet()
     }.getOrDefault(emptySet())
 
     /**
-     * Snapshot of the current screen as a compact, numbered node list. App windows come first (the
-     * focused one names the package); system UI (status bar, shade) follows under its own header;
+     * Snapshot of a screen as a flat element list (parallel to the live nodes). App windows come first
+     * (the focused one names the package); system UI (status bar, shade) follows, marked as such;
      * keyboards, accessibility overlays and DSH's own windows (floating ball, quick panel) are left out
      * unless DSH is the only app on screen.
      */
     fun snapshot(displayId: Int = Display.DEFAULT_DISPLAY): ScreenSnapshot {
         val nodes = ArrayList<AccessibilityNodeInfo>()
-        val sb = StringBuilder()
+        val elements = ArrayList<UiElement>()
         if (Build.VERSION.SDK_INT < 30) {
             val root = rootInActiveWindow
-            root?.let { walk(it, 0, nodes, sb) }
-            return ScreenSnapshot(displayId, root?.packageName?.toString(), sb.toString(), nodes)
+            root?.let { walk(it, 0, false, nodes, elements) }
+            return ScreenSnapshot(displayId, root?.packageName?.toString(), elements, nodes)
         }
         val wins = windowsOnAllDisplays.get(displayId).orEmpty().mapNotNull { w -> w.root?.let { w to it } }
         val apps = wins.filter { it.first.type == AccessibilityWindowInfo.TYPE_APPLICATION }
         val others = apps.filter { it.second.packageName?.toString() != packageName }
         val shownApps = (others.ifEmpty { apps }).sortedByDescending { it.first.isActive || it.first.isFocused }
         val system = wins.filter { it.first.type == AccessibilityWindowInfo.TYPE_SYSTEM && it.second.packageName?.toString() != packageName }
-        shownApps.forEach { (_, root) -> walk(root, 0, nodes, sb) }
-        if (system.isNotEmpty()) {
-            val mark = sb.length
-            sb.append("-- system UI (status bar / notification shade) --\n")
-            val before = nodes.size
-            system.forEach { (_, root) -> walk(root, 0, nodes, sb) }
-            if (nodes.size == before) sb.setLength(mark)
-        }
+        shownApps.forEach { (_, root) -> walk(root, 0, false, nodes, elements) }
+        system.forEach { (_, root) -> walk(root, 0, true, nodes, elements) }
         val pkg = shownApps.firstOrNull()?.second?.packageName?.toString() ?: wins.firstOrNull()?.second?.packageName?.toString()
-        return ScreenSnapshot(displayId, pkg, sb.toString(), nodes)
+        return ScreenSnapshot(displayId, pkg, elements, nodes)
     }
 
     /**
@@ -116,31 +127,25 @@ class DshAccessibilityService : AccessibilityService() {
         })
     }
 
-    private fun walk(n: AccessibilityNodeInfo, depth: Int, out: MutableList<AccessibilityNodeInfo>, sb: StringBuilder) {
+    private fun walk(n: AccessibilityNodeInfo, depth: Int, system: Boolean, out: MutableList<AccessibilityNodeInfo>, els: MutableList<UiElement>) {
         if (!n.isVisibleToUser) return
         val text = n.text?.toString()?.take(120)
         val desc = n.contentDescription?.toString()?.take(120)
         val interesting = !text.isNullOrBlank() || !desc.isNullOrBlank() || n.isClickable || n.isEditable || n.isScrollable || n.isCheckable
         var d = depth
         if (interesting && depth < 40) {
-            val id = out.size
             out += n
             val r = Rect().also(n::getBoundsInScreen)
-            sb.append("  ".repeat(minOf(depth, 12))).append('[').append(id).append("] ")
-            sb.append(n.className?.toString()?.substringAfterLast('.') ?: "View")
-            if (!text.isNullOrBlank()) sb.append(" \"").append(text.replace('\n', ' ')).append('"')
-            if (!desc.isNullOrBlank() && desc != text) sb.append(" desc=\"").append(desc.replace('\n', ' ')).append('"')
-            n.viewIdResourceName?.substringAfter(":id/")?.let { sb.append(" #").append(it) }
             val flags = buildList {
                 if (n.isClickable) add("click"); if (n.isLongClickable) add("long"); if (n.isEditable) add("edit")
                 if (n.isScrollable) add("scroll"); if (n.isCheckable) add(if (n.isChecked) "checked" else "unchecked")
                 if (!n.isEnabled) add("disabled"); if (n.isFocused) add("focused")
             }
-            if (flags.isNotEmpty()) sb.append(" {").append(flags.joinToString(",")).append('}')
-            sb.append(" @").append(r.centerX()).append(',').append(r.centerY()).append('\n')
+            els += UiElement(n.className?.toString()?.substringAfterLast('.') ?: "View", text, desc, n.viewIdResourceName?.substringAfter(":id/"),
+                r.centerX(), r.centerY(), depth, flags, n.isEditable, system)
             d = depth + 1
         }
-        for (i in 0 until n.childCount) n.getChild(i)?.let { walk(it, d, out, sb) }
+        for (i in 0 until n.childCount) n.getChild(i)?.let { walk(it, d, system, out, els) }
     }
 
     suspend fun tap(x: Float, y: Float, durationMs: Long = 60, displayId: Int = Display.DEFAULT_DISPLAY) =
@@ -196,8 +201,14 @@ class DshAccessibilityService : AccessibilityService() {
             private set
         private const val SYSTEM_UI = "com.android.systemui"
         private val _foreground = MutableStateFlow<String?>(null)
+        /** elapsedRealtime of the user's last click on the main screen (Android 11+). */
+        @Volatile var lastMainClickAt = 0L
+            private set
         val foregroundPackage: StateFlow<String?> = _foreground
     }
 }
 
-class ScreenSnapshot(val displayId: Int, val packageName: String?, val text: String, val nodes: List<AccessibilityNodeInfo>)
+class ScreenSnapshot(val displayId: Int, val packageName: String?, val elements: List<UiElement>, val nodes: List<AccessibilityNodeInfo>) {
+    /** Plain numbered listing (no stable ids), e.g. for the quick panel's "current page" context. */
+    val text: String by lazy { Frame(0, packageName, elements, elements.indices.map { it.toString() }).render() }
+}
