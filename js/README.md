@@ -1,6 +1,6 @@
 # js/ — the engine package
 
-DeepSeek Harness (dsh) **0.2.1-rc.2**, installed unmodified from npm and customized only by a dsh bundle (profile
+DeepSeek Harness (dsh) **0.2.1-rc.5**, installed unmodified from npm and customized only by a dsh bundle (profile
 `android`), three plugins, one vendored third-party LLM adapter and a few patches applied at build time. The app side of the interface is
 [`../docs/ENGINE-CONTRACT.md`](../docs/ENGINE-CONTRACT.md).
 
@@ -173,7 +173,7 @@ silently skipping. All patches are inert on desktop Linux unless the correspondi
 | `05-hardlink-copy-fallback` | `dsh-attachment-local`, `dsh-session-persistence-jsonl` | `link(2)` is denied in app storage; fall back to exclusive copy to a sibling temp + rename, keeping `EEXIST` semantics. |
 | `06-ripgrep-from-path` | `dsh-tool-fs-search` | `@vscode/ripgrep` has no android build: use `DSH_RG_PATH`, else `rg` from `PATH` (`files/bin/rg → librg.so`). |
 | `07-android-profile-template` | `dsh-app-boot` | adds `android` to the shipped profile templates. |
-| `08-sdk-approval-user-questions` | `dsh-sdk-jsonrpc-server` | rc.2's SDK server lacks `approval/request` / `user-question/ask`; backport from 0.2.1-rc.3. **Drop when upgrading** (it would double-register). Without it every approval fails closed. |
+| `08-sdk-approval-user-questions` | `dsh-sdk-jsonrpc-server` | the 0.2.1 release line's SDK server (rc.2 … rc.5) lacks `approval/request` / `user-question/ask`; backport from the upstream development line. **Drop once a bundled dsh ships them** (it would double-register; check `grep approval/request` in the unpatched server on every bump). Without it every approval fails closed. |
 | `09-sharp-wasm-android` | `sharp` | no bionic libvips: on `android-*` sharp loads its WebAssembly build. Attachments (tool images, prompt images) need it. |
 | `10-sdk-extension-methods` | `dsh-sdk-jsonrpc-server` | unknown SDK methods resolve through an optional `sdkExtensions` service or a `sdk-extensions/resolve` listener (works before `initialize`); plugins emit SDK notifications with `ctx.emit('sdk-extensions/notify', method, params)`. Used by plugin-account, plugin-guard and plugin-mode. Re-check on every dsh bump. |
 | `11-sdk-prompt-time-zone` | `dsh-sdk-jsonrpc-server` | SDK prompts carried no time zone, so `dsh-time-context` reported "time zone unavailable". Prompts now carry `clientTimeZone` from `session/prompt`, else the process `TZ`. |

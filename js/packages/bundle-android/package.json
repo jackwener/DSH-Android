@@ -20,7 +20,7 @@
     }
   },
   "engines": {
-    "dsh": "0.2.1-rc.2"
+    "dsh": "0.2.1-rc.5"
   },
   "dependencies": {
     "@dsh-android/plugin-account": "0.1.0",

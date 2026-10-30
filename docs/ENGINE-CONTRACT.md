@@ -137,7 +137,7 @@ an offset past its log (`LogSeqs`), never treating a seq as a cross-generation i
 - Unattended (`auto_…`) sessions: the model gets a runtime-context note (nobody is watching, only the rule's tools run,
   unlock-waiting tools listed from metadata, finish with a notification-sized result); `user-question/ask` is never sent
   for them — plugin-guard answers "nobody is available" itself. No engine-side auto-allow of writes there.
-- dsh 0.2.1-rc.2 lacks SDK approval/question requests; `js/patches/08` backports them from rc.3 (drop when upgrading).
+- dsh 0.2.1-rc.5's SDK server (the 0.2.1 release line) lacks SDK approval/question requests; `js/patches/08` backports them from the upstream development line (drop once a bundled dsh ships them).
 
 ### 2.4 Account (DeepSeek login) — `@dsh-android/plugin-account`, patch 10
 

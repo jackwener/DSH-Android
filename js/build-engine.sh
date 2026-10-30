@@ -175,6 +175,11 @@ grep -q 'patch 18' "$NM/@snnh/dsh-llm-service-lite/lib/index.js" || die "llm-ser
 grep -q 'patch 15' "$NM/@deepseek-ai/dsh-http-proxy/lib/index.js" || die "http-proxy exclusion-glob patch missing"
 grep -q 'appendPluginRecord' "$NM/@deepseek-ai/dsh-session/lib/index.js" || die "dsh-session lacks appendPluginRecord (plugin-mode records its selection with it)"
 [[ -f "$NM/@dsh-android/plugin-mode/index.js" ]] || die "plugin-mode missing"
+# Our packages pin engines.dsh to the exact bundled dsh: a mismatch makes dsh skip the android bundle at boot.
+for m in "$NM"/@dsh-android/*/package.json; do
+  want="$(node -p 'require(process.argv[1]).engines?.dsh ?? ""' "$m")"
+  [[ -z "$want" || "$want" == "$DSH_VERSION" ]] || die "$m declares engines.dsh $want, but the engine bundles dsh $DSH_VERSION"
+done
 log "no symlinks; entry point and patches verified"
 
 # ── 8. version, zip, digest, report ──────────────────────────────────────────

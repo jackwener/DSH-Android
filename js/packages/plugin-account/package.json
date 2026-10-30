@@ -13,6 +13,6 @@
   },
   "files": ["index.js", "loopback.js", "package.json"],
   "engines": {
-    "dsh": "0.2.1-rc.2"
+    "dsh": "0.2.1-rc.5"
   }
 }

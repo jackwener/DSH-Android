@@ -4,7 +4,7 @@
   "private": true,
   "description": "npm project whose production install is the DSH-Android engine tree (dsh pinned exactly).",
   "dependencies": {
-    "@deepseek-ai/dsh": "0.2.1-rc.2"
+    "@deepseek-ai/dsh": "0.2.1-rc.5"
   },
   "overrides": {
     "zod": "4.4.3"
