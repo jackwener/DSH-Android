@@ -70,6 +70,13 @@ written; `apiKeyEnv` only when a key is stored (an open endpoint gets no credent
 truncate tool calls). No reasoning effort is configured: the adapter applies the model family's documented default.
 Route ids are the preset id (`kimi`, then `kimi-2`, …), never `deepseek-*`.
 
+OpenCode/Go requests to `opencode.ai` (or its subdomains) carry `x-opencode-session` from the harness
+conversation id (patch 16 at the adapter's shared request boundary). It stays the same across turns in
+one conversation; other conversations remain separate. An explicit profile header is preserved, and
+sessionless auxiliary calls get an isolated UUID. Model discovery runs in Kotlin before a conversation
+exists: it uses the app's own User-Agent and a fresh routing UUID for each OpenCode listing. Neither
+path sends the OpenCode header to other providers, and the generated profile contains no static session id.
+
 Web search (`web_search`, DeepSeek search) needs a DeepSeek credential: `DEEPSEEK_API_KEY`, or the account login while
 the session runs on `deepseek-account`. The app therefore turns the tool off when a third-party model is selected and
 no API key is stored; `web_fetch` stays.

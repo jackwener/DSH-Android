@@ -3,6 +3,7 @@ package io.github.jackwener.dsh.core.provider
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -60,5 +61,21 @@ class ProvidersTest {
     @Test fun presetsAreHttpsOpenAiCompatible() {
         PRESETS.filter { it.id != CUSTOM }.forEach { assertTrue(it.id, it.baseUrl.startsWith("https://")) }
         assertEquals(PRESETS.size, PRESETS.map { it.id }.toSet().size)
+    }
+
+    @Test fun openCodeModelDiscoveryHasClientAndSessionHeaders() {
+        for (base in listOf("https://opencode.ai/zen/go/v1", "https://opencode.ai/inference/go/openai/v1", "https://API.OPENCODE.AI/v1")) {
+            val first = modelListHeaders(base)
+            assertEquals("application/json", first["Accept"])
+            assertTrue(first["User-Agent"]!!.startsWith("deepseek-harness-android/"))
+            assertTrue(first["x-opencode-session"]!!.matches(Regex("[0-9a-f-]{36}")))
+            assertNotEquals(first["x-opencode-session"], modelListHeaders(base)["x-opencode-session"])
+        }
+    }
+
+    @Test fun modelDiscoveryDoesNotSendOpenCodeIdentityToOtherHosts() {
+        for (base in listOf("https://api.openai.com/v1", "http://127.0.0.1:3425/v1", "https://opencode.ai.example/v1", "https://opencode.ai@other.example/v1", "https://other.example/opencode.ai", "not a URL")) {
+            assertEquals(base, mapOf("Accept" to "application/json"), modelListHeaders(base))
+        }
     }
 }
