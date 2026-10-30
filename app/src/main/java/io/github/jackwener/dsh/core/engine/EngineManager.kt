@@ -72,8 +72,8 @@ class RouteUnavailableException(message: String) : Exception(message)
  * route `deepseek-account` is used only when no API key is configured; otherwise
  * `deepseek-official`. The engine starts without either, because account login runs inside it.
  *
- * Third-party providers (Settings → 模型服务): the app writes the user patch layer
- * `$DSH_HOME/profiles/android/cordis.patch.yml` (llm-service-lite providers, see
+ * Third-party providers (Settings → 模型服务): the app writes its settings layer
+ * `$DSH_HOME/android/app-layer.patch.yml` (a launcher overlay; llm-service-lite providers, see
  * core/provider/Providers.kt) before each start and passes each provider key as
  * `DSH_ANDROID_KEY_<ID>`. Both are read once at process start, so a change to either (the
  * [profileFingerprint]) restarts the engine when it is idle, like a route change.
@@ -403,12 +403,16 @@ class EngineManager @Inject constructor(
         return withTimeout(20_000) { deferred.await() }
     }
 
-    /** The user patch layer dsh reads at boot (ENGINE-CONTRACT §1.1); written atomically, only when it changed. */
+    /**
+     * The app's settings layer (PLUGINS-CONTRACT §1): `$DSH_HOME/android/app-layer.patch.yml`, which the engine entry
+     * passes to dsh as a `--patch` overlay above every other layer. The profile's own `cordis.patch.yml` belongs to dsh
+     * (plugin manager, config editor). Written atomically, only when it changed.
+     */
     private fun writeProfilePatch(text: String) {
-        val dir = File(context.filesDir, "dsh-home/profiles/android").apply { mkdirs() }
-        val f = File(dir, "cordis.patch.yml")
+        val dir = File(context.filesDir, "dsh-home/android").apply { mkdirs() }
+        val f = File(dir, "app-layer.patch.yml")
         if (f.exists() && f.readText() == text) return
-        val tmp = File(dir, "cordis.patch.yml.tmp")
+        val tmp = File(dir, "app-layer.patch.yml.tmp")
         tmp.writeText(text)
         check(tmp.renameTo(f)) { "could not write ${f.path}" }
     }
@@ -422,6 +426,8 @@ class EngineManager @Inject constructor(
         putString("SHELL", "/system/bin/sh")
         putString("PATH", "${File(files, "bin").path}:/system/bin:/system/xbin")
         putString("DSH_NATIVE_DIR", context.applicationInfo.nativeLibraryDir)
+        // The node launcher for engine children: bundled pnpm, npm stdio MCP servers (PLUGINS-CONTRACT §1).
+        putString("DSH_NODE_BIN", File(context.applicationInfo.nativeLibraryDir, "libdshnode.so").path)
         apiKey?.let { putString("DEEPSEEK_API_KEY", it) }
         providerKeys.forEach { (env, key) -> putString(env, key) }
         putString("DSH_ANDROID_PACKAGE", context.packageName)

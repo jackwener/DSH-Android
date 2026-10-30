@@ -321,8 +321,8 @@ fun resolveChoice(provider: String, model: String, providers: List<ProviderConfi
 }
 
 /**
- * The user patch layer `$DSH_HOME/profiles/android/cordis.patch.yml` (dsh applies it after every
- * bundle). The app is its only writer and rewrites it before each engine start; it carries no
+ * The app's settings layer `$DSH_HOME/android/app-layer.patch.yml` (the engine entry applies it as a
+ * `--patch` overlay above every layer). The app is its only writer and rewrites it before each engine start; it carries no
  * secret, only `apiKeyEnv` names. Values are JSON (a YAML subset), so no quoting rules apply.
  *
  * @param userAgent product token the engine puts in front of its User-Agent (`DSH-Android/<version>`).

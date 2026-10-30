@@ -64,7 +64,8 @@ class EngineService : Service() {
             File(env.getString("HOME") ?: filesDir.path).mkdirs()
 
             // argv[0] ("node") is prepended by libdshengine.
-            val args = (EngineRuntimeEnv.nodeArgv(engineDir, env) + listOf(File(engineDir, "node_modules/@deepseek-ai/dsh/lib/bin.js").path, "--profile", "android")).toTypedArray()
+            // Entry: dsh's CLI for profile android plus crash/safe-mode bookkeeping and the app-layer overlay (PLUGINS-CONTRACT §1).
+            val args = (EngineRuntimeEnv.nodeArgv(engineDir, env) + listOf(File(engineDir, "node_modules/@dsh-android/bundle-android/main.mjs").path)).toTypedArray()
             val inRead = stdin[0].detachFd()
             val outWrite = stdout[1].detachFd()
             val errWrite = stderr.detachFd()

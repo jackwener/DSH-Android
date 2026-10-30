@@ -36,7 +36,7 @@ object EngineInstaller {
     private fun linkTools(context: Context) {
         val bin = File(context.filesDir, "bin").apply { mkdirs() }
         val nativeDir = context.applicationInfo.nativeLibraryDir
-        mapOf("rg" to "librg.so").forEach { (name, lib) ->
+        mapOf("rg" to "librg.so", "node" to "libdshnode.so").forEach { (name, lib) ->
             val link = File(bin, name)
             val target = File(nativeDir, lib)
             if (!target.exists()) return@forEach
