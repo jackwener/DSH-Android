@@ -67,15 +67,16 @@ object ToolPresentation {
         "screen_capture" -> ToolInfo(R.drawable.dsw_fullscreen_outline, R.string.tool_screen_capture, Activity.ScreenRead, BodyKind.Screen)
         "screen_tap" -> ToolInfo(R.drawable.dsw_right_up_outline, R.string.tool_screen_tap, Activity.Tap, BodyKind.Gesture)
         "screen_swipe", "screen_scroll" -> ToolInfo(R.drawable.dsw_chevrons_up_down_outline, if (name == "screen_swipe") R.string.tool_screen_swipe else R.string.tool_screen_scroll, Activity.Swipe, BodyKind.Gesture)
+        "screen_set_wheel" -> ToolInfo(R.drawable.dsw_chevrons_up_down_outline, R.string.tool_screen_set_wheel, Activity.Swipe, BodyKind.Gesture)
         "screen_type" -> ToolInfo(R.drawable.dsw_edit_outline, R.string.tool_screen_type, Activity.Type, BodyKind.Gesture)
         "screen_key" -> ToolInfo(R.drawable.dsw_chevron_left_outline, R.string.tool_screen_key, Activity.Key, BodyKind.Gesture)
         "app_list", "app_info", "app_guide", "app_note" -> ToolInfo(R.drawable.dsw_apps_add_outline, titleOf(name), Activity.Apps, BodyKind.Text)
         "app_launch", "app_open_link", "app_send_intent", "share_to_app" -> ToolInfo(R.drawable.dsw_right_up_outline, titleOf(name), Activity.Apps, BodyKind.Gesture)
         "device_status" -> ToolInfo(R.drawable.dsw_gauge_outline, R.string.tool_device_status, Activity.System, BodyKind.Text)
-        "sound_mode", "volume_set", "dnd_set", "brightness_set", "flashlight", "alarm_set", "wifi_toggle", "bluetooth_toggle", "mobile_data_toggle", "setting_put" ->
-            ToolInfo(if (name == "alarm_set") R.drawable.dsw_alarm_clock_outline else R.drawable.dsw_sliders_two_outline, titleOf(name), Activity.System, BodyKind.Gesture)
+        "sound_mode", "volume_set", "dnd_set", "brightness_set", "flashlight", "alarm_set", "alarm_show", "wifi_toggle", "bluetooth_toggle", "mobile_data_toggle", "setting_put" ->
+            ToolInfo(if (name == "alarm_set" || name == "alarm_show") R.drawable.dsw_alarm_clock_outline else R.drawable.dsw_sliders_two_outline, titleOf(name), Activity.System, BodyKind.Gesture)
         "notification_list", "notification_dismiss" -> ToolInfo(R.drawable.dsw_queue_outline, titleOf(name), Activity.Notifications, BodyKind.Text)
-        "contacts_search", "sms_read", "call_log_read", "calendar_read", "calendar_add", "sms_send" ->
+        "contacts_search", "sms_read", "call_log_read", "calendar_read", "calendar_add", "calendar_new_event", "sms_send" ->
             ToolInfo(if (name == "sms_send") R.drawable.dsw_paper_plane_outline else R.drawable.dsw_user_outline, titleOf(name), Activity.Messages, BodyKind.Text)
         "browser_open", "browser_read", "browser_click", "browser_type", "browser_scroll", "browser_back" ->
             ToolInfo(R.drawable.dsw_globe_outline, titleOf(name), Activity.Browser, if (name == "browser_read" || name == "browser_open") BodyKind.Text else BodyKind.Gesture)
@@ -111,6 +112,7 @@ object ToolPresentation {
         "brightness_set" -> R.string.tool_brightness
         "flashlight" -> R.string.tool_flashlight
         "alarm_set" -> R.string.tool_alarm
+        "alarm_show" -> R.string.tool_alarm_show
         "wifi_toggle" -> R.string.tool_wifi
         "bluetooth_toggle" -> R.string.tool_bluetooth
         "mobile_data_toggle" -> R.string.tool_mobile_data
@@ -122,6 +124,7 @@ object ToolPresentation {
         "call_log_read" -> R.string.tool_call_log
         "calendar_read" -> R.string.tool_calendar_read
         "calendar_add" -> R.string.tool_calendar_add
+        "calendar_new_event" -> R.string.tool_calendar_new_event
         "sms_send" -> R.string.tool_sms_send
         "browser_open" -> R.string.tool_browser_open
         "browser_read" -> R.string.tool_browser_read
@@ -156,6 +159,8 @@ object ToolPresentation {
             "screen_scroll", "browser_scroll" -> a.str("direction")
             "screen_type", "browser_type" -> a.str("text")?.let { "“${it.take(60)}”" }
             "screen_key" -> a.str("key")
+            "screen_set_wheel" -> a.str("value")?.let { "→ “$it”" }
+            "calendar_new_event" -> a.str("title")
             "app_launch", "app_info", "share_to_app" -> a.str("package")
             "app_open_link" -> a.str("uri")
             "hand_to_user" -> a.str("reason")

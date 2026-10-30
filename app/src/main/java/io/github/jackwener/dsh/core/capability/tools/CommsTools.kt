@@ -11,12 +11,14 @@ import android.provider.ContactsContract
 import android.provider.Telephony
 import android.telephony.SmsManager
 import dagger.hilt.android.qualifiers.ApplicationContext
+import io.github.jackwener.dsh.core.capability.ActivityLauncher
 import io.github.jackwener.dsh.core.capability.CallContext
 import io.github.jackwener.dsh.core.capability.InvalidArgsException
 import io.github.jackwener.dsh.core.capability.PermissionMissingException
 import io.github.jackwener.dsh.core.capability.Tool
 import io.github.jackwener.dsh.core.capability.ToolResult
 import io.github.jackwener.dsh.core.capability.ToolSet
+import io.github.jackwener.dsh.core.capability.bool
 import io.github.jackwener.dsh.core.capability.int
 import io.github.jackwener.dsh.core.capability.long
 import io.github.jackwener.dsh.core.capability.reqStr
@@ -32,9 +34,17 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 @Singleton
-class CommsTools @Inject constructor(@ApplicationContext private val context: Context) : ToolSet {
+class CommsTools @Inject constructor(
+    @ApplicationContext private val context: Context,
+    private val launcher: ActivityLauncher,
+) : ToolSet {
     private val cr get() = context.contentResolver
     private val fmt = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US)
+
+    private companion object {
+        /** The MIME type calendar apps declare for their new-event page. */
+        const val EVENT_TYPE = "vnd.android.cursor.dir/event"
+    }
 
     private fun need(permission: String, label: String) {
         if (context.checkSelfPermission(permission) != PackageManager.PERMISSION_GRANTED) throw PermissionMissingException(label)
@@ -134,7 +144,8 @@ class CommsTools @Inject constructor(@ApplicationContext private val context: Co
             }
         },
         object : Tool("calendar_add", ToolGroup.Comms, Risk.write, false,
-            "Add an event to the user's main writable calendar. Give start/end as ISO-8601 local time (2026-10-29T15:00) — the phone's time zone is applied.", {
+            "Add an event to the user's main writable calendar. Give start/end as ISO-8601 local time (2026-10-29T15:00) — the phone's time zone is applied. " +
+                "Needs calendar permission; without it, calendar_new_event opens the calendar app's own new-event page instead.", {
             string("title", "", required = true)
             string("start", "Start, ISO-8601 local time (or a date for all-day)"); string("end", "End, ISO-8601 local time (default start + 1h)")
             int("startMs", "Start epoch ms (alternative)"); int("endMs", "End epoch ms (alternative)")
@@ -171,6 +182,57 @@ class CommsTools @Inject constructor(@ApplicationContext private val context: Co
                 }) ?: return ToolResult.error("failed", "The calendar provider refused the event.")
                 return ToolResult.text("Event \"${args.reqStr("title")}\" created ${fmt.format(Date(start))}–${fmt.format(Date(end))} in calendar \"${cal.second}\" (${cal.third}). id=${uri.lastPathSegment}")
             }
+        },
+        object : Tool("calendar_new_event", ToolGroup.Comms, Risk.write, true,
+            "Open the calendar app's new-event page prefilled with title, time, location and notes (no calendar permission needed). " +
+                "Nothing is saved yet: then read the screen and tap its save button (screen_read → screen_tap), and check the result. " +
+                "Like app_launch it opens on your background screen when there is one. Times are ISO-8601 local time (2026-10-29T15:00); a bare date is all-day.", {
+            string("title", "", required = true)
+            string("start", "Start, ISO-8601 local time (or a date for all-day)"); string("end", "End, ISO-8601 local time or date (default: start + 1h; all-day: the start day)")
+            int("startMs", "Start epoch ms (alternative)"); int("endMs", "End epoch ms (alternative)")
+            bool("allDay", "All-day event (also implied by a bare date)")
+            string("location", ""); string("description", "")
+            string("screen", "Where to open it: \"agent\" = your background screen (default when Shizuku is ready), \"main\" = the user's screen", enum = listOf("agent", "main"))
+        }) {
+            override suspend fun invoke(args: JsonObject, call: CallContext): ToolResult {
+                val zone = java.time.ZoneId.systemDefault()
+                fun day(k: String) = args.str(k)?.trim()?.takeIf { it.length == 10 }?.let {
+                    runCatching { java.time.LocalDate.parse(it) }.getOrElse { throw InvalidArgsException("'$k' is not a date like 2026-10-29: $it") } }
+                val allDay = args.bool("allDay") == true || day("start") != null
+                val begin: Long; val end: Long
+                if (allDay) {
+                    // All-day: local midnights, the end exclusive (the day after the last day).
+                    val first = day("start") ?: time(args, "start", "startMs")?.let { java.time.Instant.ofEpochMilli(it).atZone(zone).toLocalDate() }
+                        ?: throw InvalidArgsException("missing 'start' (a date like 2026-10-29)")
+                    val last = day("end") ?: time(args, "end", "endMs")?.let { java.time.Instant.ofEpochMilli(it).atZone(zone).toLocalDate() } ?: first
+                    if (last < first) throw InvalidArgsException("end is before start")
+                    begin = first.atStartOfDay(zone).toInstant().toEpochMilli()
+                    end = last.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli()
+                } else {
+                    begin = time(args, "start", "startMs") ?: throw InvalidArgsException("missing 'start' (ISO-8601 like 2026-10-29T15:00)")
+                    end = time(args, "end", "endMs") ?: (begin + 3_600_000L)
+                    if (end < begin) throw InvalidArgsException("end is before start")
+                }
+                val title = args.reqStr("title")
+                val intent = android.content.Intent(android.content.Intent.ACTION_INSERT)
+                    .setDataAndType(CalendarContract.Events.CONTENT_URI, EVENT_TYPE)
+                    .putExtra(CalendarContract.Events.TITLE, title)
+                    .putExtra(CalendarContract.EXTRA_EVENT_BEGIN_TIME, begin)
+                    .putExtra(CalendarContract.EXTRA_EVENT_END_TIME, end)
+                    .putExtra(CalendarContract.EXTRA_EVENT_ALL_DAY, allDay)
+                args.str("location")?.let { intent.putExtra(CalendarContract.Events.EVENT_LOCATION, it) }
+                args.str("description")?.let { intent.putExtra(CalendarContract.Events.DESCRIPTION, it) }
+                if (!launcher.handles(intent)) return ToolResult.error("not_supported",
+                    "No calendar app on this phone opens a new-event page through the standard Android request. Open the calendar app (app_launch) and add it on screen.")
+                val r = launcher.open(call, args.str("screen"), "Opened the new-event page of", intent, launcher.handler(intent), create = true)
+                if (!r.ok) return r
+                val span = if (allDay) "all day ${fmtDay(begin)}" + (if (end - begin > 86_400_000L + 3_600_000L) "–${fmtDay(end - 86_400_000L)}" else "")
+                    else "${fmt.format(Date(begin))}–${fmt.format(Date(end))}"
+                return r.appendText("Prefilled: \"$title\", $span" + (args.str("location")?.let { ", at $it" } ?: "") +
+                    ". Not saved yet: screen_read, check the fields (some calendar apps ignore some of them), then tap the save button (保存/完成/✓).")
+            }
+
+            private fun fmtDay(ms: Long) = java.time.Instant.ofEpochMilli(ms).atZone(java.time.ZoneId.systemDefault()).toLocalDate().toString()
         },
         object : Tool("sms_send", ToolGroup.Comms, Risk.dangerous, false, "Send an SMS. Always confirm recipient and text with the user first.", {
             string("to", "Phone number", required = true); string("text", "Message", required = true)

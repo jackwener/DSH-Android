@@ -40,13 +40,13 @@ class TextInput @Inject constructor(@ApplicationContext private val context: Con
         // The input connection, the keyboard and `ime set` belong to the user's focused field: on the
         // agent screen only paths bound to the target node (or to that display) are safe.
         val main = displayId == Display.DEFAULT_DISPLAY
-        val before = target?.text?.toString()
+        val before = target?.let(::shownText)
         val full = if (append) (before.orEmpty() + text) else text
         fun done(method: String) = Typed(method, readBack(target))
         fun changed(): Boolean {
             if (target == null || target.isPassword) return false
             target.refresh()
-            return target.text?.toString() != before
+            return shownText(target) != before
         }
         if (target != null && target.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, Bundle().apply {
                 putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, full)
@@ -96,7 +96,7 @@ class TextInput @Inject constructor(@ApplicationContext private val context: Con
     private fun readBack(n: AccessibilityNodeInfo?): String? {
         if (n == null || n.isPassword) return null
         n.refresh()
-        return n.text?.toString()
+        return shownText(n)
     }
 
     private fun focus(n: AccessibilityNodeInfo) {
@@ -141,4 +141,19 @@ class TextInput @Inject constructor(@ApplicationContext private val context: Con
     }
 
     private fun shellQuote(s: String) = "'" + s.replace("'", "'\\''") + "'"
+
+    companion object {
+        /** What the field contains: an empty field reports its hint as its text, which is not content. */
+        fun shownText(n: AccessibilityNodeInfo): String? =
+            if (n.isShowingHintText) "" else n.text?.toString()
+
+        private val FORMATTING = Regex("[\\s\\-()]")
+
+        /**
+         * The field shows something other than [expected] (spaces, dashes and brackets that fields
+         * insert while formatting are ignored): text rejected, truncated, or added to old content.
+         */
+        fun differs(expected: String, shown: String): Boolean =
+            FORMATTING.replace(expected, "") != FORMATTING.replace(shown, "")
+    }
 }

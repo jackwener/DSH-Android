@@ -235,6 +235,7 @@
     <string name="tool_screen_capture">Screenshot</string>
     <string name="tool_screen_tap">Tap</string>
     <string name="tool_screen_swipe">Swipe</string>
+    <string name="tool_screen_set_wheel">Set wheel</string>
     <string name="tool_screen_scroll">Scroll</string>
     <string name="tool_screen_type">Type</string>
     <string name="tool_screen_key">Key</string>
@@ -270,6 +271,7 @@
     <string name="tool_brightness">Brightness</string>
     <string name="tool_flashlight">Flashlight</string>
     <string name="tool_alarm">Set alarm</string>
+    <string name="tool_alarm_show">Show alarms</string>
     <string name="tool_wifi">Wi‑Fi</string>
     <string name="tool_bluetooth">Bluetooth</string>
     <string name="tool_mobile_data">Mobile data</string>
@@ -281,6 +283,7 @@
     <string name="tool_call_log">Call log</string>
     <string name="tool_calendar_read">Read calendar</string>
     <string name="tool_calendar_add">Add event</string>
+    <string name="tool_calendar_new_event">Open new event</string>
     <string name="tool_sms_send">Send SMS</string>
     <string name="tool_browser_open">Open page</string>
     <string name="tool_browser_read">Read page</string>

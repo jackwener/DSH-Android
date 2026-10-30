@@ -1,6 +1,5 @@
 package io.github.jackwener.dsh.core.capability.tools
 
-import android.content.ActivityNotFoundException
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
@@ -10,8 +9,7 @@ import android.net.Uri
 import android.os.Environment
 import androidx.core.content.FileProvider
 import dagger.hilt.android.qualifiers.ApplicationContext
-import io.github.jackwener.dsh.core.capability.AgentScreen
-import io.github.jackwener.dsh.core.capability.AppKnowledge
+import io.github.jackwener.dsh.core.capability.ActivityLauncher
 import io.github.jackwener.dsh.core.capability.CallContext
 import io.github.jackwener.dsh.core.capability.InvalidArgsException
 import io.github.jackwener.dsh.core.capability.Tool
@@ -24,10 +22,6 @@ import io.github.jackwener.dsh.core.capability.str
 import io.github.jackwener.dsh.core.capability.strs
 import io.github.jackwener.dsh.core.model.Risk
 import io.github.jackwener.dsh.core.model.ToolGroup
-import io.github.jackwener.dsh.core.platform.AppVisibility
-import io.github.jackwener.dsh.core.platform.ShizukuShell
-import io.github.jackwener.dsh.service.DshAccessibilityService
-import android.provider.Settings
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.longOrNull
@@ -41,9 +35,7 @@ import javax.inject.Singleton
 @Singleton
 class AppTools @Inject constructor(
     @ApplicationContext private val context: Context,
-    private val shizuku: ShizukuShell,
-    private val agent: AgentScreen,
-    private val knowledge: AppKnowledge,
+    private val launcher: ActivityLauncher,
 ) : ToolSet {
     private val pm get() = context.packageManager
 
@@ -54,85 +46,8 @@ class AppTools @Inject constructor(
 
     private fun label(ai: ApplicationInfo) = pm.getApplicationLabel(ai).toString()
 
-    /** Android drops (without an error) activity starts from a background app unless one of these exempts DSH. */
-    private fun mayStartFromBackground(): Boolean = AppVisibility.isForeground || Settings.canDrawOverlays(context) ||
-        DshAccessibilityService.instance != null ||
-        runCatching { context.getSystemService(android.app.role.RoleManager::class.java).isRoleHeld(android.app.role.RoleManager.ROLE_ASSISTANT) }.getOrDefault(false)
-
-    private class LaunchBlocked(message: String) : Exception(message)
-
-    /**
-     * Starts an activity from the app process, or through Shizuku `am start -W` when Android would
-     * block it (background start) or for a virtual display. With accessibility on, waits briefly for
-     * [expect] to reach the front so "ok" means it actually opened.
-     */
-    private suspend fun start(intent: Intent, displayId: Int? = null, expect: String? = null): String {
-        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        if (displayId == null && (mayStartFromBackground() || !shizuku.available)) {
-            if (!mayStartFromBackground()) throw LaunchBlocked("Android does not let DSH open other apps while it is in the background " +
-                "(no overlay permission, accessibility service or Shizuku). Ask the user to open it, or to enable DSH's accessibility service.")
-            try { context.startActivity(intent) }
-            catch (e: ActivityNotFoundException) { throw InvalidArgsException("No app can handle this: ${e.message}") }
-            catch (e: SecurityException) { if (!shizuku.available) throw e; return viaShell(intent, null, expect) }
-            return "ok" + confirm(expect)
-        }
-        return viaShell(intent, displayId, expect)
-    }
-
-    private suspend fun viaShell(intent: Intent, displayId: Int?, expect: String?): String {
-        val uri = intent.toUri(Intent.URI_INTENT_SCHEME)
-        val r = shizuku.exec(buildString {
-            append("am start -W")
-            if (displayId != null) append(" --display $displayId")
-            append(" '${uri.replace("'", "'\\''")}'")
-        })
-        // `am start` exits 0 on several Android versions even after "Error: Activity not started".
-        val out = r.output
-        if (r.code != 0 || out.contains("Error") || (out.contains("Status:") && !out.contains("Status: ok")))
-            throw IllegalStateException(out.lines().firstOrNull { it.contains("Error") || it.contains("Status") }?.trim() ?: out.take(300))
-        return "ok (via Shizuku)" + if (displayId == null) confirm(expect) else confirmOn(displayId, expect)
-    }
-
-    private suspend fun confirm(expect: String?): String {
-        if (expect == null || DshAccessibilityService.instance == null) return ""
-        repeat(10) { if (DshAccessibilityService.foregroundPackage.value == expect) return ""; kotlinx.coroutines.delay(250) }
-        return " — but $expect is not in front yet (it may still be loading, or Android blocked it); check with screen_read"
-    }
-
-    private suspend fun confirmOn(displayId: Int, expect: String?): String {
-        val svc = DshAccessibilityService.instance ?: return ""
-        if (expect == null) return ""
-        repeat(10) { if (runCatching { svc.snapshot(displayId).packageName }.getOrNull() == expect) return ""; kotlinx.coroutines.delay(250) }
-        return " — but $expect is not in front of the agent screen yet (it may still be loading); check with screen_read"
-    }
-
-    private suspend fun launchResult(prefix: String, intent: Intent, displayId: Int? = null, expect: String? = null): ToolResult =
-        try { ToolResult.text(prefix + start(intent, displayId, expect)) } catch (e: LaunchBlocked) { ToolResult.error("needs_user", e.message ?: "blocked") }
-
-    /**
-     * Opens [intent] where this conversation works: its agent screen (created on first use when
-     * [create]) or the user's screen. Never takes an app away from the user: one they are using on
-     * their screen is not started on the agent screen. Adds app knowledge on the first visit.
-     */
-    private suspend fun open(call: CallContext, args: JsonObject, verb: String, intent: Intent, expect: String?, create: Boolean): ToolResult {
-        val t = agent.target(call.sessionId, args.str("screen"), create)
-        val name = expect?.let { agent.label(it) }
-        val result = if (t.agent) {
-            if (agent.userTookOver(call.sessionId)) return ToolResult.error("user_took_over",
-                "The user took the app over from the agent screen and is using it on their own screen. Do not operate it; wait for their message or ask them.")
-            if (expect != null && agent.inUseOnMain(expect)) return ToolResult.error("app_in_use",
-                "The user is using $name ($expect) on their screen right now, so it was not opened on the agent screen (that would take it away from them). " +
-                    "Wait and try again later, ask the user, or pass screen: \"main\" to work on their screen.")
-            launchResult("$verb${name?.let { " $it" } ?: ""} on the agent screen (the user's screen is not affected): ", intent, t.displayId, expect)
-                .also { if (it.ok) agent.mute(call.sessionId, expect) }
-        } else launchResult("$verb${name?.let { " $it" } ?: ""} on the user's screen: ", intent, expect = expect)
-        val known = expect?.takeIf { result.ok }?.let { knowledge.firstVisitNotice(call.sessionId, it) }
-        return (t.note?.let { result.prependText(it) } ?: result).let { r -> known?.let { r.appendText(it) } ?: r }
-    }
-
-    private fun targetOf(intent: Intent): String? = intent.`package` ?: intent.component?.packageName ?: runCatching {
-        pm.resolveActivity(intent, PackageManager.MATCH_DEFAULT_ONLY)?.activityInfo?.packageName?.takeIf { it != "android" }
-    }.getOrNull()
+    private suspend fun open(call: CallContext, args: JsonObject, verb: String, intent: Intent, expect: String?, create: Boolean): ToolResult =
+        launcher.open(call, args.str(SCREEN), verb, intent, expect, create)
 
     override val tools = listOf(
         object : Tool("app_list", ToolGroup.Apps, Risk.read, false, "List installed user-launchable apps (label + package). Filter with query.", {
@@ -191,7 +106,7 @@ class AppTools @Inject constructor(
             override suspend fun invoke(args: JsonObject, call: CallContext): ToolResult {
                 val intent = Intent(Intent.ACTION_VIEW, Uri.parse(args.reqStr("uri")))
                 args.str("package")?.let { intent.setPackage(it) }
-                return open(call, args, "Opened", intent, targetOf(intent), create = true)
+                return open(call, args, "Opened", intent, launcher.targetOf(intent), create = true)
             }
         },
         object : Tool("app_send_intent", ToolGroup.Apps, Risk.write, true,
@@ -220,7 +135,7 @@ class AppTools @Inject constructor(
                         else -> p.contentOrNull?.let { intent.putExtra(k, it) }
                     }
                 }
-                return open(call, args, "Sent", intent, targetOf(intent), create = false)
+                return open(call, args, "Sent", intent, launcher.targetOf(intent), create = false)
             }
         },
         object : Tool("share_to_app", ToolGroup.Apps, Risk.write, true, "Share files and/or text to another app (opens the share target).", {
@@ -251,7 +166,7 @@ class AppTools @Inject constructor(
                     addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                 }
                 val target = args.str("package")?.let { intent.setPackage(it) } ?: Intent.createChooser(intent, null)
-                return launchResult("Share sheet opened: ", target, expect = args.str("package"))
+                return launcher.launchResult("Share sheet opened: ", target, expect = args.str("package"))
             }
         },
     )

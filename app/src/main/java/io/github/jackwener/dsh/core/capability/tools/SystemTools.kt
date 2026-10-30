@@ -1,5 +1,6 @@
 package io.github.jackwener.dsh.core.capability.tools
 
+import android.app.AlarmManager
 import android.app.NotificationManager
 import android.content.Context
 import android.content.Intent
@@ -17,6 +18,8 @@ import android.os.StatFs
 import android.provider.AlarmClock
 import android.provider.Settings
 import dagger.hilt.android.qualifiers.ApplicationContext
+import io.github.jackwener.dsh.core.capability.ActivityLauncher
+import io.github.jackwener.dsh.core.capability.AlarmCheck
 import io.github.jackwener.dsh.core.capability.CallContext
 import io.github.jackwener.dsh.core.capability.InvalidArgsException
 import io.github.jackwener.dsh.core.capability.PermissionMissingException
@@ -44,8 +47,15 @@ import javax.inject.Singleton
 class SystemTools @Inject constructor(
     @ApplicationContext private val context: Context,
     private val gate: ShellGate,
+    private val launcher: ActivityLauncher,
 ) : ToolSet {
     private val shizuku get() = gate.shell
+
+    /** When the system's next alarm clock rings (epoch ms), or null when none is reported. */
+    private fun nextAlarm(): Long? = runCatching { context.getSystemService(AlarmManager::class.java).nextAlarmClock?.triggerTime }.getOrNull()
+
+    private fun clock(ms: Long): String = java.time.Instant.ofEpochMilli(ms).atZone(java.time.ZoneId.systemDefault())
+        .format(java.time.format.DateTimeFormatter.ofPattern("EEE yyyy-MM-dd HH:mm", java.util.Locale.US))
     private val audio get() = context.getSystemService(AudioManager::class.java)
 
     private fun streamOf(name: String?) = when (name) {
@@ -74,6 +84,10 @@ class SystemTools @Inject constructor(
         return runCatching { context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }.fold(
             { ToolResult.text("path=system_panel: $reason, so I opened the system page to $what. The user must tap the switch there; verify with device_status before relying on it.") },
             { ToolResult.error("failed", "Could not $what ($reason) and the system page failed to open: ${it.message}") })
+    }
+
+    private companion object {
+        const val SCREEN_DESC = "Where the clock app opens: \"agent\" = your background screen if this conversation has one (default), \"main\" = the user's screen"
     }
 
     override val tools = listOf(
@@ -186,16 +200,20 @@ class SystemTools @Inject constructor(
         // needsUnlock = true: the clock app handles the request in an activity, which Android only starts
         // reliably on an unlocked screen (and some clocks show a confirmation page).
         object : Tool("alarm_set", ToolGroup.System, Risk.write, true,
-            "Create an alarm in the clock app (optionally repeating), or start a countdown timer. Needs the phone unlocked.", {
+            "Create an alarm in the clock app (optionally repeating), or start a countdown timer. Needs the phone unlocked. " +
+                "For an alarm the result says whether the system now reports it as the next alarm (verified / earlier_alarm_first / not_seen / unknown); " +
+                "unless verified, check the alarm list (alarm_show) before telling the user it is set. not_supported: set it in the clock app on screen.", {
             int("hour", "0-23"); int("minute", "0-59"); string("label", "Label")
             raw("days", buildJsonObject {
                 put("type", "array"); put("description", "Repeat on these weekdays (1=Mon … 7=Sun); omit for a one-time alarm")
                 put("items", buildJsonObject { put("type", "integer") })
             })
             int("timerSeconds", "If set, start a countdown timer instead (1-86400)")
+            string("screen", SCREEN_DESC, enum = listOf("agent", "main"))
         }) {
             override suspend fun invoke(args: JsonObject, call: CallContext): ToolResult {
                 val timer = args.int("timerSeconds")
+                var days: List<Int> = emptyList()
                 val i = if (timer != null) {
                     if (timer !in 1..86_400) throw InvalidArgsException("timerSeconds must be 1..86400")
                     Intent(AlarmClock.ACTION_SET_TIMER).putExtra(AlarmClock.EXTRA_LENGTH, timer)
@@ -205,21 +223,57 @@ class SystemTools @Inject constructor(
                     if (hour !in 0..23 || minute !in 0..59) throw InvalidArgsException("hour must be 0-23 and minute 0-59")
                     Intent(AlarmClock.ACTION_SET_ALARM).putExtra(AlarmClock.EXTRA_HOUR, hour).putExtra(AlarmClock.EXTRA_MINUTES, minute).also { a ->
                         // AlarmClock uses Calendar days (Sun=1 … Sat=7).
-                        val days = (args["days"] as? kotlinx.serialization.json.JsonArray)?.mapNotNull { (it as? kotlinx.serialization.json.JsonPrimitive)?.content?.toIntOrNull() }
-                        if (!days.isNullOrEmpty()) {
+                        days = (args["days"] as? kotlinx.serialization.json.JsonArray)?.mapNotNull { (it as? kotlinx.serialization.json.JsonPrimitive)?.content?.toIntOrNull() }.orEmpty()
+                        if (days.isNotEmpty()) {
                             if (days.any { it !in 1..7 }) throw InvalidArgsException("days must be 1..7 (Mon=1)")
                             a.putIntegerArrayListExtra(AlarmClock.EXTRA_DAYS, ArrayList(days.map { it % 7 + 1 }))
                         }
                     }
                 }
                 args.str("label")?.let { i.putExtra(AlarmClock.EXTRA_MESSAGE, it) }
-                i.putExtra(AlarmClock.EXTRA_SKIP_UI, true).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                try { context.startActivity(i) }
-                catch (e: android.content.ActivityNotFoundException) { return ToolResult.error("unsupported", "No clock app on this phone handles alarms/timers.") }
-                catch (e: SecurityException) { return ToolResult.error("failed", "The clock app refused the request: ${e.message}") }
+                i.putExtra(AlarmClock.EXTRA_SKIP_UI, true)
                 val what = if (timer != null) "a ${timer}s timer" else "an alarm at ${args.int("hour")}:${"%02d".format(args.int("minute") ?: 0)}"
-                return ToolResult.text("Sent $what to the clock app. Some clock apps show a confirmation page instead of saving silently; " +
-                    "check the screen (screen_read) or the clock app if it matters.")
+                if (!launcher.handles(i)) return ToolResult.error("not_supported",
+                    "No app on this phone takes ${if (timer != null) "timers" else "alarms"} through the standard Android request. Open the clock app (app_launch) and set it on screen.")
+                val before = if (timer == null) nextAlarm() else null
+                // Not muted on the agent screen: the clock's sound is the point.
+                val sent = try { launcher.open(call, args.str("screen"), "Sent $what to the clock app", i, expect = null, create = false, mute = false) }
+                    catch (e: SecurityException) { return ToolResult.error("failed", "The clock app refused the request: ${e.message}") }
+                if (!sent.ok) return sent
+                if (timer != null) return sent.appendText("Some clock apps show a confirmation page instead of starting silently; check the screen if it matters.")
+                val expected = AlarmCheck.nextRing(java.time.ZonedDateTime.now(), args.int("hour")!!, args.int("minute") ?: 0, days).toInstant().toEpochMilli()
+                // The clock app saves asynchronously: give it a few seconds to publish the new next alarm.
+                var after = nextAlarm()
+                var verdict = AlarmCheck.verdict(before, after, expected)
+                var waited = 0L
+                while (verdict != AlarmCheck.Verdict.Verified && waited < 4_000) {
+                    kotlinx.coroutines.delay(400); waited += 400
+                    after = nextAlarm(); verdict = AlarmCheck.verdict(before, after, expected)
+                }
+                val next = after?.let(::clock) ?: "none"
+                return sent.appendText("verification: ${verdict.id} — " + when (verdict) {
+                    AlarmCheck.Verdict.Verified -> "the system's next alarm is now ${clock(expected)}, the one just set."
+                    AlarmCheck.Verdict.EarlierAlarmFirst -> "another alarm rings first ($next), so the new one (due ${clock(expected)}) cannot be confirmed this way. " +
+                        "Check the alarm list (alarm_show) if it matters."
+                    AlarmCheck.Verdict.NotSeen -> "the system's next alarm is $next, not the new one (due ${clock(expected)}): it was probably not saved " +
+                        "(some clock apps show a confirmation page instead). Check the screen and the alarm list (alarm_show) before telling the user it is set."
+                    AlarmCheck.Verdict.Unknown -> "the system reports no alarms at all (this clock app may not report them). " +
+                        "Check the alarm list (alarm_show) before telling the user it is set."
+                })
+            }
+        },
+        object : Tool("alarm_show", ToolGroup.System, Risk.write, true,
+            "Open the clock app's alarm list (to check or change alarms on screen with the screen_* tools), and report the system's next alarm. " +
+                "Like app_launch it opens on your background screen when there is one.", {
+            string("screen", SCREEN_DESC, enum = listOf("agent", "main"))
+        }) {
+            override suspend fun invoke(args: JsonObject, call: CallContext): ToolResult {
+                val i = Intent(AlarmClock.ACTION_SHOW_ALARMS)
+                val next = "System's next alarm: ${nextAlarm()?.let(::clock) ?: "none reported"}."
+                if (!launcher.handles(i)) return ToolResult.error("not_supported",
+                    "No app on this phone opens its alarm list through the standard Android request; open the clock app with app_launch instead. $next")
+                val r = launcher.open(call, args.str("screen"), "Opened the alarm list of", i, launcher.handler(i), create = true, mute = false)
+                return if (r.ok) r.appendText(next) else r
             }
         },
         object : Tool("wifi_toggle", ToolGroup.System, Risk.write, false,

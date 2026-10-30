@@ -31,7 +31,7 @@ object AgentStatus {
     /** The border stays between steps that act on the user's screen (the model thinks in between). */
     const val BORDER_LINGER_MS = 10_000L
 
-    private val BACKGROUND_TOOLS = setOf("app_launch", "app_open_link", "app_send_intent")
+    private val BACKGROUND_TOOLS = setOf("app_launch", "app_open_link", "app_send_intent", "alarm_show", "calendar_new_event")
 
     /** Status per conversation: a subagent's (`root/child`) counts for its root; the most urgent wins. */
     fun roots(status: Map<String, RowStatus>): Map<String, RowStatus> {

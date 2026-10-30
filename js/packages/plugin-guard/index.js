@@ -182,6 +182,9 @@ export function screenSection(descriptors = []) {
     ? '- App notes are UI facts earlier runs recorded on this phone; they are shown with the guide. After you find a non-obvious entry or hit a trap in an app, record ONE concise factual note with app_note (UI facts only: no personal data, nothing specific to this task). ' +
       'When you used a note, confirm it if it held, update or remove it if it was wrong.\n'
     : ''
+  const wheel = descriptors.some(d => d.name === 'screen_set_wheel')
+    ? '- Pickers (time/date/number wheels, the scrolling columns in alarm or booking apps): set each column with screen_set_wheel(node, value) instead of swiping it step by step, and use the value it reports.\n'
+    : ''
   return `Operating apps on screen:
 - ${where} Pass screen: "main" only to see or act on what the user is looking at ("how do I reply to this?"). Without Shizuku everything happens on the user's screen; the result says so.
 - Login, captcha, payment, a page that blocks screenshots, or a choice only the user can make: call hand_to_user(reason, kind) instead of guessing or typing credentials, then read the screen again when it returns.
@@ -189,7 +192,7 @@ export function screenSection(descriptors = []) {
 - A loop-guard warning in a result means you are repeating yourself without progress: change approach, or stop and report what blocks you. A refused call means stop and report.
 - Waits before sending, posting or replying are deliberate pacing so the app does not flag you as a bot; they are normal.
 - ${guide}
-${notes}
+${wheel}${notes}
 `
 }
 
