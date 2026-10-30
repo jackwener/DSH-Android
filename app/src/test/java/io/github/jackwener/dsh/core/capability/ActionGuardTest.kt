@@ -1,13 +1,65 @@
 package io.github.jackwener.dsh.core.capability
 
 import io.github.jackwener.dsh.core.capability.LoopGuard.Signal
+import io.github.jackwener.dsh.core.model.Risk
+import io.github.jackwener.dsh.core.model.ToolGroup
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import kotlin.random.Random
 
 class ActionGuardTest {
+    private fun tool(name: String, risk: Risk = Risk.write) = object : Tool(name, ToolGroup.Screen, risk, true, "", {}) {
+        override suspend fun invoke(args: JsonObject, call: CallContext) = ToolResult.text("")
+    }
+    private val scroll = tool("screen_scroll")
+    private val down = JsonObject(mapOf("direction" to JsonPrimitive("down")))
+
+    /** One guarded call through [ActionGuard] that leaves the screen with fingerprint [screen]; returns its refusal, if any. */
+    private fun ActionGuard.call(t: Tool, args: JsonObject, screen: Int, outcome: ActionOutcome = ActionOutcome.Effective): ToolResult? =
+        before("s1", t, args) ?: run { after("s1", t, args, ToolResult.text("done").withOutcome(outcome, screen)); null }
+
+    @Test fun signatureIncludesTheScreen() {
+        assertNotEquals(ActionGuard.signature(scroll, down, 1), ActionGuard.signature(scroll, down, 2))
+        assertEquals(ActionGuard.signature(scroll, down, 1), ActionGuard.signature(scroll, down, 1))
+        assertNull(ActionGuard.signature(tool("screen_read", Risk.read), JsonObject(emptyMap()), 1))
+    }
+
+    @Test fun scrollingAFeedIsNotARepeat() {
+        val g = ActionGuard()
+        repeat(30) { i -> assertNull("scroll $i", g.call(scroll, down, screen = i)) }
+    }
+
+    @Test fun theSameActionOnTheSameScreenIsStoppedAtTheTwelfth() {
+        val g = ActionGuard()
+        g.call(tool("screen_read", Risk.read), JsonObject(emptyMap()), screen = 7, outcome = ActionOutcome.ReadChanged)
+        repeat(11) { assertNull(g.call(scroll, down, screen = 7, outcome = ActionOutcome.Effective)) }
+        assertEquals("loop_guard", g.call(scroll, down, screen = 7)?.errorCode)
+    }
+
+    @Test fun afterAStopReadsAndHandToUserStillRun() {
+        val g = ActionGuard()
+        repeat(12) { g.call(tool("screen_tap"), JsonObject(mapOf("node" to JsonPrimitive("e$it"))), screen = it, outcome = ActionOutcome.NoEffect) }
+        assertNotNull(g.before("s1", tool("screen_tap"), JsonObject(emptyMap())))
+        assertNull(g.before("s1", tool("screen_read", Risk.read), JsonObject(emptyMap())))
+        assertNull(g.before("s1", tool("hand_to_user", Risk.read), JsonObject(emptyMap())))
+        g.reset("s1")
+        assertNull(g.before("s1", tool("screen_tap"), JsonObject(emptyMap())))
+    }
+
+    @Test fun afterARereadStopReadsAreRefusedToo() {
+        val g = ActionGuard()
+        val read = tool("screen_read", Risk.read)
+        repeat(12) { g.call(read, JsonObject(emptyMap()), screen = 1, outcome = ActionOutcome.ReadUnchanged) }
+        assertNotNull(g.before("s1", read, JsonObject(emptyMap())))
+        assertNull(g.before("s1", tool("hand_to_user", Risk.read), JsonObject(emptyMap())))
+    }
+
     @Test fun repeatRemindsAt3And6AndRefusesThe12th() {
         val g = LoopGuard()
         val hits = (1..11).map { assertNull(g.check("tap e1")); g.record("tap e1", true, ActionOutcome.Effective) }

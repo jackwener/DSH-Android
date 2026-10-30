@@ -133,7 +133,7 @@ class ScreenTools @Inject constructor(
     private suspend fun full(call: CallContext, t: ScreenTarget, r: Read, max: Int, forceOcr: Boolean): String {
         val v = view(call, t.displayId)
         val g = ++v.reads
-        v.shown = r.frame
+        if (r.frame.packageName != null || r.frame.elements.isNotEmpty()) v.shown = r.frame
         return "${header(r.frame, t, g)}\n${body(r.frame, max)}" + ocrSection(t, r.frame, v, forceOcr) + visit(call, t, r.frame)
     }
 
@@ -161,7 +161,15 @@ class ScreenTools @Inject constructor(
 
     private suspend fun screenshot(t: ScreenTarget): Bitmap? =
         if (t.agent) agent.frame(t.displayId)?.let { BitmapFactory.decodeByteArray(it, 0, it.size) }
-        else DshAccessibilityService.instance?.capture(t.displayId)?.bitmap
+        else DshAccessibilityService.instance?.let { capture(it, t.displayId).bitmap }
+
+    /** Accessibility screenshot, retried once when the previous one was less than a second ago. */
+    private suspend fun capture(a11y: DshAccessibilityService, d: Int): DshAccessibilityService.Capture {
+        val shot = a11y.capture(d)
+        if (shot.bitmap != null || shot.errorCode != ERROR_INTERVAL_TOO_SHORT) return shot
+        delay(1_100)
+        return a11y.capture(d)
+    }
 
     /**
      * The read after an action: effects (no change, rate-limit message, another app, an app pulled
@@ -179,19 +187,23 @@ class ScreenTools @Inject constructor(
         val sparse = r.frame.readableCount < ScreenOcr.SPARSE
         val textBefore = v.ocr.map { it.text }
         val shown = v.shown
-        val screen = if (shown != null && !sparse) {
+        // Diffs leave out the status bar and shade: when the shade opened or closed, the full read shows it.
+        val shade = before != null && before.systemUiChanged(r.frame)
+        val screen = if (shown != null && !sparse && !shade) {
             val diff = ScreenDiff.of(shown, r.frame)
             if (diff.pageChanged) null
             else {
                 val g = ++v.reads
                 v.shown = r.frame
+                val stale = if (v.ocr.isNotEmpty()) "\nText ids (t…) from earlier reads are no longer valid; use screen_read with ocr: true for new ones." else ""
+                v.ocr = emptyList()
                 (if (diff.empty) "Screen unchanged since read #${g - 1} (read #$g)."
                 else "Screen now (read #$g) — changes since read #${g - 1}; everything else is unchanged:\n" + diff.render(shown, r.frame).trimEnd()) +
-                    visit(call, t, r.frame)
+                    stale + visit(call, t, r.frame)
             }
         } else null
         val screenText = screen ?: "Screen now — ${full(call, t, r, 6000, forceOcr = false)}"
-        val noEffect = before != null && before.fingerprint == r.frame.fingerprint && spill == null &&
+        val noEffect = before != null && before.fingerprint == r.frame.fingerprint && !shade && spill == null &&
             (!sparse || (textBefore.isNotEmpty() && textBefore == v.ocr.map { it.text }))
         val effects = buildList {
             if (noEffect) add("Effect: nothing changed on screen.")
@@ -203,7 +215,7 @@ class ScreenTools @Inject constructor(
             spill?.let(::add)
         }
         return ToolResult.text((listOf(done) + effects + screenText).joinToString("\n"))
-            .withOutcome(if (noEffect) ActionOutcome.NoEffect else ActionOutcome.Effective)
+            .withOutcome(if (noEffect) ActionOutcome.NoEffect else ActionOutcome.Effective, r.frame.fingerprint)
     }
 
     private companion object {
@@ -316,12 +328,15 @@ class ScreenTools @Inject constructor(
         .minByOrNull { hypot((it.x - x).toDouble(), (it.y - y).toDouble()) }
         ?.takeIf { hypot((it.x - x).toDouble(), (it.y - y).toDouble()) <= 80 }?.label
 
+    /** A tap that reaches other people: an outward label on something tappable (a plain text label is not). */
+    private fun outward(hit: Hit) = OutwardAction.matches(hit.label) && (hit.node == null || clickable(hit.node) != null)
+
     /**
      * Outward actions (send, post, follow…) in one app are spaced like a person would (§5). Waits
      * before the tap and returns the model-facing note, or null.
      */
-    private suspend fun pace(call: CallContext, pkg: String?, label: String?): String? {
-        if (pkg == null || !OutwardAction.matches(label)) return null
+    private suspend fun pace(call: CallContext, pkg: String?, hit: Hit): String? {
+        if (pkg == null || !outward(hit)) return null
         val budget = call.deadlineMs - SystemClock.elapsedRealtime() - 15_000
         val wait = guard.pacing.waitBefore(pkg, SystemClock.elapsedRealtime()).coerceAtMost(budget.coerceAtLeast(0))
         if (wait < 1_000) return null
@@ -363,7 +378,7 @@ class ScreenTools @Inject constructor(
                 val textBefore = v.ocr.map { it.text }
                 val text = full(call, t, r, 12000, forceOcr = args.bool("ocr") == true)
                 val unchanged = same && textBefore == v.ocr.map { it.text }
-                return ToolResult.text(text).withOutcome(if (unchanged) ActionOutcome.ReadUnchanged else ActionOutcome.ReadChanged)
+                return ToolResult.text(text).withOutcome(if (unchanged) ActionOutcome.ReadUnchanged else ActionOutcome.ReadChanged, r.frame.fingerprint)
             }
         },
         object : ScreenTool("screen_capture", Risk.read, true,
@@ -375,8 +390,7 @@ class ScreenTools @Inject constructor(
                     if (agent.showsProtected(d)) return protectedScreen(call, t, name)
                     screenshot(t) ?: throw IllegalStateException("No frame from the agent screen yet; wait a moment and retry")
                 } else {
-                    var shot = svc().capture(d)
-                    if (shot.bitmap == null && shot.errorCode == ERROR_INTERVAL_TOO_SHORT) { delay(1_100); shot = svc().capture(d) }
+                    val shot = capture(svc(), d)
                     if (shot.errorCode == ERROR_SECURE_WINDOW) return protectedScreen(call, t, name)
                     val b = shot.bitmap ?: throw IllegalStateException("Screenshot failed: ${screenshotError(shot.errorCode)}")
                     val interactive = context.getSystemService(PowerManager::class.java).isInteractive
@@ -406,22 +420,26 @@ class ScreenTools @Inject constructor(
                 // Coordinates still work through Shizuku alone, without effects (no accessibility tree to compare).
                 if (DshAccessibilityService.instance == null && px != null && py != null && shizuku.available)
                     return ToolResult.text(if (tapAt(px.toFloat(), py.toFloat(), long, d)) "Tapped at $px,$py (Shizuku; no accessibility service, so the effect is unknown)" else "Tap was cancelled")
-                val r = read(call, d)
-                val hit = locate(call, d, args, r) ?: run {
+                fun target(r: Read) = locate(call, d, args, r) ?: run {
                     val x = px ?: throw InvalidArgsException("Give node, text, or x/y")
                     val y = py ?: throw InvalidArgsException("missing y")
                     Hit(null, x, y, labelAt(r, x, y))
                 }
-                val paced = pace(call, r.frame.packageName, hit.label)
+                var r = read(call, d)
+                var hit = target(r)
+                // The wait can be long: find the target again on the screen as it is after it.
+                val paced = pace(call, r.frame.packageName, hit)?.also { r = read(call, d); hit = target(r) }
                 val watch = if (t.agent) agent.watch(call.sessionId) else null
                 val c = hit.node?.takeIf { it.refresh() }?.let(::clickable)
+                var tapped = true
                 val done = if (c != null && c.performAction(if (long) AccessibilityNodeInfo.ACTION_LONG_CLICK else AccessibilityNodeInfo.ACTION_CLICK)) {
                     "Tapped [${hit.label ?: "element"}]"
                 } else {
                     val (x, y) = hit.node?.let { n -> Rect().also(n::getBoundsInScreen).let { it.centerX() to it.centerY() } } ?: (hit.x to hit.y)
-                    if (tapAt(x.toFloat(), y.toFloat(), long, d)) "Tapped at $x,$y" + (hit.label?.let { " [$it]" } ?: "") else "Tap was cancelled"
+                    tapped = tapAt(x.toFloat(), y.toFloat(), long, d)
+                    if (tapped) "Tapped at $x,$y" + (hit.label?.let { " [$it]" } ?: "") else "Tap was cancelled"
                 }
-                if (OutwardAction.matches(hit.label)) r.frame.packageName?.let { guard.pacing.noteDone(it, SystemClock.elapsedRealtime()) }
+                if (tapped && outward(hit)) r.frame.packageName?.let { guard.pacing.noteDone(it, SystemClock.elapsedRealtime()) }
                 return after(call, t, r.frame, listOfNotNull(paced, hit.note, done).joinToString("\n"), watch)
             }
 
@@ -553,6 +571,7 @@ class ScreenTools @Inject constructor(
                     if (ok || SystemClock.elapsedRealtime() > until) {
                         val r = Read(snap, view(call, t.displayId).ids.assign(snap.packageName, snap.elements))
                         return ToolResult.text("${if (ok) "Condition met" else "Timed out waiting"} — ${full(call, t, r, 6000, forceOcr = false)}")
+                            .withOutcome(null, r.frame.fingerprint)
                     }
                     delay(500)
                 }

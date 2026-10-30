@@ -29,6 +29,8 @@ class LoopGuard {
     private val warned = HashMap<Signal, Int>()
     var stopped: Signal? = null
         private set
+    /** Fingerprint of the screen the last call left (see [ActionGuard.signature]). */
+    @Volatile var screen: Int? = null
 
     /** Refusal reason before a call runs: already stopped, or this call would be the [Signal.Repeat] stop. */
     @Synchronized
@@ -66,14 +68,14 @@ class LoopGuard {
     }
 
     @Synchronized
-    fun reset() { recent.clear(); noEffect = 0; rereads = 0; failures = 0; warned.clear(); stopped = null }
+    fun reset() { recent.clear(); noEffect = 0; rereads = 0; failures = 0; warned.clear(); stopped = null; screen = null }
 
     companion object {
         const val WINDOW = 16
 
         fun message(signal: Signal, count: Int, stop: Boolean): String {
             val what = when (signal) {
-                Signal.Repeat -> "you have made the same action on the same target $count times in a row of recent steps"
+                Signal.Repeat -> "you have made the same action on the same target of the same screen $count times in a row of recent steps"
                 Signal.NoEffect -> "$count actions in a row changed nothing on screen"
                 Signal.Reread -> "you re-read an unchanged screen $count times"
                 Signal.Failure -> "$count calls in a row failed"
@@ -132,17 +134,25 @@ class ActionGuard @Inject constructor() {
 
     fun guarded(tool: Tool) = tool.group == ToolGroup.Screen || tool.group == ToolGroup.Apps
 
-    /** A refusal when the session was stopped, or this call is the 12th identical action. */
+    /**
+     * A refusal when the session was stopped, or this call is the 12th identical action. After a stop
+     * the model may still look at the screen (unless re-reading was the loop) and hand the step to the user.
+     */
     fun before(sessionId: String, tool: Tool, args: JsonObject): ToolResult? {
         if (!guarded(tool)) return null
-        val signal = guard(sessionId).check(signature(tool, args)) ?: return null
+        val g = guard(sessionId)
+        if (tool.name == HAND_TO_USER || tool.name in READS && g.stopped != LoopGuard.Signal.Reread) return null
+        val signal = g.check(signature(tool, args, g.screen)) ?: return null
         return ToolResult.error("loop_guard", LoopGuard.message(signal, signal.stopAt, stop = true))
     }
 
     /** Records the call and returns [result] with a reminder appended when a threshold was reached. */
     fun after(sessionId: String, tool: Tool, args: JsonObject, result: ToolResult): ToolResult {
         if (!guarded(tool) || result.errorCode == "loop_guard") return result
-        val (signal, count) = guard(sessionId).record(signature(tool, args), result.ok, result.outcome) ?: return result
+        val g = guard(sessionId)
+        val signature = signature(tool, args, g.screen)
+        result.screen?.let { g.screen = it }
+        val (signal, count) = g.record(signature, result.ok, result.outcome) ?: return result
         return result.appendText(LoopGuard.message(signal, count, stop = signal.stopAt <= count))
     }
 
@@ -154,8 +164,14 @@ class ActionGuard @Inject constructor() {
     companion object {
         /** Reads repeat by nature: they are covered by the "unchanged re-read" signal instead. */
         private val READS = setOf("screen_read", "screen_capture", "screen_wait", "app_list", "app_info")
+        private const val HAND_TO_USER = "hand_to_user"
 
-        fun signature(tool: Tool, args: JsonObject): String? =
-            if (tool.name in READS) null else tool.name + args.entries.filter { it.key !in setOf("durationMs", "timeoutMs") }.sortedBy { it.key }.joinToString { "${it.key}=${it.value}" }
+        /**
+         * The same action on the same target of the same screen ([screen]: the fingerprint the previous
+         * call left): scrolling a feed, deleting characters or paging on change the screen, so they never repeat.
+         */
+        fun signature(tool: Tool, args: JsonObject, screen: Int? = null): String? =
+            if (tool.name in READS) null else tool.name + args.entries.filter { it.key !in setOf("durationMs", "timeoutMs") }.sortedBy { it.key }
+                .joinToString { "${it.key}=${it.value}" } + "@${screen ?: ""}"
     }
 }

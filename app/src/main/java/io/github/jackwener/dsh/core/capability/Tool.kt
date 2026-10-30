@@ -53,15 +53,17 @@ class ToolResult(
     val errorMessage: String? = null,
     /** Measured effect of a screen/app action, for the loop guard (not sent to the engine). */
     val outcome: ActionOutcome? = null,
+    /** Fingerprint of the screen the call left behind ([Frame.fingerprint]), for the loop guard. */
+    val screen: Int? = null,
 ) {
-    fun withOutcome(o: ActionOutcome?) = ToolResult(ok, content, errorCode, errorMessage, o)
+    fun withOutcome(o: ActionOutcome?, screen: Int? = this.screen) = ToolResult(ok, content, errorCode, errorMessage, o, screen)
 
     /** Adds a paragraph to the model-facing text (the error message too, for failed calls). */
     fun appendText(text: String): ToolResult {
         val i = content.indexOfLast { it is Content.Text }
         val next = if (i < 0) listOf(Content.Text(text)) + content
             else content.toMutableList().also { it[i] = Content.Text((it[i] as Content.Text).text + "\n\n" + text) }
-        return ToolResult(ok, next, errorCode, errorMessage?.let { "$it\n\n$text" }, outcome)
+        return ToolResult(ok, next, errorCode, errorMessage?.let { "$it\n\n$text" }, outcome, screen)
     }
 
     /** Puts a line before the model-facing text (e.g. which screen the call used). */
@@ -69,7 +71,7 @@ class ToolResult(
         val i = content.indexOfFirst { it is Content.Text }
         val next = if (i < 0) listOf(Content.Text(text)) + content
             else content.toMutableList().also { it[i] = Content.Text(text + "\n" + (it[i] as Content.Text).text) }
-        return ToolResult(ok, next, errorCode, errorMessage?.let { "$text\n$it" }, outcome)
+        return ToolResult(ok, next, errorCode, errorMessage?.let { "$text\n$it" }, outcome, screen)
     }
 
     companion object {

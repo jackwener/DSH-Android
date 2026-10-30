@@ -56,6 +56,34 @@ class ScreenModelTest {
         assertEquals(StableIds.Lookup.Unknown, ids.resolve("e99", g))
     }
 
+    @Test fun aRetiredIdIsRelocatedOnlyToOneNearbyMatch() {
+        val ids = StableIds()
+        ids.assign("app", listOf(el("关注", y = 100)))
+        val two = ids.assign("app", listOf(el("关注", y = 400), el("关注", y = 700)))
+        assertEquals("two candidates: which one is unknown", StableIds.Lookup.Gone, ids.resolve("e1", two))
+        val far = StableIds()
+        far.assign("app", listOf(el("确定", y = 100)))
+        assertEquals("moved across the page", StableIds.Lookup.Gone, far.resolve("e1", far.assign("app", listOf(el("确定", y = 1500)))))
+    }
+
+    @Test fun anotherAppForgetsRetiredIds() {
+        val ids = StableIds()
+        ids.assign("a", listOf(el("确定", y = 100)))
+        ids.assign("a", listOf(el("确定", y = 300)))
+        val other = ids.assign("b", listOf(el("确定", y = 300)))
+        assertEquals(StableIds.Lookup.Gone, ids.resolve("e1", other))
+        assertEquals(StableIds.Lookup.Gone, ids.resolve("e2", other))
+    }
+
+    @Test fun anEmptyReadDoesNotBecomeTheBase() {
+        val ids = StableIds()
+        ids.assign("app", listOf(el("Title"), el("OK", y = 900)))
+        val empty = ids.assign(null, emptyList())
+        assertTrue(empty.ids.isEmpty())
+        assertEquals("app", ids.latest?.packageName)
+        assertEquals(listOf("e1", "e2"), ids.assign("app", listOf(el("Title"), el("OK", y = 900))).ids)
+    }
+
     @Test fun normalizeIds() {
         assertEquals("e12", StableIds.normalize("12"))
         assertEquals("e12", StableIds.normalize("[E12]"))
@@ -92,6 +120,17 @@ class ScreenModelTest {
         assertNotEquals(a.fingerprint, ids.assign("app", listOf(el("Done"))).fingerprint)
     }
 
+    @Test fun systemUiChangesWhenTheShadeOpensNotWithTheClock() {
+        val ids = StableIds()
+        val bar = listOf(el("12:00", system = true), el("Wi-Fi", system = true))
+        val a = ids.assign("app", listOf(el("OK")) + bar)
+        val clock = ids.assign("app", listOf(el("OK"), el("12:01", system = true), el("Wi-Fi", system = true)))
+        val shade = ids.assign("app", listOf(el("OK")) + bar + (1..8).map { el("notification $it", y = it * 100, system = true) })
+        assertFalse(a.systemUiChanged(clock))
+        assertTrue(a.systemUiChanged(shade))
+        assertTrue(shade.systemUiChanged(a))
+    }
+
     @Test fun limitNoticeOnlyWhenNewAndShort() {
         val ids = StableIds()
         val before = ids.assign("app", listOf(el("Send")))
@@ -106,5 +145,6 @@ class ScreenModelTest {
     @Test fun outwardActions() {
         listOf("发送", "立即投递", "发表评论", "Send", "post", "关注", "回复").forEach { assertTrue(it, OutwardAction.matches(it)) }
         listOf(null, "", "设置", "Posts", "Sender info", "这是一段很长的说明文字里提到了发送").forEach { assertFalse("$it", OutwardAction.matches(it)) }
+        listOf("已关注", "取消关注", "查看3条回复", "查看全部评论", "发送验证码", "获取验证码").forEach { assertFalse(it, OutwardAction.matches(it)) }
     }
 }

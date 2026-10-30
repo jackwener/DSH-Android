@@ -1,5 +1,6 @@
 package io.github.jackwener.dsh.core.capability
 
+import kotlin.math.abs
 import kotlin.math.hypot
 
 /** One element of a screen read, detached from AccessibilityNodeInfo so ids, diffs and effects stay pure. */
@@ -46,6 +47,11 @@ class Frame(val seq: Int, val packageName: String?, val elements: List<UiElement
     /** Elements that carry readable text (few of them = custom-drawn UI, try text recognition). */
     val readableCount: Int get() = elements.count { !it.system && it.readable }
 
+    private val systemCount: Int get() = elements.count { it.system }
+
+    /** The system UI changed shape (the shade opened or closed), not just the clock or an icon. */
+    fun systemUiChanged(other: Frame): Boolean = abs(systemCount - other.systemCount) > SHADE_DELTA
+
     fun render(): String = buildString {
         var systemHeader = false
         elements.forEachIndexed { i, e ->
@@ -53,16 +59,20 @@ class Frame(val seq: Int, val packageName: String?, val elements: List<UiElement
             append("  ".repeat(minOf(e.depth, 12))).append(e.line(ids[i])).append('\n')
         }
     }
+
+    private companion object {
+        const val SHADE_DELTA = 3
+    }
 }
 
 /**
  * Ids that survive re-reads: an element that is still there in the next read (same class, text,
  * description and resource id, centre moved at most [maxShift] px, same foreground app) keeps its
  * `e` number, so the ids the model holds are not all invalidated by one refresh. Numbers only go
- * up within one tracker; retired ids remember their element for [resolve].
+ * up within one tracker; retired ids remember their element (in the same app) for [resolve].
  * (Idea from wangzan101/mika RefStabilizer, Apache-2.0; simplified.)
  */
-class StableIds(private val maxShift: Int = 48, private val prefix: String = "e") {
+class StableIds(private val maxShift: Int = 48, private val maxRelocate: Int = 500, private val prefix: String = "e") {
     private var next = 1
     private var seq = 0
     var latest: Frame? = null
@@ -71,8 +81,10 @@ class StableIds(private val maxShift: Int = 48, private val prefix: String = "e"
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, UiElement>) = size > 600
     }
 
+    /** An empty read during a transition (no app, no elements) does not become the base of the next one. */
     @Synchronized
     fun assign(packageName: String?, elements: List<UiElement>): Frame {
+        if (packageName == null && elements.isEmpty()) return Frame(++seq, null, elements, emptyList())
         val prev = latest?.takeIf { it.packageName == packageName }
         val free = prev?.elements?.indices?.groupBy { prev.elements[it].identity }?.mapValues { it.value.toMutableList() }.orEmpty()
         val ids = elements.map { e ->
@@ -80,7 +92,8 @@ class StableIds(private val maxShift: Int = 48, private val prefix: String = "e"
             val best = candidates?.minByOrNull { j -> dist(prev!!.elements[j], e) }?.takeIf { j -> dist(prev!!.elements[j], e) <= maxShift }
             if (best != null) { candidates.remove(best); prev!!.ids[best] } else "$prefix${next++}"
         }
-        latest?.let { old ->
+        if (prev == null) retired.clear()
+        prev?.let { old ->
             val kept = ids.toSet()
             old.ids.forEachIndexed { i, id -> if (id !in kept) retired[id] = old.elements[i] }
         }
@@ -96,14 +109,19 @@ class StableIds(private val maxShift: Int = 48, private val prefix: String = "e"
         data object Unknown : Lookup
     }
 
-    /** Finds [id] in [frame] (normally [latest]); a retired id is looked up again by its features. */
+    /**
+     * Finds [id] in [frame] (normally [latest]); a retired id is looked up again by its features, but
+     * only when exactly one element of the same app has them, within [maxRelocate] px: with two
+     * "关注" buttons, or a button that moved across the page, the model has to read again.
+     */
     @Synchronized
     fun resolve(id: String, frame: Frame? = latest): Lookup {
         frame ?: return Lookup.Unknown
         frame.indexOf(id)?.let { return Lookup.Found(it) }
         val was = retired[id] ?: return if (issued(id)) Lookup.Gone else Lookup.Unknown
-        val i = frame.elements.indices.filter { frame.elements[it].identity == was.identity }.minByOrNull { dist(frame.elements[it], was) }
-            ?: return Lookup.Gone
+        if (frame.packageName != latest?.packageName) return Lookup.Gone
+        val i = frame.elements.indices.singleOrNull { frame.elements[it].identity == was.identity }
+            ?.takeIf { dist(frame.elements[it], was) <= maxRelocate } ?: return Lookup.Gone
         return Lookup.Relocated(i, frame.ids[i])
     }
 
@@ -174,13 +192,18 @@ object LimitNotice {
     private fun compact(t: String) = t.filterNot(Char::isWhitespace).lowercase()
 }
 
-/** Taps that reach other people (send, post, follow, apply…): these are paced, see [OutwardPacing]. */
+/**
+ * Taps that reach other people (send, post, follow, apply…): these are paced, see [OutwardPacing].
+ * States and views are not (已关注, 取消关注, 查看3条回复), nor asking for a verification code.
+ */
 object OutwardAction {
     private val WORDS = listOf("发送", "提交", "发布", "发表", "评论", "打招呼", "投递", "关注", "回复", "立即沟通", "send", "submit", "post", "reply", "comment", "follow")
+    private val NOT = Regex("^(已|取消|查看)|验证码")
     private const val MAX_CHARS = 10
 
     fun matches(label: String?): Boolean {
         val l = label?.trim()?.lowercase()?.takeIf { it.isNotEmpty() && it.length <= MAX_CHARS } ?: return false
+        if (NOT.containsMatchIn(l)) return false
         return WORDS.any { w -> if (w[0].code < 0x80) l == w || l.startsWith("$w ") || l.endsWith(" $w") else w in l }
     }
 }
