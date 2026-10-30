@@ -443,3 +443,41 @@ data class TrajTurn(val key: String, val number: Int?, val records: List<TrajRec
 data class Trajectory(val turns: List<TrajTurn>, val start: Long, val end: Long, val usage: Usage) {
     val records: List<TrajRecord> get() = turns.flatMap { it.records }
 }
+
+/**
+ * Live output rate of the running turn, in estimated tokens per second, for the composer chip.
+ *
+ * dsh only reports exact counts when a model call settles, so this estimates from the streamed text
+ * (≈3.5 characters per token in mixed Latin/Cyrillic text) over the time the turn has been running.
+ * Null while idle or too early to be meaningful.
+ */
+fun Conversation.liveTps(now: Long): Double? {
+    val turn = turns.lastOrNull()?.takeIf { it.status == TurnStatus.Running } ?: return null
+    val seconds = (now - turn.startTime) / 1000.0
+    if (seconds < 1.0) return null
+    var chars = 0
+    for (block in turn.blocks) {
+        // Reasoning streams before any reply text arrives, so it counts towards the rate as well.
+        chars += when (block) {
+            is Block.Text -> block.text.length
+            is Block.Reasoning -> block.text.length
+            else -> 0
+        }
+    }
+    if (chars < 8) return null
+    return chars / 3.5 / seconds
+}
+
+/**
+ * Output rate of the latest settled turn, in tokens per second, for the composer chip while nothing
+ * is streaming: exact counts (dsh reports them when a model call settles) over the turn's duration.
+ * Stays put when a new turn starts, so the chip does not blank out between turns.
+ */
+fun Conversation.lastTps(): Double? {
+    val turn = turns.lastOrNull {
+        it.status != TurnStatus.Running && it.usage.output > 0 && it.endTime != null && it.endTime!! > it.startTime
+    } ?: return null
+    val seconds = (turn.endTime!! - turn.startTime) / 1000.0
+    if (seconds <= 0.0) return null
+    return turn.usage.output / seconds
+}
