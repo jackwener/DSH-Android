@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Prebuilt native libraries for the app (libnode + JNI + addons), published as a GitHub Release so
 # app/engine builds never rebuild Node. The release tag is derived from every native input
-# (Node version, build.sh, patches, JNI sources): change any of them and the tag changes.
+# (Node version, build.sh, patches, JNI and launcher sources): change any of them and the tag changes.
 #
 #   native/prebuilt.sh key       # print the tag for the current inputs
 #   native/prebuilt.sh fetch     # download + verify into $JNI_DIR (default toolchains/out/jniLibs)
@@ -21,7 +21,7 @@ GH_REPO="${GH_REPO:-jackwener/DeepseekHarness-Android}"
 
 key() {
   local v; v="$(sed -n 's/^NODE_VERSION=//p' "$HERE/build.sh")"
-  local h; h="$(cd "$HERE" && find build.sh patches engine-jni -type f | LC_ALL=C sort | xargs sha256sum | sha256sum | cut -c1-10)"
+  local h; h="$(cd "$HERE" && find build.sh patches engine-jni dshnode -type f | LC_ALL=C sort | xargs sha256sum | sha256sum | cut -c1-10)"
   echo "native-node$v-$h"
 }
 
@@ -29,6 +29,7 @@ key() {
 MAP=(
   "libnode.so:libnode.so"
   "libdshengine.so:libdshengine.so"
+  "libdshnode.so:libdshnode.so"
   "libc++_shared.so:libc++_shared.so"
   "libdsh_pty.so:node_modules/node-pty/build/Release/pty.node"
   "libdsh_flock.so:node_modules/@deepseek-ai/node-addon-system-android-arm64/bin/musl/system.node"

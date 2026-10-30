@@ -6,6 +6,7 @@ Builds what the `:engine` process loads:
 |---|---|---|
 | `libnode.so` | `libnode.so` | Node.js v24.22.1 as a shared library, bionic arm64, min API 29 |
 | `libdshengine.so` | `libdshengine.so` | JNI wrapper: `NodeRuntime.nativeStart(String[] args, int stdin, int stdout, int stderr)` → `node::Start()` |
+| `libdshnode.so` | `libdshnode.so` | `node` executable for child processes (bundled pnpm, JS MCP servers, plugins spawning `node`): Node's own `main()` → `node::Start()`, PIE, `DT_NEEDED libnode.so`, `RUNPATH $ORIGIN` |
 | `libc++_shared.so` | `libc++_shared.so` | from the NDK r29 sysroot |
 | `node_modules/@deepseek-ai/node-addon-system-android-arm64/bin/musl/system.node` | `libdsh_flock.so` | flock binding of `@deepseek-ai/node-addon-system`, loaded by js patch 01 via `$DSH_NATIVE_DIR` |
 | `node_modules/node-pty/build/Release/pty.node` | `libdsh_pty.so` | node-pty; shipped but unused while no terminal row is mounted |
@@ -16,7 +17,7 @@ Node's `require-builtin` addon is not built: the engine runs with `--expose-inte
 ## Prebuilt (normal workflow)
 
 Native libs change only with a Node upgrade or a native patch. They are published as a GitHub Release whose tag hashes
-every native input (`native-node<version>-<hash>` over `build.sh`, `patches/`, `engine-jni/`):
+every native input (`native-node<version>-<hash>` over `build.sh`, `patches/`, `engine-jni/`, `dshnode/`):
 
 ```sh
 native/prebuilt.sh key        # print the tag for the current inputs
@@ -36,8 +37,8 @@ pass `-Pdsh.nativeOut=$WORK/out/jniLibs`.
 
 ```sh
 NDK=/path/to/android-ndk-r29 native/build.sh                 # all stages
-native/build.sh toolchain node headers engine addons check   # same, explicit
-native/build.sh engine addons check                          # only the small parts
+native/build.sh toolchain node headers engine launcher addons check   # same, explicit
+native/build.sh engine launcher addons check                          # only the small parts
 ```
 
 | Env | Default | |
@@ -67,8 +68,9 @@ Stages:
 3. **headers**: `tools/install.py --headers-only` into `$WORK/out/node-headers/include/node` (this build's headers and
    `config.gypi`, used by the JNI wrapper and addons).
 4. **engine**: `engine-jni/dshengine.cc` → `$OUT/libdshengine.so`.
-5. **addons**: fetches pinned addon sources from npm and compiles them with plain clang (no node-gyp).
-6. **check**: ELF sanity (below).
+5. **launcher**: `dshnode/main.cc` → `$OUT/libdshnode.so` (below).
+6. **addons**: fetches pinned addon sources from npm and compiles them with plain clang (no node-gyp).
+7. **check**: ELF sanity (below).
 
 ## Toolchain
 
@@ -151,6 +153,20 @@ re-initialized; the app runs it in a dedicated process and restarts that process
 
 The Kotlin side loads `c++_shared`, `node`, then `dshengine`.
 
+## Launcher (`dshnode/main.cc`)
+
+The engine runs Node inside the app process, so there is no `node` to spawn. `libdshnode.so` is Node's own POSIX
+`main()` (`return node::Start(argc, argv)`) linked against `libnode.so`: a PIE executable (`-pie`, interpreter
+`/system/bin/linker64`, `RUNPATH $ORIGIN`), named `lib*.so` so the APK installer extracts it into `nativeLibraryDir`,
+the only app location Android lets an app exec (W^X forbids its data directory). The app links
+`files/bin/node → <nativeLibraryDir>/libdshnode.so` and passes `DSH_NODE_BIN`; the engine uses it as the command of
+dsh's `profileContext.packageManager` (bundled pnpm) and of stdio MCP servers. Children are fresh processes: no
+`--expose-internals`, and the engine passes `--require …/android-env.cjs` in argv because `AT_SECURE` may make Node
+ignore `NODE_OPTIONS`. `process.execPath` in a child is the launcher, so `spawn(process.execPath)` works there.
+
+To verify on a device: exec from `:engine` is allowed by SELinux (`librg.so` is the precedent), `AT_SECURE` of the
+child, and peak RSS of a pnpm run.
+
 ## Addons
 
 Linked with `DT_NEEDED libnode.so` (`-Wl,--no-undefined -lnode`): Android linker namespaces do not let a dlopen()ed
@@ -166,7 +182,8 @@ Upstream `node-addon-system` rejects `android` (`ERR_FLOCK_UNSUPPORTED_PLATFORM`
 
 ## Sanity checks (`build.sh check`)
 
-For every `.so`/`.node`: ELF machine AArch64; no `PT_INTERP`; NEEDED limited to libnode, libc++_shared, libc, libm,
+For every `.so`/`.node`: ELF machine AArch64; no `PT_INTERP` (except the launcher, which must have
+`/system/bin/linker64`, `RUNPATH $ORIGIN`, be PIE and call `node::Start`); NEEDED limited to libnode, libc++_shared, libc, libm,
 libdl, liblog, libandroid, libz; `NT_ANDROID_TYPE_IDENT` note present; all LOAD segments 16 KB aligned. Exports:
 `node::Start(int, char**)` and N-API from libnode.so, the JNI symbol and `JNI_OnLoad` from libdshengine.so,
 `napi_register_module_v1` from every addon.

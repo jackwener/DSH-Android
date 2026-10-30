@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# DSH-Android native layer: libnode.so + libdshengine.so + Node addons for android arm64.
+# DSH-Android native layer: libnode.so + libdshengine.so + libdshnode.so + Node addons for android arm64.
 #
 # Usage:  native/build.sh [stage...]
-#   stages: toolchain node headers engine addons check   (default: all, in that order)
+#   stages: toolchain node headers engine launcher addons check   (default: all, in that order)
 #
 # Environment (all optional except NDK when not at the default location):
 #   NDK        Android NDK r29 root               (default: $WORK/android-ndk-r29)
@@ -163,6 +163,22 @@ stage_engine() {
 }
 
 # ---------------------------------------------------------------------------
+# launcher: libdshnode.so, a PIE `node` executable (Node's own main()) for child
+# processes: bundled pnpm, JS MCP servers, plugins spawning node. Named lib*.so so
+# it lands in nativeLibraryDir (exec-allowed); RUNPATH $ORIGIN finds libnode.so.
+# ---------------------------------------------------------------------------
+stage_launcher() {
+  log "libdshnode.so"
+  "$TC/bin/target-cxx" -fPIE -pie -O2 -std=c++20 \
+    -I"$HEADERS/include/node" \
+    "$HERE/dshnode/main.cc" \
+    -Wl,--no-undefined -Wl,-z,max-page-size=16384 -Wl,--build-id=sha1 -Wl,-rpath,'$ORIGIN' \
+    -L"$OUT" -lnode \
+    -o "$OUT/libdshnode.so"
+  llvm-strip --strip-unneeded "$OUT/libdshnode.so"
+}
+
+# ---------------------------------------------------------------------------
 # addons: node-pty, @deepseek-ai/node-addon-system (flock).
 # Each is linked with DT_NEEDED libnode.so: on Android, dlopen()ed objects in an
 # app namespace do not see symbols of libraries loaded by the JNI library unless
@@ -234,7 +250,13 @@ stage_check() {
   while IFS= read -r f; do
     echo "--- ${f#$OUT/}  ($(stat -c %s "$f") bytes)"
     llvm-readelf -h "$f" | grep -q 'Machine:.*AArch64' || { echo "  NOT AArch64"; bad=1; }
-    if llvm-readelf -l "$f" | grep -q 'INTERP'; then echo "  has PT_INTERP"; bad=1; fi
+    if [ "$(basename "$f")" = libdshnode.so ]; then
+      # The launcher is an executable: PIE, bionic's linker, RUNPATH $ORIGIN, main().
+      llvm-readelf -l "$f" | grep -q '/system/bin/linker64' || { echo "  launcher has no /system/bin/linker64 interpreter"; bad=1; }
+      llvm-readelf -d "$f" | grep -q 'RUNPATH.*\[\$ORIGIN\]' || { echo "  launcher lacks RUNPATH \$ORIGIN"; bad=1; }
+      llvm-readelf -h "$f" | grep -q 'Type:.*DYN' || { echo "  launcher is not PIE"; bad=1; }
+      llvm-nm -D --undefined-only "$f" | grep -q ' _ZN4node5StartEiPPc$' || { echo "  launcher does not call node::Start"; bad=1; }
+    elif llvm-readelf -l "$f" | grep -q 'INTERP'; then echo "  has PT_INTERP"; bad=1; fi
     for n in $(llvm-readelf -d "$f" | sed -n 's/.*(NEEDED).*\[\(.*\)\]/\1/p'); do
       echo "  NEEDED $n"
       [[ "$n" =~ $allowed ]] || { echo "  ^^ unexpected"; bad=1; }
@@ -257,5 +279,5 @@ stage_check() {
   return $bad
 }
 
-stages=("$@"); [ ${#stages[@]} -gt 0 ] || stages=(toolchain node headers engine addons check)
+stages=("$@"); [ ${#stages[@]} -gt 0 ] || stages=(toolchain node headers engine launcher addons check)
 for s in "${stages[@]}"; do "stage_$s"; done
