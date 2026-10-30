@@ -638,8 +638,10 @@ class SessionStore @Inject constructor(
                 context.getString(R.string.takeover_title), reason, owner)
             val first = deferred.await()
             if (first != TakeoverAnswer.Start) return first
+            // Taps while the app moves still reach the first, answered card and are dropped.
+            val moved = handOver()
             deferred = CompletableDeferred<TakeoverAnswer>().also { takeovers[key] = it }
-            card = card.copy(stage = PendingTakeover.Stage.HandedOver, moved = handOver())
+            card = card.copy(stage = PendingTakeover.Stage.HandedOver, moved = moved)
             mutate(owner) { it.withTakeover(card) }
             return deferred.await()
         } finally {

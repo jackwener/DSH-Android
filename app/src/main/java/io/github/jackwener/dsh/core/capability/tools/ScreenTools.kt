@@ -37,6 +37,7 @@ import io.github.jackwener.dsh.core.capability.ScreenTarget
 import io.github.jackwener.dsh.core.capability.StableIds
 import io.github.jackwener.dsh.core.capability.TextInput
 import io.github.jackwener.dsh.core.capability.Tool
+import io.github.jackwener.dsh.core.capability.ToolDescriptor
 import io.github.jackwener.dsh.core.capability.ToolResult
 import io.github.jackwener.dsh.core.capability.ToolSet
 import io.github.jackwener.dsh.core.capability.bool
@@ -50,6 +51,7 @@ import io.github.jackwener.dsh.core.session.SessionStore
 import io.github.jackwener.dsh.core.session.TakeoverAnswer
 import io.github.jackwener.dsh.service.DshAccessibilityService
 import io.github.jackwener.dsh.service.ScreenSnapshot
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.serialization.json.JsonObject
 import java.util.concurrent.ConcurrentHashMap
@@ -232,20 +234,29 @@ class ScreenTools @Inject constructor(
     /** A protected (FLAG_SECURE) page cannot be seen, so it is not operated blind: it goes to the user. */
     private suspend fun protectedScreen(call: CallContext, t: ScreenTarget, toolName: String): ToolResult {
         val pkg = DshAccessibilityService.instance?.snapshot(t.displayId)?.packageName ?: "this app"
-        return takeover(call, toolName, "${agent.label(pkg)} 的当前页面禁止截图（支付、密码等安全页面），需要你在手机上完成这一步。", "secure_page",
+        return takeover(call, t, toolName, "${agent.label(pkg)} 的当前页面禁止截图（支付、密码等安全页面），需要你在手机上完成这一步。", "secure_page",
             "The screen of $pkg is protected (screenshots are blocked)")
     }
 
     /**
      * Hands a step to the user (§2): card 我来处理 / 跳过; 我来处理 moves the agent screen's top task to
-     * the user's screen; then 处理好了 (moved back, read again) / 我自己做完了 / 不做了.
+     * the user's screen (a step on the user's screen [t] is already in front of them); then 处理好了
+     * (moved back, read again) / 我自己做完了 / 不做了. The agent screen is kept while the card waits;
+     * a card that times out leaves the app with the user.
      */
-    private suspend fun takeover(call: CallContext, toolName: String, reason: String, kind: String, why: String = "This step needs the user"): ToolResult {
+    private suspend fun takeover(call: CallContext, t: ScreenTarget, toolName: String, reason: String, kind: String, why: String = "This step needs the user"): ToolResult {
         val sid = call.sessionId
         if (call.unattended || sid.isEmpty()) return ToolResult.error("needs_user",
             "$why ($reason). Automations cannot hand steps to the user; stop and report this.")
-        val answer = call.waitFor("handle it on the phone") {
-            sessions.get().requestTakeover(sid, toolName, reason, kind) { agent.handToUser(sid) != null }
+        val answer = agent.holding(sid) {
+            try {
+                call.waitFor("handle it on the phone") {
+                    sessions.get().requestTakeover(sid, toolName, reason, kind) { t.agent && agent.handToUser(sid) != null }
+                }
+            } catch (e: CancellationException) {
+                agent.leaveWithUser(sid)
+                throw e
+            }
         }
         return when (answer) {
             TakeoverAnswer.Skip, TakeoverAnswer.Start -> ToolResult.text("$why; the user skipped it (did not do it). Continue without it if you can; otherwise stop and summarize.")
@@ -254,11 +265,11 @@ class ScreenTools @Inject constructor(
                 "Do not operate any more: only read the screen (screen: \"main\") to verify, then report.") }
             TakeoverAnswer.Handled -> {
                 val back = agent.takeBack(sid)
-                val t = agent.target(sid, null)
+                val now = agent.target(sid, if (t.agent) null else "main")
                 settle()
-                val now = DshAccessibilityService.instance?.let { "\nScreen now — ${full(call, t, read(call, t.displayId), 6000, forceOcr = false)}" } ?: ""
+                val screen = DshAccessibilityService.instance?.let { "\nScreen now — ${full(call, now, read(call, now.displayId), 6000, forceOcr = false)}" } ?: ""
                 ToolResult.text("$why; the user handled it and tapped 处理好了." + (if (back) " The app is back on the agent screen." else "") +
-                    " Continue from the screen below; do not ask them to repeat it.$now")
+                    " Continue from the screen below; do not ask them to repeat it.$screen")
             }
         }
     }
@@ -553,9 +564,11 @@ class ScreenTools @Inject constructor(
                 "and comes back afterwards. Returns whether they handled it (then the screen is read again), finished the task themselves, skipped or stopped.", {
                 string("reason", "What the user should do, in the user's language (shown to them), e.g. \"请登录你的淘宝账号\"", required = true)
                 string("kind", "Kind of step: $KINDS", required = true, enum = KINDS.split(", "))
-            }) {
+                string("screen", "Where the step is: \"agent\" = your background screen (default when this conversation has one), \"main\" = the user's screen",
+                    enum = listOf("agent", "main"))
+            }, timeoutMs = ToolDescriptor.UNLOCK_TIMEOUT_MS) {
             override suspend fun invoke(args: JsonObject, call: CallContext): ToolResult =
-                takeover(call, name, args.reqStr("reason"), args.str("kind") ?: "other")
+                takeover(call, agent.target(call.sessionId, args.str("screen")), name, args.reqStr("reason"), args.str("kind") ?: "other")
         },
     )
 

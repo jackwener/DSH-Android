@@ -24,6 +24,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicInteger
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -65,7 +66,8 @@ data class ScreenTarget(val displayId: Int, val agent: Boolean, val note: String
  * The agent's own screen (docs/AGENT-SCREEN-V2.md §1): one virtual display per conversation,
  * created through Shizuku on the first app_launch / app_open_link, released after 10 idle minutes
  * (and with the shell service, i.e. when DSH exits). Apps opened there are muted until they leave
- * it. Without Shizuku, on Android 10 or with the setting off, everything stays on the main screen.
+ * it or the user opens them on the main screen. Without Shizuku, on Android 10 or with the setting
+ * off, everything stays on the main screen.
  */
 @Singleton
 class AgentScreen @Inject constructor(
@@ -75,6 +77,8 @@ class AgentScreen @Inject constructor(
 ) {
     private class Slot(val displayId: Int) {
         @Volatile var lastUsed = SystemClock.elapsedRealtime()
+        /** Waits that need the display kept (a takeover card): it is not released as idle meanwhile. */
+        val holds = AtomicInteger()
         val muted: MutableSet<String> = ConcurrentHashMap.newKeySet()
         /** The task given to the user (hand_to_user / 我来接管), while it is on the main screen. */
         @Volatile var handedOver: TaskRow? = null
@@ -88,13 +92,16 @@ class AgentScreen @Inject constructor(
     private val _displays = MutableStateFlow<Map<String, Int>>(emptyMap())
     /** Conversation (root session id) → its agent display, for the live preview. */
     val displays: StateFlow<Map<String, Int>> = _displays.asStateFlow()
+    /** Set while some app may be muted, so a DSH killed meanwhile gives the sound back on its next start. */
+    private val prefs by lazy { context.getSharedPreferences("agent_screen", Context.MODE_PRIVATE) }
 
     init {
         scope.launch {
             while (true) {
-                delay(60_000)
+                delay(TICK_MS)
                 val now = SystemClock.elapsedRealtime()
-                slots.entries.filter { now - it.value.lastUsed > IDLE_MS && it.value.handedOver == null }.forEach { release(it.key) }
+                slots.entries.filter { now - it.value.lastUsed > IDLE_MS && it.value.holds.get() == 0 }.forEach { release(it.key) }
+                unmuteOnMain()
             }
         }
     }
@@ -125,6 +132,8 @@ class AgentScreen @Inject constructor(
      */
     suspend fun target(sessionId: String, screen: String?, create: Boolean = false): ScreenTarget {
         if (screen == "main") return ScreenTarget(Display.DEFAULT_DISPLAY, false)
+        // Turning the setting off also ends the agent screens that are open.
+        if (current(sessionId) != null && !settings.current().agentScreen) release(sessionId)
         current(sessionId)?.let { touch(sessionId); return ScreenTarget(it, true) }
         if (!create) return ScreenTarget(Display.DEFAULT_DISPLAY, false,
             if (screen == "agent") "There is no agent screen in this conversation yet (app_launch / app_open_link open one); this is the user's screen." else null)
@@ -148,29 +157,59 @@ class AgentScreen @Inject constructor(
 
     fun touch(sessionId: String) { slots[key(sessionId)]?.lastUsed = SystemClock.elapsedRealtime() }
 
+    /** Runs [block] (a wait for the user) with the session's agent screen kept from idle release. */
+    suspend fun <T> holding(sessionId: String, block: suspend () -> T): T {
+        val s = slots[key(sessionId)] ?: return block()
+        s.holds.incrementAndGet()
+        try {
+            return block()
+        } finally {
+            s.holds.decrementAndGet()
+            s.lastUsed = SystemClock.elapsedRealtime()
+        }
+    }
+
     suspend fun release(sessionId: String) {
         val s = slots.remove(key(sessionId)) ?: return
         publish()
-        runCatching {
-            val svc = shizuku.service()
-            s.muted.forEach { svc.setAudioMuted(it, false) }
-            svc.releaseDisplay(s.displayId)
-        }.onFailure { Log.w(TAG, "release failed", it) }
+        s.muted.toList().forEach { unmute(s, it) }
+        runCatching { withContext(Dispatchers.IO) { shizuku.service().releaseDisplay(s.displayId) } }.onFailure { Log.w(TAG, "release failed", it) }
     }
 
     private fun publish() = _displays.update { slots.mapValues { it.value.displayId } }
 
     // ---- sound ---------------------------------------------------------------------------------
 
-    /** Mutes [pkg] while it is on the session's agent screen (no-op when already muted). */
+    /**
+     * Mutes [pkg] while it is on the session's agent screen (no-op when already muted). PLAY_AUDIO is
+     * per app, so an app the user has open on the main screen is left alone.
+     */
     suspend fun mute(sessionId: String, pkg: String?) {
         val s = slots[key(sessionId)] ?: return
-        if (pkg.isNullOrEmpty() || pkg == context.packageName || pkg in s.muted) return
-        if (runCatching { shizuku.service().setAudioMuted(pkg, true) }.getOrDefault(false)) s.muted += pkg
+        if (pkg.isNullOrEmpty() || pkg == context.packageName || pkg in s.muted || inUseOnMain(pkg)) return
+        prefs.edit().putBoolean(MUTE_PENDING, true).apply()
+        if (runCatching { withContext(Dispatchers.IO) { shizuku.service().setAudioMuted(pkg, true) } }.getOrDefault(false)) s.muted += pkg
     }
 
+    /** The sound comes back once no conversation's agent screen holds [pkg] muted. */
     private suspend fun unmute(s: Slot, pkg: String) {
-        if (s.muted.remove(pkg)) runCatching { shizuku.service().setAudioMuted(pkg, false) }
+        if (!s.muted.remove(pkg) || slots.values.any { pkg in it.muted }) return
+        val ok = runCatching { withContext(Dispatchers.IO) { shizuku.service().setAudioMuted(pkg, false) } }.getOrDefault(false)
+        if (ok && slots.values.all { it.muted.isEmpty() }) prefs.edit().remove(MUTE_PENDING).apply()
+    }
+
+    /** Muted apps the user opened on the main screen get their sound back. */
+    private suspend fun unmuteOnMain() {
+        if (slots.values.all { it.muted.isEmpty() }) return
+        val rows = tasks()
+        slots.values.forEach { s -> s.muted.filter { TaskRow.inUseOnMain(rows, it) }.forEach { unmute(s, it) } }
+    }
+
+    /** A previous DSH process ended with apps muted (killed before it could restore them): restore them now. */
+    suspend fun restoreLeftoverMutes() {
+        if (!prefs.getBoolean(MUTE_PENDING, false) || slots.isNotEmpty() || !shizuku.available) return
+        runCatching { withContext(Dispatchers.IO) { shizuku.service().restoreAudio() } }
+            .onSuccess { prefs.edit().remove(MUTE_PENDING).apply() }.onFailure { Log.w(TAG, "restoring muted apps failed", it) }
     }
 
     // ---- tasks ---------------------------------------------------------------------------------
@@ -185,8 +224,9 @@ class AgentScreen @Inject constructor(
     suspend fun handToUser(sessionId: String, byUser: Boolean = false): TaskRow? {
         val s = slots[key(sessionId)] ?: return null
         val top = tasks().firstOrNull { it.displayId == s.displayId } ?: return null
-        if (!move(top.taskId, Display.DEFAULT_DISPLAY)) return null
+        // Set first, so the pull-back watcher does not take the arriving task for a spill.
         s.handedOver = top
+        if (!move(top.taskId, Display.DEFAULT_DISPLAY)) { s.handedOver = null; return null }
         if (byUser) s.userTookOver = true
         unmute(s, top.packageName)
         return top
@@ -208,8 +248,12 @@ class AgentScreen @Inject constructor(
 
     fun userTookOver(sessionId: String) = slots[key(sessionId)]?.userTookOver == true
 
-    /** The user spoke again: agent-screen actions may resume. */
-    fun clearUserTakeover(sessionId: String) { slots[key(sessionId)]?.userTookOver = false }
+    /** The user spoke again: agent-screen actions may resume, and an app they took over stays theirs. */
+    fun clearUserTakeover(sessionId: String) {
+        val s = slots[key(sessionId)] ?: return
+        if (s.userTookOver) s.handedOver = null
+        s.userTookOver = false
+    }
 
     /** Main-screen state before an agent-screen action, for [pullBack]. */
     class Watch internal constructor(internal val topBefore: Int?, internal val since: Long)
@@ -269,6 +313,8 @@ class AgentScreen @Inject constructor(
     private companion object {
         const val TAG = "AgentScreen"
         const val IDLE_MS = 10 * 60_000L
+        const val TICK_MS = 5_000L
+        const val MUTE_PENDING = "mute_pending"
         const val SPILL_WINDOW_MS = 3_000L
         const val SYSTEM_UI = "com.android.systemui"
     }

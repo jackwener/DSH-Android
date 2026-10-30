@@ -80,7 +80,11 @@ class ShellUserService : IShellService.Stub() {
     }
 
     override fun releaseDisplay(displayId: Int) {
-        synchronized(displays) { displays.remove(displayId) }?.let { it.display.release(); it.reader.close(); it.last?.recycle() }
+        val s = synchronized(displays) { displays.remove(displayId) } ?: return
+        synchronized(s) {
+            s.display.release(); s.reader.close()
+            s.last?.let { b -> synchronized(b) { b.recycle() } }
+        }
     }
 
     override fun captureDisplay(displayId: Int, maxWidth: Int): ByteArray? {
@@ -192,6 +196,10 @@ class ShellUserService : IShellService.Stub() {
                 appops(pkg, MuteLedger.restoreMode(entry.first), entry.second).also { if (it) this.muted.remove(pkg) }
             }
         }
+    }
+
+    override fun restoreAudio() {
+        runCatching { muted.restoreAll(::appops) }
     }
 
     private fun appops(pkg: String, mode: String, user: Int): Boolean = exec("appops set --user $user $pkg PLAY_AUDIO $mode", 10_000).substringBefore('\n') == "0"

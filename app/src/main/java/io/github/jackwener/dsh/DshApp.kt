@@ -2,6 +2,7 @@ package io.github.jackwener.dsh
 
 import android.app.Application
 import dagger.hilt.android.HiltAndroidApp
+import io.github.jackwener.dsh.core.capability.AgentScreen
 import io.github.jackwener.dsh.core.data.SettingsRepository
 import io.github.jackwener.dsh.core.platform.Notifications
 import io.github.jackwener.dsh.core.trigger.TriggerEvents
@@ -19,6 +20,7 @@ class DshApp : Application() {
     @Inject lateinit var triggers: dagger.Lazy<TriggerHub>
     @Inject lateinit var settings: dagger.Lazy<SettingsRepository>
     @Inject lateinit var secrets: dagger.Lazy<io.github.jackwener.dsh.core.data.SecretStore>
+    @Inject lateinit var agentScreen: dagger.Lazy<AgentScreen>
 
     override fun onCreate() {
         super.onCreate()
@@ -33,6 +35,7 @@ class DshApp : Application() {
             runCatching { io.github.jackwener.dsh.core.engine.EngineDiagnostics.collectExitInfo(this@DshApp) }
             runCatching { triggers.get().sync() }.onFailure { android.util.Log.e("DshApp", "automation sync failed", it) }
             if (settings.get().current().floatingBall) runCatching { FloatingBallService.setEnabled(this@DshApp, true) }
+            runCatching { agentScreen.get().restoreLeftoverMutes() }
         }
     }
 

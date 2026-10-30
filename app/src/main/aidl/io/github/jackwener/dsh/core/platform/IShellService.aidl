@@ -18,4 +18,6 @@ interface IShellService {
     boolean moveTask(int taskId, int displayId) = 7;
     /** appops PLAY_AUDIO ignore for pkg (the previous mode is kept on disk), or restores it. */
     boolean setAudioMuted(String pkg, boolean muted) = 8;
+    /** Gives every app still muted by the ledger its previous PLAY_AUDIO mode back. */
+    void restoreAudio() = 9;
 }
