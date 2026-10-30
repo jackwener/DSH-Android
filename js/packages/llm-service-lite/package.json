@@ -24,7 +24,7 @@
     "url": "git+https://github.com/snnh/dsh-llm-service-lite.git"
   },
   "homepage": "https://github.com/snnh/dsh-llm-service-lite#readme",
-  "//vendored": "Vendored verbatim from npm @snnh/dsh-llm-service-lite@0.2.1 (gitHead 691f125641e1732417ef344ed640b6dae41d90df, tarball sha512-G+1/u+pb3k4HP0RjlCAG+L9hK2h8Us9n5QfmvGZKpL8QDaaoh6GSeqRefOL/nz8NrIuwA5Q+bSM6gJm4fIdClg==). Only lib/index.js (server side), LICENSE and locale are kept; the Web client (lib/client.js), types and the bundle patch are dropped: bundle-android mounts the row itself. Upgrade: replace lib/index.js from a newer tarball and update this note.",
+  "//vendored": "Vendored verbatim from npm @snnh/dsh-llm-service-lite@0.2.1 (gitHead 691f125641e1732417ef344ed640b6dae41d90df, tarball sha512-G+1/u+pb3k4HP0RjlCAG+L9hK2h8Us9n5QfmvGZKpL8QDaaoh6GSeqRefOL/nz8NrIuwA5Q+bSM6gJm4fIdClg==). Local patch on top of that build: `usageOf()` treats a null usage frame as no report yet instead of a malformed one (issue #20, upstream PR snnh/dsh-llm-service-lite#1); drop it once a release carries the upstream fix. Only lib/index.js (server side), LICENSE and locale are kept; the Web client (lib/client.js), types and the bundle patch are dropped: bundle-android mounts the row itself. Upgrade: replace lib/index.js from a newer tarball and update this note.",
   "engines": {
     "node": "^22.19.0 || >=24.0.0"
   },
