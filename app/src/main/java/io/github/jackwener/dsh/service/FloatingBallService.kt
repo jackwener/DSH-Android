@@ -92,8 +92,10 @@ class FloatingBallService : Service() {
     private var dragging = false
     private var statusOn = true
     private var controlling = false
-    /** Captures in progress that asked for the overlays to be hidden. */
+    /** Captures in progress that asked for the overlays to be hidden, and when the first hid them (0: nothing was shown). */
     private var shotHides = 0
+    private var hiddenAt = 0L
+    private var destroyed = false
     private val appInFront = object : DefaultLifecycleObserver {
         override fun onStart(owner: LifecycleOwner) { inFront = true; render() }
         override fun onStop(owner: LifecycleOwner) { inFront = false; render() }
@@ -132,6 +134,7 @@ class FloatingBallService : Service() {
                     if (!dragging && (abs(e.rawX - downX) >= 12 || abs(e.rawY - downY) >= 12)) { dragging = true; render() }
                     true
                 }
+                MotionEvent.ACTION_CANCEL -> { dragging = false; placeCapsule(); render(); true }
                 MotionEvent.ACTION_UP -> {
                     dragging = false
                     if (abs(e.rawX - downX) < 12 && abs(e.rawY - downY) < 12) {
@@ -166,11 +169,11 @@ class FloatingBallService : Service() {
 
     /** Ball, capsule and border visibility from the current state; the only place that changes it. */
     private fun render() {
+        if (destroyed) return
         val shooting = shotHides > 0
         view?.visibility = when { inFront -> View.GONE; shooting -> View.INVISIBLE; else -> View.VISIBLE }
         capsule?.visibility = if (statusOn && !inFront && !shooting && !dragging && capsuleSession != null) View.VISIBLE else View.GONE
-        val showBorder = statusOn && controlling && !shooting
-        if (showBorder && border == null) addBorder()
+        val showBorder = statusOn && controlling && !shooting && (border != null || addBorder())
         border?.visibility = if (showBorder) View.VISIBLE else View.GONE
         if (showBorder && borderPulse == null) borderPulse = ObjectAnimator.ofFloat(border, View.ALPHA, 1f, 0.45f).apply {
             duration = 1200; repeatMode = ValueAnimator.REVERSE; repeatCount = ValueAnimator.INFINITE; start()
@@ -215,7 +218,9 @@ class FloatingBallService : Service() {
         runCatching { wm.updateViewLayout(c, lp) }
     }
 
-    private fun addBorder() {
+    /** False when the overlay permission is gone: the service stops (the ball cannot be shown either). */
+    private fun addBorder(): Boolean {
+        if (!Settings.canDrawOverlays(this)) { stopSelf(); return false }
         val (w, h) = screenSize(wm)
         val lp = WindowManager.LayoutParams(w, h, WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
@@ -228,8 +233,9 @@ class FloatingBallService : Service() {
             if (Build.VERSION.SDK_INT >= 31) alpha = getSystemService(InputManager::class.java).maximumObscuringOpacityForTouch
         }
         val b = ControlBorder(this).apply { visibility = View.GONE }
-        wm.addView(b, lp)
+        if (runCatching { wm.addView(b, lp) }.isFailure) { stopSelf(); return false }
         border = b
+        return true
     }
 
     /** The capsule follows one conversation ([AgentStatus.focus]); when it ends, its outcome shows for a moment. */
@@ -317,19 +323,24 @@ class FloatingBallService : Service() {
         }
     }
 
-    /** Runs [capture] with every overlay hidden; waits a frame's worth only when something was on screen. */
+    /**
+     * Runs [capture] with every overlay hidden; waits until they have been hidden a frame's worth
+     * (only when something was on screen; a capture joining one in progress waits out the same moment).
+     */
     private suspend fun <T> hidingOverlays(capture: suspend () -> T): T {
-        val wasShown = withContext(Dispatchers.Main.immediate) {
-            val shown = listOfNotNull(view, capsule, border).any { it.visibility == View.VISIBLE }
-            shotHides++
-            render()
-            shown
-        }
+        // withContext can be cancelled on its way back after the block ran: the count is undone whenever it was taken.
+        var counted = false
         try {
-            if (wasShown) delay(SHOT_HIDE_MS)
+            val wait = withContext(Dispatchers.Main.immediate) {
+                if (shotHides++ == 0) hiddenAt = if (listOfNotNull(view, capsule, border).any { it.visibility == View.VISIBLE }) SystemClock.elapsedRealtime() else 0L
+                counted = true
+                render()
+                if (hiddenAt == 0L) 0L else hiddenAt + SHOT_HIDE_MS - SystemClock.elapsedRealtime()
+            }
+            if (wait > 0) delay(wait)
             return capture()
         } finally {
-            withContext(NonCancellable + Dispatchers.Main.immediate) { shotHides--; render() }
+            if (counted) withContext(NonCancellable + Dispatchers.Main.immediate) { shotHides--; render() }
         }
     }
 
@@ -393,13 +404,15 @@ class FloatingBallService : Service() {
     }
 
     override fun onDestroy() {
+        destroyed = true
         if (active === this) active = null
         scope.cancel()
-        pulse?.cancel()
-        borderPulse?.cancel()
+        pulse?.cancel(); pulse = null
+        borderPulse?.cancel(); borderPulse = null
         ProcessLifecycleOwner.get().lifecycle.removeObserver(appInFront)
         val wm = getSystemService(WindowManager::class.java)
         listOfNotNull(view, capsule, border).forEach { runCatching { wm.removeView(it) } }
+        view = null; capsule = null; border = null
         super.onDestroy()
     }
 

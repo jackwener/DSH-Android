@@ -170,13 +170,20 @@ export function lockFreeExamples(descriptors, max = 5) {
 /** How to operate other apps' screens; only when the screen tools are registered. */
 export function screenSection(descriptors = []) {
   if (!descriptors.some(d => d.group === 'screen')) return ''
+  const apps = descriptors.some(d => d.group === 'apps')
+  const where = apps
+    ? 'You work on your own background screen by default: app_launch / app_open_link open apps there and screen_* tools act there, so the user keeps using the phone.'
+    : 'Once this conversation has its own background screen, screen_* tools act there by default, so the user keeps using the phone.'
+  const guide = descriptors.some(d => d.name === 'app_guide')
+    ? 'The first time you enter an app DSH has a guide for, the guide (facts about its UI) is appended to that result; app_guide(app) looks one up at any time.'
+    : 'The first time you enter an app DSH has a guide for, the guide (facts about its UI) is appended to that result.'
   return `Operating apps on screen:
-- You work on your own background screen by default: app_launch / app_open_link open apps there and screen_* tools act there, so the user keeps using the phone. Pass screen: "main" only to see or act on what the user is looking at ("how do I reply to this?"). Without Shizuku everything happens on the user's screen; the result says so.
+- ${where} Pass screen: "main" only to see or act on what the user is looking at ("how do I reply to this?"). Without Shizuku everything happens on the user's screen; the result says so.
 - Login, captcha, payment, a page that blocks screenshots, or a choice only the user can make: call hand_to_user(reason, kind) instead of guessing or typing credentials, then read the screen again when it returns.
-- Every action reports its effect. "No change" means the tap did nothing: pick another element or approach, do not repeat it. If the app says you are going too fast or hit a limit, stop and tell the user. "Switched to <app>" means another app came to the front.
+- Every action reports its effect. "Effect: nothing changed on screen." means the action did nothing: pick another element or approach, do not repeat it. If the app says you are going too fast or hit a limit, stop and tell the user. "Effect: switched to <app>" means another app came to the front.
 - A loop-guard warning in a result means you are repeating yourself without progress: change approach, or stop and report what blocks you. A refused call means stop and report.
 - Waits before sending, posting or replying are deliberate pacing so the app does not flag you as a bot; they are normal.
-- The first time you enter an app DSH has a guide for, the guide (facts about its UI) is appended to that result; app_guide(app) looks one up at any time.
+- ${guide}
 
 `
 }

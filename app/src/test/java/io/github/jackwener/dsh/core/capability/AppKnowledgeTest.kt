@@ -26,7 +26,7 @@ class AppKnowledgeTest {
     }
 
     @Test fun `lookup by name, alias and package`() {
-        val k = AppKnowledge(::assetFiles) { 0L }
+        val k = AppKnowledge(::assetFiles)
         assertEquals("wechat", k.find("微信")?.id)
         assertEquals("wechat", k.find("com.tencent.mm")?.id)
         assertEquals("bilibili", k.find("B站")?.id)
@@ -36,27 +36,27 @@ class AppKnowledgeTest {
         assertNull(k.find("不存在的应用"))
     }
 
-    @Test fun `a guide is given once per session and at most three per window`() {
-        var now = 0L
-        val k = AppKnowledge(::assetFiles) { now }
+    @Test fun `a guide is given once per conversation and at most three per turn`() {
+        val k = AppKnowledge(::assetFiles)
         val first = k.firstVisitNotice("s1", "com.tencent.mm")
         assertNotNull(first)
         assertTrue(first!!.startsWith("App guide for 微信 (first visit"))
         assertNull(k.firstVisitNotice("s1", "com.tencent.mm"))
+        assertNull("a subagent shares its conversation's guides", k.firstVisitNotice("s1/sub-1", "com.tencent.mm"))
         assertNotNull(k.firstVisitNotice("s2", "com.tencent.mm"))
         assertNull(k.firstVisitNotice("s1", "com.example.unknown"))
 
-        assertNotNull(k.firstVisitNotice("s1", "tv.danmaku.bili"))
+        assertNotNull(k.firstVisitNotice("s1/sub-1", "tv.danmaku.bili"))
         assertNotNull(k.firstVisitNotice("s1", "com.zhihu.android"))
-        // Fourth app inside the window is held back, and offered again once the window has passed.
+        // Fourth app in the turn is held back, and offered again in the next turn.
         assertNull(k.firstVisitNotice("s1", "com.sina.weibo"))
-        now += AppKnowledge.WINDOW_MS
+        k.newTurn("s1")
         assertNotNull(k.firstVisitNotice("s1", "com.sina.weibo"))
         assertNull(k.firstVisitNotice("s1", "com.sina.weibo"))
     }
 
     @Test fun `app_guide lookup counts as given`() {
-        val k = AppKnowledge(::assetFiles) { 0L }
+        val k = AppKnowledge(::assetFiles)
         k.lookup("s1", k.find("知乎")!!)
         assertNull(k.firstVisitNotice("s1", "com.zhihu.android"))
     }

@@ -79,6 +79,7 @@ class CapabilityHub @Inject constructor(
     private val shellGate: ShellGate,
     private val guard: ActionGuard,
     private val agentScreen: AgentScreen,
+    private val appKnowledge: AppKnowledge,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     val allTools: Map<String, Tool> = listOf(files, apps, screen, system, notifications, comms, media, clipboard, browser, ruleTools, knowledge)
@@ -227,11 +228,12 @@ class CapabilityHub @Inject constructor(
     }
 
     /**
-     * The user spoke (a new turn or steering): the loop guard starts over and agent-screen actions
-     * resume after a 我来接管.
+     * The user spoke (a new turn or steering): the loop guard and the app-guide cap start over, and
+     * agent-screen actions resume after a 我来接管.
      */
     fun onUserPrompt(sessionId: String) {
         guard.reset(sessionId)
+        appKnowledge.newTurn(sessionId)
         agentScreen.clearUserTakeover(sessionId)
     }
 
