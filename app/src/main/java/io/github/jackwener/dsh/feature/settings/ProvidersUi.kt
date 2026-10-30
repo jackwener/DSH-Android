@@ -46,6 +46,8 @@ import io.github.jackwener.dsh.core.designsystem.SettingsRow
 import io.github.jackwener.dsh.core.designsystem.Spinner
 import io.github.jackwener.dsh.core.provider.CUSTOM
 import io.github.jackwener.dsh.core.provider.DEEPSEEK_MODELS
+import io.github.jackwener.dsh.core.provider.NetDiagnose
+import io.github.jackwener.dsh.core.provider.NetDiagnosis
 import io.github.jackwener.dsh.core.provider.PRESETS
 import io.github.jackwener.dsh.core.provider.ProviderConfig
 import io.github.jackwener.dsh.core.provider.ProviderPreset
@@ -55,6 +57,9 @@ import kotlinx.coroutines.launch
 
 /** Sub-page target of the 模型服务 page: [NEW_PROVIDER] or a provider's route id. */
 const val NEW_PROVIDER = "\u0000new"
+
+/** fetchState marker: the connection test failed with a network cause (shown from fetchNet). */
+private const val NET_FAILURE = "\u0000net"
 
 @Composable
 private fun presetName(p: ProviderPreset) = if (p.id == CUSTOM) stringResource(R.string.prov_custom) else p.name
@@ -142,6 +147,7 @@ private fun ProviderEditor(vm: SettingsViewModel, existing: ProviderConfig?, pre
     var typed by rememberSaveable { mutableStateOf("") }
     var fetchState by remember { mutableStateOf<String?>(null) } // null | "busy" | message
     var fetchOk by remember { mutableStateOf(false) }
+    var fetchNet by remember { mutableStateOf<NetDiagnosis?>(null) }
     var error by remember { mutableStateOf<Int?>(null) }
     val needsKey = !preset.keyOptional && existing?.hasKey != true
 
@@ -154,6 +160,8 @@ private fun ProviderEditor(vm: SettingsViewModel, existing: ProviderConfig?, pre
             DInput(baseUrl, { baseUrl = it.trim() }, placeholder = "https://…/v1", keyboardType = KeyboardType.Uri)
             Text(stringResource(R.string.prov_base_url_hint), style = DshType.xxs12, color = c.labelTertiary)
             if (baseUrl.startsWith("http://", ignoreCase = true)) Text(stringResource(R.string.prov_http_warning), style = DshType.xxs12, color = c.error)
+            // Warn, but allow saving: something may really listen on the phone (e.g. Termux).
+            if (NetDiagnose.isOnDeviceAddress(baseUrl)) Text(stringResource(R.string.prov_local_warning), style = DshType.xxs12, color = c.amber)
             Text(stringResource(if (preset.keyOptional) R.string.prov_key_optional else R.string.api_key_label), style = DshType.xs13m, color = c.labelSecondary)
             DInput(key, { key = it }, placeholder = if (existing?.hasKey == true) stringResource(R.string.prov_key_saved) else "sk-…", secret = true, keyboardType = KeyboardType.Password)
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -169,7 +177,12 @@ private fun ProviderEditor(vm: SettingsViewModel, existing: ProviderConfig?, pre
                             fetchOk = true
                             fetchState = context.getString(R.string.prov_fetch_ok, ids.size)
                             ids.forEach { if (it !in offered) offered.add(it) }
-                        }.onFailure { fetchOk = false; fetchState = context.getString(R.string.prov_fetch_failed, it.message ?: it.javaClass.simpleName) }
+                        }.onFailure { t ->
+                            fetchOk = false
+                            // Same wording as a failed chat turn (Stream.kt ErrorRow): cause, hint, raw detail.
+                            fetchNet = NetDiagnose.ofException(t)
+                            fetchState = if (fetchNet != null) NET_FAILURE else context.getString(R.string.prov_fetch_failed, t.message ?: t.javaClass.simpleName)
+                        }
                     }
                 }, variant = BtnVariant.Outline, size = BtnSize.Sm, enabled = fetchState != "busy" && baseUrl.isNotBlank())
             }
@@ -177,6 +190,11 @@ private fun ProviderEditor(vm: SettingsViewModel, existing: ProviderConfig?, pre
                 null -> {}
                 "busy" -> Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     Spinner(12.dp); Text(stringResource(R.string.prov_fetching), style = DshType.xxs12, color = c.labelTertiary)
+                }
+                NET_FAILURE -> fetchNet?.let { net ->
+                    Text(stringResource(R.string.prov_fetch_failed, stringResource(net.cause.message)) + (net.cause.hint?.let { " " + stringResource(it) } ?: ""),
+                        style = DshType.xxs12, color = c.error)
+                    Text(net.detail.take(300), style = DshType.mono11, color = c.labelTertiary)
                 }
                 else -> Text(f, style = DshType.xxs12, color = if (fetchOk) c.labelTertiary else c.error)
             }

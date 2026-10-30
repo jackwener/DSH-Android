@@ -70,6 +70,7 @@ import io.github.jackwener.dsh.core.session.Block
 import io.github.jackwener.dsh.core.session.Conversation
 import io.github.jackwener.dsh.core.session.SessionLive
 import io.github.jackwener.dsh.core.session.Turn
+import io.github.jackwener.dsh.core.provider.NetDiagnose
 import io.github.jackwener.dsh.core.session.TurnError
 import io.github.jackwener.dsh.core.session.TurnStatus
 import io.github.jackwener.dsh.core.session.UserMsg
@@ -258,8 +259,11 @@ private fun ErrorRow(e: TurnError, onRetry: (TurnError) -> Unit, onOpenSettings:
     // No credential at all, or the account route refused the request (dsh modelSignInRequired).
     val needsSignIn = e.kind == "no_credentials" || e.kind == "no_key" || e.code == "ACCOUNT_SIGN_IN_REQUIRED" || e.code == "ACCOUNT_TOKEN_INVALID"
     val accountQuota = e.code == "ACCOUNT_QUOTA"
+    // A third-party endpoint that could not be reached: what it means + what to check (js patch 14).
+    val net = remember(e) { NetDiagnose.ofEngineError(e.code, e.message) }
     val title = when {
         needsSignIn -> stringResource(R.string.acct_model_sign_in_required)
+        net != null -> stringResource(R.string.net_title)
         accountQuota -> stringResource(R.string.acct_quota_title)
         e.kind == "engine" -> stringResource(R.string.err_engine_title)
         e.kind == "engine_lost" -> stringResource(R.string.err_engine_lost_title)
@@ -269,6 +273,7 @@ private fun ErrorRow(e: TurnError, onRetry: (TurnError) -> Unit, onOpenSettings:
         e.kind == "no_credentials" || e.kind == "no_key" -> stringResource(R.string.err_no_key)
         needsSignIn -> ""
         accountQuota -> stringResource(R.string.acct_quota_desc)
+        net != null -> stringResource(net.cause.message) + (net.cause.hint?.let { " " + stringResource(it) } ?: "")
         e.code?.contains("auth", true) == true || e.message.contains("401") -> stringResource(R.string.err_invalid_key)
         e.message.contains("402") || e.message.contains("insufficient", true) -> stringResource(R.string.err_quota)
         else -> e.message
@@ -279,7 +284,8 @@ private fun ErrorRow(e: TurnError, onRetry: (TurnError) -> Unit, onOpenSettings:
         Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(title, style = DshType.xs13.copy(fontWeight = FontWeight(600)), color = c.error)
             if (message.isNotBlank()) SelectionContainer { Text(message.take(600), style = DshType.xs13, color = c.labelSecondary) }
-            if (e.code != null && e.kind != "engine" && !needsSignIn && !accountQuota) Text(e.code.take(300), style = DshType.mono11, color = c.labelTertiary)
+            if (net != null) SelectionContainer { Text(net.detail.take(300), style = DshType.mono11, color = c.labelTertiary) }
+            else if (e.code != null && e.kind != "engine" && !needsSignIn && !accountQuota) Text(e.code.take(300), style = DshType.mono11, color = c.labelTertiary)
             if (e.kind == "engine" && e.code != null) Text(e.code.take(600), style = DshType.mono11, color = c.labelTertiary)
             if (retryable) Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 when {
