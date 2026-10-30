@@ -44,6 +44,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -211,6 +212,8 @@ fun Composer(
     modeLocked: Boolean = false,
     onMode: (String) -> Unit = {},
     onManageModes: (() -> Unit)? = null,
+    /** Speech input (mic button + status line); null hides it. */
+    voice: io.github.jackwener.dsh.feature.voice.VoiceInput? = null,
 ) {
     val c = Dsh.colors
     val context = LocalContext.current
@@ -223,6 +226,13 @@ fun Composer(
     var modeOpen by remember { mutableStateOf(false) }
     var confirmFull by remember { mutableStateOf(false) }
     val settled = rememberSettled()
+    val focus = remember { androidx.compose.ui.focus.FocusRequester() }
+    val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
+    val toKeyboard = { runCatching { focus.requestFocus() }; keyboard?.show(); Unit }
+    // Speech found no recognizer: fall back to typing.
+    val noRecognizer = (voice?.state as? io.github.jackwener.dsh.feature.voice.VoiceState.Failed)?.error == io.github.jackwener.dsh.feature.voice.VoiceError.NoRecognizer
+    androidx.compose.runtime.LaunchedEffect(noRecognizer) { if (noRecognizer) toKeyboard() }
+    androidx.compose.runtime.DisposableEffect(voice) { onDispose { voice?.cancel() } }
     // A preset change from elsewhere (session switch, approval) drops any half-finished choice.
     androidx.compose.runtime.LaunchedEffect(preset) { presetOpen = false; confirmFull = false }
 
@@ -266,10 +276,11 @@ fun Composer(
         BasicTextField(
             state.text,
             { v ->
+                if (voice?.active == true) voice.onUserEdit()
                 state.text = v
                 if (v == "/") slashOpen = true else if (slashOpen && !v.startsWith("/")) slashOpen = false
             },
-            Modifier.fillMaxWidth().heightIn(min = if (hero) 52.dp else 36.dp, max = 216.dp).padding(start = 14.dp, end = 8.dp, top = 4.dp),
+            Modifier.fillMaxWidth().heightIn(min = if (hero) 52.dp else 36.dp, max = 216.dp).padding(start = 14.dp, end = 8.dp, top = 4.dp).focusRequester(focus),
             textStyle = DshType.base16.copy(color = c.labelPrimary),
             cursorBrush = SolidColor(c.business),
             keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
@@ -280,6 +291,7 @@ fun Composer(
                 }
             },
         )
+        if (voice != null) io.github.jackwener.dsh.feature.voice.VoiceStrip(voice, toKeyboard)
         Spacer(Modifier.height(10.dp))
         BoxWithConstraints(Modifier.fillMaxWidth()) {
         // dsh control-row layout: below ~460 px the permission chip drops its label.
@@ -357,6 +369,7 @@ fun Composer(
                 }
             }
             }
+            if (voice != null) io.github.jackwener.dsh.feature.voice.MicButton(voice)
             SendButton(running, state.isEmpty && !canSendEmpty, {
                 if (state.pending > 0) android.widget.Toast.makeText(context, R.string.attachments_loading, android.widget.Toast.LENGTH_SHORT).show()
                 else onSend()

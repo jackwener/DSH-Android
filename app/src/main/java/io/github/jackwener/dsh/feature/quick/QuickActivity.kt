@@ -27,6 +27,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -81,6 +82,8 @@ class QuickActivity : ComponentActivity() {
     @Inject lateinit var store: SessionStore
     private val vm: QuickViewModel by viewModels()
     private var useContext by mutableStateOf(false)
+    /** Bumped when a summon asks to start listening (not saved: a rotation does not listen again). */
+    private var listenRequest by mutableIntStateOf(0)
     private val prefs by lazy { getSharedPreferences("quick_panel", MODE_PRIVATE) }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -140,7 +143,7 @@ class QuickActivity : ComponentActivity() {
                                     "[The user summoned you while looking at ${ScreenContext.packageName}. Screen content:]\n${ScreenContext.text}\n" else ""
                                 useContext = false
                                 if (ctx.isBlank()) text else "$ctx\n$text"
-                            })
+                            }, listenRequest = listenRequest)
                         }
                     }
                 }
@@ -201,6 +204,8 @@ class QuickActivity : ComponentActivity() {
     }
 
     private fun handleIntent(i: Intent, freshPanel: Boolean, reopened: Boolean) {
+        if (i.getBooleanExtra(EXTRA_VOICE, false)) listenRequest++
+        else if (i.getBooleanExtra(EXTRA_FROM_ASSIST, false)) lifecycleScope.launch { if (settingsRepo.current().voiceOnAssist) listenRequest++ }
         if (i.getBooleanExtra(EXTRA_SCREEN, false)) return attachScreen(reopened)
         if (i.action == ACTION_RUN_TASK) {
             val task = i.getStringExtra(EXTRA_TASK)?.takeIf { it.isNotBlank() } ?: return
@@ -253,6 +258,8 @@ class QuickActivity : ComponentActivity() {
         const val EXTRA_FROM_ASSIST = "from_assist"
         /** Set by the floating ball's double tap: ScreenContext holds a fresh screenshot and screen text. */
         const val EXTRA_SCREEN = "screen"
+        /** Open listening (floating ball long-press). */
+        const val EXTRA_VOICE = "voice"
         const val ACTION_RUN_TASK = "io.github.jackwener.dsh.RUN_TASK"
         const val EXTRA_TASK = "task"
         private const val STATE_USE_CONTEXT = "use_context"

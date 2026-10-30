@@ -60,6 +60,8 @@ data class Settings(
     val defaultPreset: PermissionPreset = PermissionPreset.Full,
     /** 允许其他 App 调用: whether the exported RUN_TASK entry accepts tasks from other apps. Off by default. */
     val allowExternalApps: Boolean = false,
+    /** 唤起助手时直接语音输入: the assistant gesture opens the quick panel already listening. */
+    val voiceOnAssist: Boolean = true,
     /** 在后台屏操作 App: with Shizuku, apps the agent opens run on its own virtual screen (AgentScreen). */
     val agentScreen: Boolean = true,
     /** 任务结束后自动总结经验: after a turn that worked in an app, one short model call distills App 经验 notes. */
@@ -105,6 +107,7 @@ class SettingsRepository @Inject constructor(@ApplicationContext private val con
         val externalApps = booleanPreferencesKey("allow_external_apps")
         val agentScreen = booleanPreferencesKey("agent_screen")
         val reflect = booleanPreferencesKey("reflect_experience")
+        val voiceOnAssist = booleanPreferencesKey("voice_on_assist")
     }
 
     val settings: Flow<Settings> = context.store.data.map { it.toSettings() }
@@ -130,6 +133,7 @@ class SettingsRepository @Inject constructor(@ApplicationContext private val con
         allowExternalApps = this[K.externalApps] ?: false,
         agentScreen = this[K.agentScreen] ?: true,
         reflectExperience = this[K.reflect] ?: true,
+        voiceOnAssist = this[K.voiceOnAssist] ?: true,
     )
 
     /** [provider] "" = DeepSeek. */
@@ -175,6 +179,7 @@ class SettingsRepository @Inject constructor(@ApplicationContext private val con
     suspend fun setAllowExternalApps(on: Boolean) = context.store.edit { it[K.externalApps] = on }
     suspend fun setAgentScreen(on: Boolean) = context.store.edit { it[K.agentScreen] = on }
     suspend fun setReflectExperience(on: Boolean) = context.store.edit { it[K.reflect] = on }
+    suspend fun setVoiceOnAssist(on: Boolean) = context.store.edit { it[K.voiceOnAssist] = on }
 }
 
 /** Stored user modes; an unreadable value (a future format) reads as none rather than failing settings. */
