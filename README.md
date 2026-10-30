@@ -2,13 +2,13 @@
 
 # DSH-Android
 
-### 一句话，让手机替你办事。
+### 用 DSH 让手机替你做事
 
 不要 root，不用电脑，直接跑在你的安卓手机上。真正的手机 Agent，替你把手机上的事干完。
 
 在安卓手机上运行 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（dsh）：用一句话让它整理文件、操作 App、修改系统设置，或者设置自动执行的任务。
 
-![Version](https://img.shields.io/badge/version-0.1.2-4D6BFE?style=flat-square)
+[![Release](https://img.shields.io/github/v/release/jackwener/DSH-Android?style=flat-square&color=4D6BFE&label=release)](../../releases/latest)
 ![Android](https://img.shields.io/badge/Android-10%2B-34A853?style=flat-square&logo=android&logoColor=white)
 ![ABI](https://img.shields.io/badge/ABI-arm64--v8a-555?style=flat-square)
 ![Engine](https://img.shields.io/badge/engine-dsh%200.2.1%20%C2%B7%20Node%2024-4D6BFE?style=flat-square)
@@ -19,7 +19,7 @@
 
 <br />
 
-<img src="docs/screenshots/07-drawer.png" width="320" alt="会话列表">
+<img src="docs/screenshots/hero.webp" width="100%" alt="DSH-Android：用 DSH 让手机替你做事">
 
 </div>
 
@@ -133,7 +133,7 @@ app/        Android App（Kotlin · Compose · Hilt · Room）
   feature/           界面：对话、轨迹、快捷面板、自动化、设置、登录
 js/         dsh 的 android profile、插件、补丁，build-engine.sh → engine.zip
 native/     Node 24 安卓构建、JNI 包装、原生插件、预编译产物脚本
-tools/      字符串、图标等生成脚本
+tools/      字符串、图标、README 首图（tools/ui/hero.py）等生成脚本
 docs/       架构说明、引擎契约、设计 token、截图
 ```
 
