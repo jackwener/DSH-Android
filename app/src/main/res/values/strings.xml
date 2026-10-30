@@ -128,6 +128,7 @@
     <string name="net_tls">证书校验失败。</string>
     <string name="net_tls_hint">局域网网关请用 http://；自签证书不支持。</string>
     <string name="net_other">网络连接失败。</string>
+    <string name="err_provider_format">模型服务返回的数据格式不兼容：%1$s</string>
     <string name="err_engine_title">智能体引擎启动失败</string>
     <string name="err_engine_lost_title">引擎连接已断开</string>
     <string name="err_engine_lost">智能体引擎意外退出，本轮已中断。</string>
@@ -652,6 +653,7 @@
     <string name="prov_fetch">获取模型列表</string>
     <string name="prov_fetching">正在连接…</string>
     <string name="prov_fetch_ok">连接成功，共 %1$d 个模型</string>
+    <string name="prov_fetch_ok_v1">连接成功，共 %1$d 个模型；地址已改为 %2$s</string>
     <string name="prov_fetch_failed">连接失败：%1$s</string>
     <string name="prov_models_desc">勾选的模型会出现在模型选择器里</string>
     <string name="prov_add_model">手动输入模型 ID</string>

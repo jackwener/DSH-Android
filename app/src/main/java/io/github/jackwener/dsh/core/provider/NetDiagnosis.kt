@@ -53,6 +53,20 @@ object NetDiagnose {
         return NetDiagnosis(cause, detail)
     }
 
+    private const val PARSE_MARK = "could not parse the provider's response: "
+
+    /**
+     * The provider answered, but in a shape the engine's adapter could not translate (js patch 16:
+     * `MALFORMED_RESPONSE`, e.g. `llm-service-lite: could not parse the provider's response:
+     * TypeError: …` or `… stream contains invalid JSON`). Not a network problem and not retried;
+     * returns the detail to show after "模型服务返回的数据格式不兼容：", else null.
+     */
+    fun formatErrorOf(code: String?, message: String): String? {
+        if (code != "MALFORMED_RESPONSE") return null
+        val detail = message.substringAfter(PARSE_MARK, message.removePrefix("llm-service-lite: ")).trim()
+        return detail.ifEmpty { code }
+    }
+
     /** A 获取模型列表 failure (HttpURLConnection); null for non-network failures (HTTP status, bad JSON). */
     fun ofException(t: Throwable): NetDiagnosis? {
         val chain = generateSequence(t) { it.cause.takeIf { c -> c !== it } }.take(8).toList()

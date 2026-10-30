@@ -219,9 +219,13 @@ private fun ProviderEditor(vm: SettingsViewModel, existing: ProviderConfig?, pre
                     if (!isHttpUrl(baseUrl)) { error = R.string.prov_err_url; return@DButton }
                     fetchState = "busy"
                     scope.launch {
-                        vm.fetchModels(baseUrl, key, existing).onSuccess { list ->
+                        vm.fetchModels(baseUrl, key, existing).onSuccess { fetched ->
+                            val list = fetched.models
                             fetchOk = true
-                            fetchState = context.getString(R.string.prov_fetch_ok, list.size)
+                            // A bare origin that 404'd but answers under /v1 (#28): adopt the working address.
+                            val fixed = fetched.baseUrl != baseUrl.trim().trimEnd('/')
+                            if (fixed) baseUrl = fetched.baseUrl
+                            fetchState = if (fixed) context.getString(R.string.prov_fetch_ok_v1, list.size, fetched.baseUrl) else context.getString(R.string.prov_fetch_ok, list.size)
                             // A fresh listing replaces what it reports on (fields it dropped are dropped here too).
                             list.forEach { detected[it.id] = it }
                             val r = refreshOffered(offered.toList(), list.map { it.id }, selected.toList() + manual)

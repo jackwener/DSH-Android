@@ -15,6 +15,7 @@ import kotlinx.serialization.json.putJsonArray
 import kotlinx.serialization.json.putJsonObject
 import kotlinx.serialization.json.addJsonObject
 import java.net.HttpURLConnection
+import java.net.URI
 import java.net.URL
 
 /**
@@ -263,6 +264,35 @@ fun fetchModels(baseUrl: String, key: String?): Result<List<RemoteModel>> = runC
         if (code !in 200..299) error("HTTP $code ${body.take(160).replace('\n', ' ')}".trim())
         parseModels(body)
     } finally { c.disconnect() }
+}
+
+/**
+ * A bare-origin base URL (`https://host`, no path) plus `/v1`, else null. OpenAI-compatible APIs
+ * live under `/v1`; on e.g. NVIDIA NIM (`https://integrate.api.nvidia.com`) the bare origin's
+ * `/models` and `/chat/completions` are 404s (#28).
+ */
+fun v1Candidate(baseUrl: String): String? {
+    val b = baseUrl.trim().trimEnd('/')
+    val uri = runCatching { URI(b) }.getOrNull() ?: return null
+    if (uri.scheme?.lowercase() !in setOf("http", "https") || uri.host.isNullOrEmpty() || !uri.rawPath.isNullOrEmpty() || uri.rawQuery != null) return null
+    return "$b/v1"
+}
+
+/** The listed models and the base URL that served them. */
+data class FetchedModels<T>(val models: List<T>, val baseUrl: String)
+
+/**
+ * [fetchModels], retried once at [v1Candidate] when a bare-origin base URL answers HTTP 404: the
+ * user then gets the working address filled in instead of a chat that 404s later. Only a 404 on
+ * a pathless URL triggers it, and only a successful listing replaces the address.
+ */
+fun <T> fetchModelsResolving(baseUrl: String, key: String?, fetch: (String, String?) -> Result<List<T>>): Result<FetchedModels<T>> {
+    val base = baseUrl.trim().trimEnd('/')
+    val first = fetch(base, key)
+    if (first.isSuccess) return first.map { FetchedModels(it, base) }
+    val v1 = v1Candidate(base)
+    if (v1 == null || first.exceptionOrNull()?.message?.startsWith("HTTP 404") != true) return first.map { FetchedModels(it, base) }
+    return fetch(v1, key).map { FetchedModels(it, v1) }.takeIf { it.isSuccess } ?: first.map { FetchedModels(it, base) }
 }
 
 fun parseModelIds(body: String): List<String> = parseModels(body).map { it.id }
