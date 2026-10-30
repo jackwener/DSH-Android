@@ -96,6 +96,7 @@ fun isZh(): Boolean = LocalConfiguration.current.locales[0].language == "zh"
 enum class SettingsSection(val label: Int, val icon: Int) {
     Account(R.string.acct_nav, R.drawable.dsw_user_outline), General(R.string.set_general, R.drawable.dsw_settings_outline),
     Model(R.string.set_model, R.drawable.dsw_data_outline), Agent(R.string.set_agent, R.drawable.dsw_apps_add_outline),
+    Extensions(R.string.set_extensions, R.drawable.dsw_cordis_plugin_outline),
     Modes(R.string.set_modes, R.drawable.dsw_agent_preset_outline),
     Usage(R.string.set_usage, R.drawable.dsw_gauge_outline), Phone(R.string.set_phone, R.drawable.dsw_shield_outline),
     About(R.string.set_about, R.drawable.dsw_info_outline);
@@ -121,19 +122,23 @@ fun SettingsScreen(initial: SettingsSection?, onBack: () -> Unit, onNotification
     var provider by rememberSaveable { mutableStateOf<String?>(null) }
     /** 会话模式 sub-page: [NEW_MODE] or a mode id. */
     var modePage by rememberSaveable { mutableStateOf<String?>(null) }
+    /** 扩展 sub-page (feature/extensions ExtPages): a plugin, an index entry, 管理索引, an MCP server. */
+    var extPage by rememberSaveable { mutableStateOf<String?>(null) }
     BackHandler(toIndex) { section = null }
+    BackHandler(extPage != null) { extPage = null }
     BackHandler(provider != null) { provider = null }
     BackHandler(modePage != null) { modePage = null }
     Column(Modifier.fillMaxSize().background(c.bgBase).statusBarsPadding()) {
         val modeTitle = modePage?.let { id -> if (id == NEW_MODE) stringResource(R.string.mode_new)
             else if (io.github.jackwener.dsh.core.model.SessionModes.builtIns.any { it.id == id }) stringResource(R.string.mode_view_title) else stringResource(R.string.mode_edit_title) }
-        val title = modeTitle ?: if (provider != null) stringResource(R.string.prov_title) else section?.let { stringResource(it.label) } ?: stringResource(R.string.settings)
-        DTopBar(title, { if (modePage != null) modePage = null else if (provider != null) provider = null else if (toIndex) section = null else onBack() })
+        val extTitle = if (section == SettingsSection.Extensions) io.github.jackwener.dsh.feature.extensions.extensionsPageTitle(extPage) else null
+        val title = modeTitle ?: extTitle ?: if (provider != null) stringResource(R.string.prov_title) else section?.let { stringResource(it.label) } ?: stringResource(R.string.settings)
+        DTopBar(title, { if (extPage != null) extPage = null else if (modePage != null) modePage = null else if (provider != null) provider = null else if (toIndex) section = null else onBack() })
         // One scroll position per page; IME insets first so focused fields and their buttons stay above the keyboard.
-        val scroll = rememberSaveable(section, provider, modePage, saver = androidx.compose.foundation.ScrollState.Saver) { androidx.compose.foundation.ScrollState(0) }
+        val scroll = rememberSaveable(section, provider, modePage, extPage, saver = androidx.compose.foundation.ScrollState.Saver) { androidx.compose.foundation.ScrollState(0) }
         Column(Modifier.fillMaxSize().imePadding().verticalScroll(scroll).navigationBarsPadding().padding(horizontal = 16.dp).padding(bottom = 24.dp)) {
             when (section) {
-                null -> SettingsIndex { section = it }
+                null -> SettingsIndex(vm.settings.collectAsStateWithLifecycle().value.extUpdateBadge) { section = it }
                 SettingsSection.Account -> {
                     val hasKey by vm.hasKeyFlow.collectAsStateWithLifecycle()
                     Spacer(Modifier.height(8.dp))
@@ -142,6 +147,7 @@ fun SettingsScreen(initial: SettingsSection?, onBack: () -> Unit, onNotification
                 SettingsSection.General -> GeneralSection(vm)
                 SettingsSection.Model -> provider?.let { ProviderPage(vm, it) { provider = null } } ?: ModelSection(vm) { provider = it }
                 SettingsSection.Agent -> AgentSection(vm, onAppNotes)
+                SettingsSection.Extensions -> io.github.jackwener.dsh.feature.extensions.ExtensionsSection(extPage, { extPage = it })
                 SettingsSection.Modes -> modePage?.let { ModePage(vm, it, onDone = { modePage = null }, onOpen = { id -> modePage = id }) } ?: ModesSection(vm) { modePage = it }
                 SettingsSection.Usage -> UsageSection(vm)
                 SettingsSection.Phone -> PhoneSection(vm, onNotificationApps)
@@ -152,14 +158,20 @@ fun SettingsScreen(initial: SettingsSection?, onBack: () -> Unit, onNotification
 }
 
 @Composable
-private fun SettingsIndex(onOpen: (SettingsSection) -> Unit) {
+private fun SettingsIndex(extUpdates: Int, onOpen: (SettingsSection) -> Unit) {
     val c = Dsh.colors
     Spacer(Modifier.height(8.dp))
     SettingsCard {
         SettingsSection.entries.forEachIndexed { i, s ->
             SettingsRow(stringResource(s.label), divider = i > 0, onClick = { onOpen(s) },
                 leading = { DIcon(s.icon, size = 18.dp, tint = c.labelSecondary) },
-                trailing = { DIcon(R.drawable.dsw_chevron_right_outline, size = 14.dp, tint = c.labelTertiary) })
+                trailing = {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        // 扩展: "N 个可更新" (updates are never automatic, §7.3).
+                        if (s == SettingsSection.Extensions && extUpdates > 0) Tag(stringResource(R.string.ext_updates_badge, extUpdates), Tone.Info)
+                        DIcon(R.drawable.dsw_chevron_right_outline, size = 14.dp, tint = c.labelTertiary)
+                    }
+                })
         }
     }
 }
@@ -444,6 +456,10 @@ private fun AboutSection(vm: SettingsViewModel) {
             EngineState.Stopped -> stringResource(R.string.engine_idle); is EngineState.Failed -> e.message.take(300)
         }, leading = { StateDot(when (engine) { EngineState.Ready -> DotKind.Done; is EngineState.Failed -> DotKind.Error; else -> DotKind.Idle }) },
             trailing = { DButton(stringResource(R.string.restart_engine), { vm.restartEngine(); vm.runDoctor() }, variant = BtnVariant.Outline, size = BtnSize.Sm) })
+        // A plugin that keeps the engine from starting: start once with every third-party plugin paused (PLUGINS-DESIGN §7.6).
+        val ext: io.github.jackwener.dsh.feature.extensions.ExtensionsViewModel = hiltViewModel()
+        SettingsRow(stringResource(R.string.ext_safe_mode_start), stringResource(R.string.ext_safe_mode_start_desc),
+            trailing = { DButton(stringResource(R.string.ext_safe_mode_start), { ext.startSafeMode(); vm.runDoctor() }, variant = BtnVariant.Outline, size = BtnSize.Sm) })
         SettingsRow(stringResource(R.string.about_disclaimer_title), stringResource(R.string.about_disclaimer), divider = true)
         // Attribution for the bundled official Shizuku APK (Apache-2.0); tap shows the license shipped with it.
         val shizukuLicense = remember { runCatching { vm.context.assets.open("shizuku/LICENSE").bufferedReader().use { it.readText() } }.getOrNull() }

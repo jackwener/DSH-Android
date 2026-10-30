@@ -115,6 +115,36 @@
             </intent-filter>
         </activity>
 
+        <!-- 分享到 DSH → 安装为扩展: a plugin package (.tgz / .zip), a SKILL.md, or a link / name / mcpServers
+             JSON as text. MainActivity stages it and opens 设置 → 扩展 (PLUGINS-DESIGN §6.5). -->
+        <activity-alias
+            android:name=".ExtensionInstall"
+            android:exported="true"
+            android:label="@string/ext_share_label"
+            android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+                <data android:mimeType="text/markdown" />
+                <data android:mimeType="application/gzip" />
+                <data android:mimeType="application/x-gzip" />
+                <data android:mimeType="application/x-compressed-tar" />
+                <data android:mimeType="application/x-tar" />
+                <data android:mimeType="application/zip" />
+                <data android:mimeType="application/octet-stream" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="content" />
+                <data android:mimeType="application/gzip" />
+                <data android:mimeType="application/x-gzip" />
+                <data android:mimeType="application/x-compressed-tar" />
+                <data android:mimeType="application/zip" />
+            </intent-filter>
+        </activity-alias>
+
         <activity
             android:name=".feature.quick.QuickActivity"
             android:exported="true"
