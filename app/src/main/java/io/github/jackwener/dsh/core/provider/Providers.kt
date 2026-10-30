@@ -14,6 +14,7 @@ import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
 import kotlinx.serialization.json.putJsonObject
 import kotlinx.serialization.json.addJsonObject
+import io.github.jackwener.dsh.R
 import java.net.HttpURLConnection
 import java.net.URI
 import java.net.URL
@@ -37,21 +38,39 @@ data class ProviderPreset(
     /** The user edits the address (custom endpoint; HTTPS only). */
     val editableUrl: Boolean = false,
     val keysUrl: String? = null,
+    /**
+     * Name prefixes of the vendor's own models (lowercase). The connection test tries these first:
+     * on an aggregator they are absent and the listing's own hints decide.
+     */
+    val family: List<String> = emptyList(),
+    /** A server on the user's computer (Ollama, LM Studio): the editor explains how to reach it from the phone. */
+    val localHint: Int? = null,
 )
 
+/*
+ * Base URLs and key pages checked against the vendors' docs (2026-10): SiliconFlow
+ * docs.siliconflow.cn, Volcano Ark docs.volcengine.com/docs/82379 (models must be 开通 in the
+ * console first; whether Ark serves GET /models is undocumented, the editor then asks for a model
+ * id), Kimi platform.kimi.com/docs, Zhipu docs.bigmodel.cn (no documented /models either),
+ * MiniMax platform.minimax.cn/docs (api.minimax.cn; api.minimaxi.com still answers), Ollama
+ * docs.ollama.com/api/openai-compatibility, LM Studio lmstudio.ai/docs/developer/openai-compat.
+ */
 val PRESETS = listOf(
-    ProviderPreset("openai", "OpenAI", "https://api.openai.com/v1", listOf("gpt-5"), keysUrl = "https://platform.openai.com/api-keys"),
-    ProviderPreset("anthropic", "Anthropic Claude", "https://api.anthropic.com/v1", listOf("claude-sonnet-5", "claude-opus-5"), keysUrl = "https://console.anthropic.com/settings/keys"),
-    ProviderPreset("gemini", "Google Gemini", "https://generativelanguage.googleapis.com/v1beta/openai", listOf("gemini-3.5-flash"), keysUrl = "https://aistudio.google.com/apikey"),
-    ProviderPreset("xai", "xAI Grok", "https://api.x.ai/v1", listOf("grok-4"), keysUrl = "https://console.x.ai"),
+    ProviderPreset("openai", "OpenAI", "https://api.openai.com/v1", listOf("gpt-5"), keysUrl = "https://platform.openai.com/api-keys", family = listOf("gpt-", "o1", "o3", "o4", "chatgpt")),
+    ProviderPreset("anthropic", "Anthropic Claude", "https://api.anthropic.com/v1", listOf("claude-sonnet-5", "claude-opus-5"), keysUrl = "https://console.anthropic.com/settings/keys", family = listOf("claude")),
+    ProviderPreset("gemini", "Google Gemini", "https://generativelanguage.googleapis.com/v1beta/openai", listOf("gemini-3.5-flash"), keysUrl = "https://aistudio.google.com/apikey", family = listOf("gemini")),
+    ProviderPreset("xai", "xAI Grok", "https://api.x.ai/v1", listOf("grok-4"), keysUrl = "https://console.x.ai", family = listOf("grok")),
     ProviderPreset("openrouter", "OpenRouter", "https://openrouter.ai/api/v1", listOf("openrouter/auto"), keysUrl = "https://openrouter.ai/keys"),
-    ProviderPreset("kimi", "Kimi (Moonshot)", "https://api.moonshot.cn/v1", listOf("kimi-k3"), keysUrl = "https://platform.moonshot.cn/console/api-keys"),
-    ProviderPreset("zhipu", "智谱 GLM", "https://open.bigmodel.cn/api/paas/v4", listOf("glm-5.3"), keysUrl = "https://open.bigmodel.cn/usercenter/apikeys"),
-    ProviderPreset("qwen", "通义千问", "https://dashscope.aliyuncs.com/compatible-mode/v1", listOf("qwen3.8-max"), keysUrl = "https://bailian.console.aliyun.com/?tab=model#/api-key"),
-    ProviderPreset("ark", "火山方舟 / 豆包", "https://ark.cn-beijing.volces.com/api/v3", listOf("doubao-seed-2.1-pro"), keysUrl = "https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey"),
-    ProviderPreset("minimax", "MiniMax", "https://api.minimaxi.com/v1", listOf("MiniMax-M3.1"), keysUrl = "https://platform.minimaxi.com/user-center/basic-information/interface-key"),
+    ProviderPreset("kimi", "Kimi (Moonshot)", "https://api.moonshot.cn/v1", listOf("kimi-k3"), keysUrl = "https://platform.kimi.com/console/api-keys", family = listOf("kimi", "moonshot")),
+    ProviderPreset("zhipu", "智谱 GLM", "https://open.bigmodel.cn/api/paas/v4", listOf("glm-5.3"), keysUrl = "https://bigmodel.cn/usercenter/proj-mgmt/apikeys", family = listOf("glm")),
+    ProviderPreset("qwen", "通义千问", "https://dashscope.aliyuncs.com/compatible-mode/v1", listOf("qwen3.8-max"), keysUrl = "https://bailian.console.aliyun.com/?tab=model#/api-key", family = listOf("qwen", "qwq")),
+    ProviderPreset("ark", "火山方舟 / 豆包", "https://ark.cn-beijing.volces.com/api/v3", listOf("doubao-seed-2-1-pro-260915"), keysUrl = "https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey", family = listOf("doubao")),
+    ProviderPreset("minimax", "MiniMax", "https://api.minimax.cn/v1", listOf("MiniMax-M3"), keysUrl = "https://platform.minimax.cn/user-center/basic-information/interface-key", family = listOf("minimax")),
     ProviderPreset("siliconflow", "硅基流动 SiliconFlow", "https://api.siliconflow.cn/v1", keysUrl = "https://cloud.siliconflow.cn/account/ak"),
-    ProviderPreset("stepfun", "阶跃星辰 StepFun", "https://api.stepfun.com/v1", listOf("step-5"), keysUrl = "https://platform.stepfun.com/interface-key"),
+    ProviderPreset("stepfun", "阶跃星辰 StepFun", "https://api.stepfun.com/v1", listOf("step-5"), keysUrl = "https://platform.stepfun.com/interface-key", family = listOf("step")),
+    // On the user's computer: the phone reaches it at the computer's LAN IP (the editor's localhost warning says so).
+    ProviderPreset("ollama", "Ollama", "http://localhost:11434/v1", keyOptional = true, editableUrl = true, localHint = R.string.prov_hint_ollama),
+    ProviderPreset("lmstudio", "LM Studio", "http://localhost:1234/v1", keyOptional = true, editableUrl = true, localHint = R.string.prov_hint_lmstudio),
     ProviderPreset(CUSTOM, "自定义（OpenAI 兼容）", "", keyOptional = true, editableUrl = true),
 )
 
@@ -77,6 +96,8 @@ data class ProviderConfig(
     val maxTokens: Int? = null,
     /** Per-model limits: the user's overrides and what `/models` reported. Absent = nothing known. */
     val limits: Map<String, ModelLimits> = emptyMap(),
+    /** Models that passed the connection test (a real chat request with a tool call); see ModelVerify.kt. */
+    val verified: List<String> = emptyList(),
 ) {
     /** `apiKeyEnv` the engine resolves per request; set in the `:engine` environment only. */
     val keyEnv: String get() = keyEnvOf(id)
@@ -240,8 +261,15 @@ fun renderProfilePatch(providers: List<ProviderConfig>, webSearch: Boolean): Str
     return sb.toString()
 }
 
-/** One `/models` entry: the id and whatever limits the endpoint reports for it. */
-data class RemoteModel(val id: String, val contextWindow: Long? = null, val maxTokens: Int? = null)
+/**
+ * One `/models` entry: the id, whatever limits the endpoint reports for it, and what the listing
+ * says about its kind: [chat] false = clearly not a chat model (embedding, image, audio…), [tools]
+ * true = marked as supporting tool calls. Null = the listing does not say.
+ */
+data class RemoteModel(val id: String, val contextWindow: Long? = null, val maxTokens: Int? = null, val chat: Boolean? = null, val tools: Boolean? = null)
+
+/** A non-2xx answer: [status] and the (truncated) body. The message keeps the `HTTP <code> …` form. */
+class HttpStatusException(val status: Int, val body: String) : Exception("HTTP $status ${body.take(160).replace('\n', ' ')}".trim())
 
 /**
  * `GET {baseUrl}/models` (OpenAI shape `{data:[{id}]}`, or a bare array / `{models:[…]}`).
@@ -261,7 +289,7 @@ fun fetchModels(baseUrl: String, key: String?): Result<List<RemoteModel>> = runC
         }
         val code = c.responseCode
         val body = (if (code in 200..299) c.inputStream else c.errorStream)?.use { it.readBytes().decodeToString().take(4_000_000) }.orEmpty()
-        if (code !in 200..299) error("HTTP $code ${body.take(160).replace('\n', ' ')}".trim())
+        if (code !in 200..299) throw HttpStatusException(code, body.take(64_000))
         parseModels(body)
     } finally { c.disconnect() }
 }
@@ -339,7 +367,7 @@ fun parseModels(body: String): List<RemoteModel> {
             val id = o?.let { (it["id"] ?: it["name"] ?: it["model"])?.jsonPrimitive?.content } ?: key ?: e.jsonPrimitive.content
             val ctx = o?.let { firstCount(it, CONTEXT_KEYS) }
             val out = o?.let { firstCount(it, OUTPUT_KEYS) }?.coerceAtMost(Int.MAX_VALUE.toLong())?.toInt()
-            RemoteModel(id.removePrefix("models/"), ctx, out)
+            RemoteModel(id.removePrefix("models/"), ctx, out, o?.let(::listedAsChat), o?.let(::listedWithTools))
         }.getOrNull()
     }.filter { it.id.isNotBlank() }.distinctBy { it.id }.sortedBy { it.id }
 }

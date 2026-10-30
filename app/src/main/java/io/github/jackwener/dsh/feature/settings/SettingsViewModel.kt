@@ -21,7 +21,12 @@ import io.github.jackwener.dsh.core.data.UsageEntity
 import io.github.jackwener.dsh.core.engine.EngineManager
 import io.github.jackwener.dsh.core.engine.EngineState
 import io.github.jackwener.dsh.core.model.ToolGroup
+import io.github.jackwener.dsh.R
 import io.github.jackwener.dsh.core.provider.ProviderConfig
+import io.github.jackwener.dsh.core.provider.VerifyFailure
+import io.github.jackwener.dsh.core.provider.VerifyOutcome
+import io.github.jackwener.dsh.core.provider.probeModel
+import io.github.jackwener.dsh.core.provider.verifyCandidates
 import io.github.jackwener.dsh.core.platform.ShizukuShell
 import io.github.jackwener.dsh.service.FloatingBallService
 import kotlinx.coroutines.Dispatchers
@@ -87,6 +92,51 @@ class SettingsViewModel @Inject constructor(
         val k = key?.trim()?.takeIf { it.isNotEmpty() } ?: existing?.takeIf { it.hasKey }?.let { secrets.read(it.secretName) }
         io.github.jackwener.dsh.core.provider.fetchModelsResolving(baseUrl, k) { u, kk -> io.github.jackwener.dsh.core.provider.fetchModels(u, kk) }
     }
+    private fun keyFor(existing: ProviderConfig?, typed: String?): String? =
+        typed?.trim()?.takeIf { it.isNotEmpty() } ?: existing?.takeIf { it.hasKey }?.let { secrets.read(it.secretName) }
+
+    /** 测试并保存: real chat requests with a tool, [candidates] in order (ModelVerify.kt). [onTesting] runs on an IO thread. */
+    suspend fun verifyModels(baseUrl: String, key: String?, existing: ProviderConfig?, candidates: List<String>, onTesting: (String) -> Unit): VerifyOutcome =
+        withContext(Dispatchers.IO) {
+            val k = keyFor(existing, key)
+            verifyCandidates(candidates, onTesting = onTesting) { probeModel(baseUrl, k, it) }
+        }
+
+    /** Saves a tested provider and, when [main] is set, makes that model the main model. */
+    suspend fun saveTested(p: ProviderConfig, key: String?, main: String?) {
+        saveProvider(p, key)
+        if (main != null) repo.setModel(p.id, main)
+    }
+
+    /** A single-model test from the provider list (重新测试) or the default-model picker; null when idle. */
+    data class ModelCheck(val provider: String, val model: String, val busy: Boolean, val ok: Boolean = false, val message: String? = null)
+    val modelCheck = MutableStateFlow<ModelCheck?>(null)
+
+    /**
+     * Tests [model] of [p] the way 测试并保存 does and records the result. [select]: the user picked
+     * it as the main model; a verified model switches at once, an untested one only after it
+     * passes (or when the provider is unreachable right now: switched, flagged as untested).
+     */
+    fun checkModel(p: ProviderConfig, model: String, select: Boolean) = viewModelScope.launch {
+        if (modelCheck.value?.busy == true) return@launch
+        if (select && model in p.verified) { modelCheck.value = null; repo.setModel(p.id, model); return@launch }
+        modelCheck.value = ModelCheck(p.id, model, busy = true)
+        val f = withContext(Dispatchers.IO) { probeModel(p.baseUrl, keyFor(p, null), model) }
+        repo.updateProvider(p.id) { cur -> cur.copy(verified = if (f == null) (cur.verified + model).distinct() else cur.verified - model) }
+        modelCheck.value = when {
+            f == null -> {
+                if (select) repo.setModel(p.id, model)
+                ModelCheck(p.id, model, busy = false, ok = true, message = context.getString(R.string.prov_test_ok, model))
+            }
+            select && f is VerifyFailure.Network -> {
+                repo.setModel(p.id, model)
+                ModelCheck(p.id, model, busy = false, message = context.getString(R.string.model_pick_offline, model, describeFailure(context, f)))
+            }
+            select -> ModelCheck(p.id, model, busy = false, message = context.getString(R.string.model_pick_failed, model, describeFailure(context, f)))
+            else -> ModelCheck(p.id, model, busy = false, message = describeFailure(context, f))
+        }
+    }
+
     fun setEffort(e: Effort) = viewModelScope.launch { repo.setEffort(e) }
     fun setTheme(t: ThemeMode) = viewModelScope.launch { repo.setTheme(t) }
     fun setWorkDetails(w: WorkDetails) = viewModelScope.launch { repo.setWorkDetails(w) }

@@ -646,7 +646,7 @@
     <string name="prov_base_url">Base URL</string>
     <string name="prov_base_url_hint">OpenAI-compatible, usually ending in /v1</string>
     <string name="prov_http_warning">http is unencrypted: the API key and conversations can be seen by others on the same network. Use it only on your own LAN.</string>
-    <string name="prov_local_warning">This is the phone\'s own address. For magpie on your computer, enter the computer\'s LAN IP, e.g. http://192.168.1.5:port/v1</string>
+    <string name="prov_local_warning">This is the phone\'s own address. For a server on your computer, enter the computer\'s LAN IP, e.g. http://192.168.1.5:port/v1</string>
     <string name="prov_key_optional">API Key (optional)</string>
     <string name="prov_key_saved">Saved; leave empty to keep it</string>
     <string name="prov_get_key">Get an API key</string>
@@ -746,4 +746,38 @@
     <string name="voice_err_audio">Can\'t record; the microphone may be in use. Tap to retry</string>
     <string name="voice_err_language">Speech recognition doesn\'t support this language. Type instead</string>
     <string name="voice_err_other">Speech recognition failed. Tap to retry</string>
+    <string name="prov_hint_ollama">Ollama only accepts connections from the computer itself by default. On the computer, set the environment variable OLLAMA_HOST=0.0.0.0 and restart Ollama, then replace localhost in the address with the computer\'s LAN IP. The phone and computer must be on the same Wi-Fi.</string>
+    <string name="prov_hint_lmstudio">In LM Studio\'s local server settings, turn on Serve on Local Network and start the server, then replace localhost in the address with the computer\'s LAN IP. The phone and computer must be on the same Wi-Fi.</string>
+    <string name="prov_test_save">Test and save</string>
+    <string name="prov_testing_list">Fetching the model list…</string>
+    <string name="prov_testing_model">Sending a test message with %1$s…</string>
+    <string name="prov_test_ok_main">Test passed: %1$s can chat and call tools. It is now the default model.</string>
+    <string name="prov_test_ok">Test passed: %1$s can chat and call tools.</string>
+    <string name="prov_test_earlier">%1$s, tried first, did not pass: %2$s</string>
+    <string name="prov_test_none">The provider is reachable, but none of the tested models work. The provider was saved; the default model is unchanged. Check other models and tap Test and save again.</string>
+    <string name="prov_test_stopped">Not saved. %1$s</string>
+    <string name="prov_test_need_model">This provider does not list its models. Type a model ID below, then tap Test and save.</string>
+    <string name="prov_test_no_chat_model">The list has no chat models. Type a model ID below and try again.</string>
+    <string name="prov_done">Done</string>
+    <string name="prov_main_untested">Default model %1$s has not passed the test</string>
+    <string name="prov_retest">Test again</string>
+    <string name="verify_key">The API key is wrong or expired. The provider said: %1$s</string>
+    <string name="verify_unavailable">Your account has not enabled this model or may not use it. The provider said: %1$s</string>
+    <string name="verify_not_found">The provider does not know this model name; check the spelling. The provider said: %1$s</string>
+    <string name="verify_no_tools">This model does not support tool calls, which DSH needs to get things done. The provider said: %1$s</string>
+    <string name="verify_no_tool_call">The model replied but did not call the tool as asked, so it will not work well in DSH.</string>
+    <string name="verify_no_tool_call_reply">The model replied "%1$s" but did not call the tool as asked, so it will not work well in DSH.</string>
+    <string name="verify_quota">Insufficient balance, quota used up, or too many requests. The provider said: %1$s</string>
+    <string name="verify_network">Connection failed: %1$s</string>
+    <string name="verify_server">The provider returned an error (HTTP %1$d): %2$s</string>
+    <string name="verify_bad_response">The provider\'s response could not be read: %1$s</string>
+    <string name="model_pick_testing">Testing %1$s…</string>
+    <string name="model_pick_failed">Did not switch to %1$s. %2$s</string>
+    <string name="model_pick_offline">Switched to %1$s, but the provider is unreachable right now, so it is untested. %2$s</string>
+    <string name="diag_entry">Copy diagnostics</string>
+    <string name="diag_entry_desc">Builds a problem report to paste into a GitHub issue. No API keys, sign-in credentials, conversations or screen content.</string>
+    <string name="diag_title">Diagnostics</string>
+    <string name="diag_note">This is everything in the report. API keys, sign-in credentials, conversations and screen content are not included; IP addresses and emails are hidden. It leaves this page only when you tap Copy or Share; nothing is sent automatically.</string>
+    <string name="diag_copied">Copied</string>
+    <string name="share">Share</string>
 </resources>

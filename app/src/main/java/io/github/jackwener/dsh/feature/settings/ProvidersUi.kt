@@ -50,6 +50,12 @@ import io.github.jackwener.dsh.core.designsystem.Spinner
 import io.github.jackwener.dsh.core.provider.CUSTOM
 import io.github.jackwener.dsh.core.provider.DEEPSEEK_MODELS
 import io.github.jackwener.dsh.core.provider.EffectiveLimits
+import io.github.jackwener.dsh.core.provider.FetchedModels
+import io.github.jackwener.dsh.core.provider.VerifyErrors
+import io.github.jackwener.dsh.core.provider.VerifyFailure
+import io.github.jackwener.dsh.core.provider.VerifyOutcome
+import io.github.jackwener.dsh.core.provider.planSave
+import io.github.jackwener.dsh.core.provider.rankCandidates
 import io.github.jackwener.dsh.core.provider.LimitSource
 import io.github.jackwener.dsh.core.provider.ModelLimits
 import io.github.jackwener.dsh.core.provider.NetDiagnose
@@ -95,15 +101,33 @@ fun ProvidersCard(vm: SettingsViewModel, onOpen: (String) -> Unit) {
     val s by vm.settings.collectAsStateWithLifecycle()
     SettingsGroupTitle(stringResource(R.string.prov_group))
     Text(stringResource(R.string.prov_group_desc), Modifier.padding(start = 4.dp, bottom = 8.dp), style = DshType.xs13, color = c.labelTertiary)
+    val check by vm.modelCheck.collectAsStateWithLifecycle()
     SettingsCard {
         s.providers.forEachIndexed { i, p ->
             SettingsRow(p.name, stringResource(R.string.prov_models_count, p.models.size) + " · " + (Uri.parse(p.baseUrl).host ?: p.baseUrl),
                 onClick = { onOpen(p.id) }, divider = i > 0,
                 trailing = { DSwitch(p.enabled, { vm.setProviderEnabled(p, it) }) })
+            // The main model of this provider has not passed the connection test (never tested, or failed): offer a retest.
+            val main = s.choice.takeIf { it.provider?.id == p.id }?.model
+            val mine = check?.takeIf { it.provider == p.id }
+            if (main != null && (main !in p.verified || mine?.model == main)) {
+                if (main !in p.verified) SettingsRow(stringResource(R.string.prov_main_untested, main), divider = false, titleColor = c.amber,
+                    trailing = {
+                        if (mine?.busy == true) Spinner(14.dp)
+                        else DButton(stringResource(R.string.prov_retest), { vm.checkModel(p, main, select = false) }, variant = BtnVariant.Outline, size = BtnSize.Sm)
+                    })
+                mine?.message?.let { CheckMessage(it, mine.ok) }
+            }
         }
         SettingsRow(stringResource(R.string.prov_add), onClick = { onOpen(NEW_PROVIDER) }, divider = s.providers.isNotEmpty(), titleColor = c.link,
             leading = { DIcon(R.drawable.dsw_plus_outline, size = 16.dp, tint = c.link) })
     }
+}
+
+@Composable
+private fun CheckMessage(text: String, ok: Boolean) {
+    val c = Dsh.colors
+    Text(text, Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, bottom = 12.dp), style = DshType.xxs12, color = if (ok) c.labelTertiary else c.error)
 }
 
 /** 默认模型: DeepSeek models, then each enabled provider's models; effort only for DeepSeek. */
@@ -119,10 +143,17 @@ fun DefaultModelCard(vm: SettingsViewModel) {
                 onClick = { vm.setModel("", id) }, divider = i > 0,
                 trailing = { if (choice.isDeepSeek && choice.model == id) DIcon(R.drawable.dsw_check_outline, size = 16.dp, tint = c.labelPrimary) })
         }
+        val check by vm.modelCheck.collectAsStateWithLifecycle()
         s.providers.filter { it.enabled }.forEach { p ->
             p.models.forEach { m ->
-                SettingsRow(m, p.name, onClick = { vm.setModel(p.id, m) },
-                    trailing = { if (choice.provider?.id == p.id && choice.model == m) DIcon(R.drawable.dsw_check_outline, size = 16.dp, tint = c.labelPrimary) })
+                val mine = check?.takeIf { it.provider == p.id && it.model == m }
+                // Picking an untested model tests it first (ModelVerify.kt); a verified one switches at once.
+                SettingsRow(m, p.name, onClick = { vm.checkModel(p, m, select = true) },
+                    trailing = {
+                        if (mine?.busy == true) Spinner(14.dp)
+                        else if (choice.provider?.id == p.id && choice.model == m) DIcon(R.drawable.dsw_check_outline, size = 16.dp, tint = c.labelPrimary)
+                    })
+                mine?.message?.let { CheckMessage(it, mine.ok) }
             }
         }
         if (choice.isDeepSeek) SettingsRow(stringResource(R.string.effort), stringResource(R.string.effort_desc), stacked = true) {
@@ -195,7 +226,72 @@ private fun ProviderEditor(vm: SettingsViewModel, existing: ProviderConfig?, pre
     var fetchOk by remember { mutableStateOf(false) }
     var fetchNet by remember { mutableStateOf<NetDiagnosis?>(null) }
     var error by remember { mutableStateOf<Int?>(null) }
-    val needsKey = !preset.keyOptional && existing?.hasKey != true
+    // 测试并保存: progress line while testing, then the result (ok = a model passed).
+    var testing by remember { mutableStateOf<String?>(null) }
+    var result by remember { mutableStateOf<Pair<Boolean, String>?>(null) }
+    // A provider added here and saved by an earlier attempt (all models failed): later attempts update it.
+    var savedId by rememberSaveable { mutableStateOf<String?>(null) }
+    val current = existing ?: s.providers.firstOrNull { it.id == savedId }
+    val needsKey = !preset.keyOptional && current?.hasKey != true
+
+    fun applyListing(fetched: FetchedModels<RemoteModel>) {
+        val list = fetched.models
+        fetchOk = true
+        // A bare origin that 404'd but answers under /v1 (#28): adopt the working address.
+        val fixed = fetched.baseUrl != baseUrl.trim().trimEnd('/')
+        if (fixed) baseUrl = fetched.baseUrl
+        fetchState = if (fixed) context.getString(R.string.prov_fetch_ok_v1, list.size, fetched.baseUrl) else context.getString(R.string.prov_fetch_ok, list.size)
+        // A fresh listing replaces what it reports on (fields it dropped are dropped here too).
+        list.forEach { detected[it.id] = it }
+        val r = refreshOffered(offered.toList(), list.map { it.id }, selected.toList() + manual)
+        offered.clear(); offered.addAll(r.offered)
+        missing.clear(); missing.addAll(r.missing)
+    }
+
+    /**
+     * 测试并保存: list the models, then one real chat request with a tool per candidate (ModelVerify.kt).
+     * Key / network trouble saves nothing; a reachable provider whose tested models all fail is saved
+     * without touching the main model; a passing model is recorded as verified (and becomes the
+     * main model for a new provider or the current main route).
+     */
+    suspend fun testAndSave() {
+        result = null
+        testing = context.getString(R.string.prov_testing_list)
+        val listing = vm.fetchModels(baseUrl, key, current)
+        listing.onSuccess(::applyListing)
+        listing.exceptionOrNull()?.let { t ->
+            val f = VerifyErrors.ofThrowable(t)
+            // Anything but a bad key or no connection: the provider may just not offer /models; the real call decides.
+            if (f is VerifyFailure.KeyInvalid || f is VerifyFailure.Network) {
+                testing = null; result = false to context.getString(R.string.prov_test_stopped, describeFailure(context, f)); return
+            }
+        }
+        val listed = listing.getOrNull()?.models
+        val ticked = offered.filter { it in selected }
+        // A new provider's preset suggestion is pre-ticked, not chosen: with a listing, rank everything (the suggestion still leads).
+        val checked = if (existing == null && listed != null && ticked.toSet() == preset.models.toSet()) emptyList() else ticked
+        val main = s.choice.takeIf { current != null && it.provider?.id == current.id }?.model?.takeIf { checked.isEmpty() || it in checked }
+        val candidates = rankCandidates(listed.orEmpty(), presetOf(preset.id), main, checked)
+        if (candidates.isEmpty()) {
+            testing = null; result = false to context.getString(if (listed == null) R.string.prov_test_need_model else R.string.prov_test_no_chat_model); return
+        }
+        val base = baseUrl.trim().trimEnd('/')
+        val outcome = vm.verifyModels(base, key, current, candidates) { m -> testing = context.getString(R.string.prov_testing_model, m) }
+        testing = null
+        val plan = planSave(outcome, checked, current?.verified.orEmpty(), makeMain = existing == null || s.choice.provider?.id == current?.id)
+        if (plan.save) {
+            plan.models.forEach { if (it !in offered) offered.add(it); if (it !in selected) selected.add(it) }
+            val id = current?.id ?: newRouteId(preset.id, s.providers.map { it.id })
+            // Keep the user's order of discovery, checked ones only.
+            val models = offered.filter { it in plan.models }
+            val limits = models.associateWith { stored(it) }.filterValues { !it.isEmpty }
+            vm.saveTested(ProviderConfig(id, preset.id, name.trim().ifEmpty { defaultName }, base, models,
+                enabled = current?.enabled ?: true, hasKey = current?.hasKey ?: false,
+                contextWindow = tokensOrNull(ctxText), maxTokens = tokensOrNull(maxText)?.toIntSat(), limits = limits, verified = plan.verified), key, plan.main)
+            savedId = id
+        }
+        result = (outcome is VerifyOutcome.Passed) to describeOutcome(context, outcome, becameMain = plan.main != null)
+    }
 
     Spacer(Modifier.height(8.dp))
     SettingsCard {
@@ -208,6 +304,7 @@ private fun ProviderEditor(vm: SettingsViewModel, existing: ProviderConfig?, pre
             if (baseUrl.startsWith("http://", ignoreCase = true)) Text(stringResource(R.string.prov_http_warning), style = DshType.xxs12, color = c.error)
             // Warn, but allow saving: something may really listen on the phone (e.g. Termux).
             if (NetDiagnose.isOnDeviceAddress(baseUrl)) Text(stringResource(R.string.prov_local_warning), style = DshType.xxs12, color = c.amber)
+            preset.localHint?.let { Text(stringResource(it), style = DshType.xxs12, color = c.labelTertiary) }
             Text(stringResource(if (preset.keyOptional) R.string.prov_key_optional else R.string.api_key_label), style = DshType.xs13m, color = c.labelSecondary)
             DInput(key, { key = it }, placeholder = if (existing?.hasKey == true) stringResource(R.string.prov_key_saved) else "sk-…", secret = true, keyboardType = KeyboardType.Password)
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -219,19 +316,7 @@ private fun ProviderEditor(vm: SettingsViewModel, existing: ProviderConfig?, pre
                     if (!isHttpUrl(baseUrl)) { error = R.string.prov_err_url; return@DButton }
                     fetchState = "busy"
                     scope.launch {
-                        vm.fetchModels(baseUrl, key, existing).onSuccess { fetched ->
-                            val list = fetched.models
-                            fetchOk = true
-                            // A bare origin that 404'd but answers under /v1 (#28): adopt the working address.
-                            val fixed = fetched.baseUrl != baseUrl.trim().trimEnd('/')
-                            if (fixed) baseUrl = fetched.baseUrl
-                            fetchState = if (fixed) context.getString(R.string.prov_fetch_ok_v1, list.size, fetched.baseUrl) else context.getString(R.string.prov_fetch_ok, list.size)
-                            // A fresh listing replaces what it reports on (fields it dropped are dropped here too).
-                            list.forEach { detected[it.id] = it }
-                            val r = refreshOffered(offered.toList(), list.map { it.id }, selected.toList() + manual)
-                            offered.clear(); offered.addAll(r.offered)
-                            missing.clear(); missing.addAll(r.missing)
-                        }.onFailure { t ->
+                        vm.fetchModels(baseUrl, key, current).onSuccess(::applyListing).onFailure { t ->
                             fetchOk = false
                             // Same wording as a failed chat turn (Stream.kt ErrorRow): cause, hint, raw detail.
                             fetchNet = NetDiagnose.ofException(t)
@@ -311,29 +396,29 @@ private fun ProviderEditor(vm: SettingsViewModel, existing: ProviderConfig?, pre
     }
 
     error?.let { Text(stringResource(it), Modifier.padding(start = 4.dp, top = 12.dp), style = DshType.xs13, color = c.error) }
+    testing?.let { t ->
+        Row(Modifier.padding(start = 4.dp, top = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            Spinner(12.dp); Text(t, style = DshType.xs13, color = c.labelTertiary)
+        }
+    }
+    result?.let { (ok, text) -> Text(text, Modifier.padding(start = 4.dp, top = 12.dp), style = DshType.xs13, color = if (ok) c.labelSecondary else c.error) }
+    val passed = result?.first == true
     Row(Modifier.fillMaxWidth().padding(top = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End), verticalAlignment = Alignment.CenterVertically) {
-        if (existing != null) DButton(stringResource(R.string.prov_delete), { vm.deleteProvider(existing); onDone() }, variant = BtnVariant.Danger, size = BtnSize.Sm)
+        if (current != null) DButton(stringResource(R.string.prov_delete), { vm.deleteProvider(current); onDone() }, variant = BtnVariant.Danger, size = BtnSize.Sm)
         Spacer(Modifier.weight(1f))
-        DButton(stringResource(R.string.cancel), onDone, variant = BtnVariant.Outline, size = BtnSize.Sm)
-        DButton(stringResource(R.string.save), {
-            error = when {
-                !isHttpUrl(baseUrl) -> R.string.prov_err_url
-                needsKey && key.isBlank() -> R.string.prov_err_key
-                selected.isEmpty() -> R.string.prov_err_models
-                (listOf(ctxText, maxText) + overrides.values.flatMap { listOf(it.first, it.second) }).any { parseTokenInput(it).isFailure } -> R.string.prov_err_limits
-                else -> null
-            }
-            if (error == null) scope.launch {
-                val id = existing?.id ?: newRouteId(preset.id, s.providers.map { it.id })
-                // Keep the user's order of discovery, checked ones only.
-                val models = offered.filter { it in selected }
-                val limits = models.associateWith { stored(it) }.filterValues { !it.isEmpty }
-                vm.saveProvider(ProviderConfig(id, preset.id, name.trim().ifEmpty { defaultName }, baseUrl.trimEnd('/'), models,
-                    enabled = existing?.enabled ?: true, hasKey = existing?.hasKey ?: false,
-                    contextWindow = tokensOrNull(ctxText), maxTokens = tokensOrNull(maxText)?.toIntSat(), limits = limits), key)
-                onDone()
-            }
-        }, size = BtnSize.Sm)
+        if (passed) DButton(stringResource(R.string.prov_done), onDone, size = BtnSize.Sm)
+        else {
+            DButton(stringResource(R.string.cancel), onDone, variant = BtnVariant.Outline, size = BtnSize.Sm)
+            DButton(stringResource(R.string.prov_test_save), {
+                error = when {
+                    !isHttpUrl(baseUrl) -> R.string.prov_err_url
+                    needsKey && key.isBlank() -> R.string.prov_err_key
+                    (listOf(ctxText, maxText) + overrides.values.flatMap { listOf(it.first, it.second) }).any { parseTokenInput(it).isFailure } -> R.string.prov_err_limits
+                    else -> null
+                }
+                if (error == null) scope.launch { testAndSave() }
+            }, size = BtnSize.Sm, enabled = testing == null)
+        }
     }
 }
 
