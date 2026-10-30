@@ -669,9 +669,10 @@ if (PHASES.has('F')) {
       if (req.method !== 'POST' || req.url !== '/v1/chat/completions') { res.writeHead(404); res.end(); return }
       res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' })
       const chunk = o => res.write(`data: ${JSON.stringify({ id: 'c1', object: 'chat.completion.chunk', created: 1, model: 'fake-chat', ...o })}\n\n`)
-      chunk({ choices: [{ index: 0, delta: { role: 'assistant', content: reply.slice(0, 6) }, finish_reason: null }] })
-      chunk({ choices: [{ index: 0, delta: { content: reply.slice(6) }, finish_reason: null }] })
-      chunk({ choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] })
+      // include_usage streams may carry null until the final usage-only frame (#20).
+      chunk({ choices: [{ index: 0, delta: { role: 'assistant', content: reply.slice(0, 6) }, finish_reason: null }], usage: null })
+      chunk({ choices: [{ index: 0, delta: { content: reply.slice(6) }, finish_reason: null }], usage: null })
+      chunk({ choices: [{ index: 0, delta: {}, finish_reason: 'stop' }], usage: null })
       chunk({ choices: [], usage: { prompt_tokens: 1200, completion_tokens: 7, total_tokens: 1207 } })
       res.end('data: [DONE]\n\n')
     })
