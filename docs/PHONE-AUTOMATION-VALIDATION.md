@@ -40,8 +40,9 @@ The 24 tests exercise:
   and native paragraphs longer than the compact 120-character preview.
 - Fresh OCR target taps, retired text ids, a changed canvas before tapping, a canvas changed while
   recognition is running, and continuously moving content that must not receive text coordinates.
-- Reading and collecting two pages of Android Settings; native Xiaomi Calculator buttons and a
-  verified arithmetic result; single-tool versus compound-tool dispatch measurements.
+- Reading Android Settings with a two-page cap (the recorded run actually returned one page and
+  13 items); native Xiaomi Calculator buttons and a verified arithmetic result; single-tool versus
+  compound-tool dispatch measurements.
 
 The fixture is a real, non-exported debug Activity with Android widgets and a custom-drawn canvas.
 The Settings and Calculator tests operate the installed system apps. The original input method
