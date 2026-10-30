@@ -117,6 +117,11 @@ function filesOf(dir) {
   return out
 }
 
+/** Script extensions a skill directory ships (py, sh, …): may not run on a phone. */
+export function skillScripts(dir) {
+  return [...new Set(filesOf(dir).map(f => SCRIPT_EXT.exec(f)?.[1]?.toLowerCase()).filter(Boolean))]
+}
+
 export function createSkills({ paths, fetchImpl = fetch, env = process.env }) {
   const previews = new Map()
   const root = () => paths.skills
@@ -186,7 +191,9 @@ export function createSkills({ paths, fetchImpl = fetch, env = process.env }) {
       return names.map(name => {
         let parsed = {}
         try { parsed = parseSkill(readFileSync(join(paths.skillsDisabled, name, 'SKILL.md'), 'utf8')) } catch {}
-        return { name, description: parsed.description ?? '', source: 'imported', enabled: false, removable: true }
+        let scripts = []
+        try { scripts = skillScripts(join(paths.skillsDisabled, name)) } catch {}
+        return { name, description: parsed.description ?? '', scripts, source: 'imported', enabled: false, removable: true }
       })
     },
   }

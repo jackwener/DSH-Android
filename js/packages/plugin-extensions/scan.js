@@ -89,7 +89,8 @@ export function scanInstall(nodeModules, changed, roots) {
   for (const name of changed) {
     if (!hard.has(name)) continue
     const file = findBinary(join(nodeModules, name))
-    if (file !== undefined) return { pkg: name, file }
+    // binding.gyp: a native addon meant to be compiled at install (scripts never run here).
+    if (file !== undefined) return { pkg: name, file, code: file.endsWith('binding.gyp') ? 'native-addon' : 'prebuilt-binary' }
   }
   return undefined
 }

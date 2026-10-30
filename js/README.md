@@ -9,7 +9,8 @@ DeepSeek Harness (dsh) **0.2.1-rc.5**, installed unmodified from npm and customi
 | Path | What |
 |---|---|
 | `engine/package.json`, `engine/package-lock.json` | npm project whose production install is the engine tree. dsh is pinned exactly; the lockfile pins every transitive package. |
-| `packages/bundle-android/` | the dsh bundle behind profile `android` (`cordis.patch.yml`) and the `android-env.cjs` preload |
+| `packages/bundle-android/` | the dsh bundle behind profile `android` (`cordis.patch.yml`), the `android-env.cjs` preload and the engine entry `main.mjs` |
+| `packages/plugin-extensions/` | plugins, skills, MCP servers: the phone gate around dsh's plugin manager and the `android/ext/*` SDK methods ([`../docs/PLUGINS-CONTRACT.md`](../docs/PLUGINS-CONTRACT.md)); `boot.js` is main.mjs's pre-boot bookkeeping |
 | `packages/plugin-device/` | capability bridge client (`DSH_BRIDGE_FD`) → dynamic dsh tools |
 | `packages/plugin-guard/` | hardline shell floor, approval policy, budgets, phone system prompt |
 | `packages/plugin-mode/` | session modes: per-conversation tool restriction, skills switch, mode prompt section (`android/session/mode`, ENGINE-CONTRACT §2.5) |
@@ -27,7 +28,10 @@ DeepSeek Harness (dsh) **0.2.1-rc.5**, installed unmodified from npm and customi
 | `test/provider-protocol.test.mjs` | patch 16 end to end: the real adapter against synthetic `node:http` SSE servers (`usage: null` frames, malformed JSON, bare-origin 404, refused port); same `DSH_STAGE_NM` |
 | `test/provider-headers.test.mjs` | patch 18 route headers against a fake OpenCode-Go-like server that refuses a chat without `x-opencode-session`: session id stable across two turns of a session, different across sessions / routes, fresh without a session and for listings; static / secret (`headerEnv`) headers; User-Agent token; same `DSH_STAGE_NM` |
 | `test/gateway-replay.test.mjs` | recorded gateway compatibility suite (patches 14/16/17/18): every `test/fixtures/gateways/<case>.expect.json` replays one raw response body (SSE, JSON completion or error) of a provider (DeepSeek live captures; OpenAI, vLLM, SGLang, NVIDIA NIM, OpenRouter, Ollama, LM Studio, SiliconFlow, Volcano Ark, Moonshot, Zhipu, DashScope, Mistral, MiniMax, Gemini, Azure, magpie-style gateway from their documented formats) through the real adapter and checks text, reasoning, tool calls, usage, finish reason or error code, then the thinking echo on the follow-up request. Add a case = one body + one expectation file ([format](test/fixtures/gateways/README.md)); same `DSH_STAGE_NM` |
-| `test/host-e2e.mjs` | host end-to-end run of the built `engine.zip` with a fake bridge |
+| `test/extensions-unit.test.mjs` | plugin-extensions pure parts: pnpmfile gate, crash attribution / safe mode / overlay migration, sources against a fake GitHub, archives, MCP classification, error mapping: `node --test js/test/extensions-unit.test.mjs` |
+| `test/extensions.test.mjs` | plugins end to end on a built stage with two fake registries, fake MCP servers and real restarts (native refusal before download, scan rollback, web-service precheck, peers, config forms, mirror fallback, integrity, updates, deferred removal, crash suspension, safe mode, engine replacement, MCP, skills); `DSH_STAGE_NM` as below, ~4 min |
+| `test/guard-ask.test.mjs` | plugin-guard's per-plugin ask-before-call |
+| `test/host-e2e.mjs` | host end-to-end run of the built `engine.zip` with a fake bridge; phase X installs real plugins from npm |
 | `test/host-ac8-resume.mjs` | host repro of engine kill + `session/resume` + continuation |
 
 Our packages are plain ESM with no dependencies outside `node:` built-ins; there is no compile step (the vendored adapter is shipped as built upstream).
@@ -51,7 +55,7 @@ Requires node/npm, `patch`, `python3` and access to the npm registry.
 
 Steps:
 
-1. `npm ci --omit=dev --ignore-scripts` in a copy of `engine/` (flat hoisted layout). `overrides: {zod: 4.4.3}`: dsh
+1. `npm ci --omit=dev --ignore-scripts` in a copy of `engine/` (flat hoisted layout; includes pnpm 11, pinned). `overrides: {zod: 4.4.3}`: dsh
    pins zod exactly in ~60 packages; without the override npm nests ~50 copies (~250 MiB). Install scripts are not
    needed (node-pty/koffi only pick prebuilds, which are pruned).
 2. Copy the four `@dsh-android/*` packages and the vendored `@snnh/dsh-llm-service-lite` into `node_modules/` (copies,
@@ -63,16 +67,18 @@ Steps:
 6. Prune: packages reachable only through `llm-pi-ai` (openai, anthropic, google, aws SDKs; the row is disabled),
    `libreoffice-kit-wasm`, `sherpa-onnx*`, the web client UI and inspector, native `@img/sharp-*`, other-platform native
    packages, node-pty prebuilds/sources, every `*.node/.dll/.dylib/.exe`, `.bin`, `*.map`, `*.d.ts`, READMEs, and
-   package-root `docs|test|tests|examples|benchmark`.
-7. Verify: no symlinks, entry point present, patch markers present.
+   package-root `docs|test|tests|examples|benchmark`; in pnpm: node-gyp, the reflink binaries, Windows helpers.
+   Then `plugin-extensions/installation-packages.json` lists the shipped `@deepseek-ai/*` packages (the gate peers them).
+7. Verify: no symlinks, entry points present, patch markers present, the pruned pnpm runs, engines.dsh of our packages = the bundled dsh.
 8. `engine-version.txt` = `<dsh version>-a<10 hex of the sha256 of all inputs>`; deterministic zip; sha256; size report.
 
 Zip layout (= `ENGINE_DIR` on the device):
 
 ```
 package.json  package-lock.json  engine-version.txt
-node_modules/@deepseek-ai/dsh/lib/bin.js       ← entry point
-node_modules/@dsh-android/{bundle-android,plugin-device,plugin-guard,plugin-mode,plugin-account}/
+node_modules/@dsh-android/bundle-android/main.mjs  ← entry point (dsh's lib/bin.js + plugin bookkeeping)
+node_modules/pnpm/bin/pnpm.mjs                     ← run by dsh's plugin manager on the node launcher
+node_modules/@dsh-android/{bundle-android,plugin-device,plugin-guard,plugin-mode,plugin-account,plugin-extensions}/
 node_modules/…                                  ← flat npm tree
 ```
 
@@ -87,19 +93,33 @@ Patch 07 adds `android` to dsh's shipped profile templates, so `--profile androi
    - persona "DSH, an AI agent running on the user's own Android phone";
    - `sandbox-policy` → `danger-full-access` with `workspaceRoot = $HOME`, `approval` → `ask`. Android has no
      bwrap/landlock/seatbelt; safety comes from approvals and the hardline floor;
+   - `android-extensions` mounts dsh's `plugin-manager` and `plugin-market` on first use (the dsh-base row stays off:
+     ~110 ms of boot); the DeepSeek routes wait 1 ms, not 5 s, for `/models` on first connect (rc.5's listing);
    - disabled rows: `plugin-manager`, `session-telemetry-otel`, `otel`, `llm-pi-ai`, `ptc-runtime`, `workflow-ptc`,
      `tool-workflow`, `skill-office`, `workspace-dependencies`, `tmux-context` (otel + pi-ai halve boot-time modules);
-   - inserted rows: `dsh-time-context`, `dsh-tool-ask-user`, `android-device`, `android-guard`, `android-account`.
+   - inserted rows: `dsh-time-context`, `dsh-tool-ask-user`, `android-extensions`, `android-device`, `android-guard`, `android-account`.
    - Model default stays dsh-base's `deepseek-official` / `deepseek-flash`.
 
-Only the bundle list is persisted in `DSH_HOME`, so later engine versions can change `bundle-android` freely. User
-overrides go in `$DSH_HOME/profiles/android/cordis.patch.yml`. Inspect the composed tree with
+Only the bundle list is persisted in `DSH_HOME`, so later engine versions can change `bundle-android` freely. The
+profile's `cordis.patch.yml` belongs to dsh (plugin manager, config editor); the app's settings layer is
+`$DSH_HOME/android/app-layer.patch.yml`, passed by main.mjs as a `--patch` overlay (PLUGINS-CONTRACT §1). Inspect the composed tree with
 `node …/bin.js --profile android --dump-config`.
 
 `android-env.cjs` (loaded with `--require`) restores what `AT_SECURE` makes Node ignore: `os.tmpdir()` from `TMPDIR`,
 the compile cache, extra CA certificates, and `TZ` from `DSH_ANDROID_TZ`.
 
 ## Plugins
+
+### plugin-extensions
+
+Third-party plugins are dsh bundles installed by dsh's own plugin manager into `$DSH_HOME/profiles/android`
+(hoisted, copied, no symlinks; outside the engine directory, so engine updates keep them). pnpm is the bundled
+pnpm 11 run on the node launcher `libdshnode.so` (`profileContext.packageManager`, set by main.mjs). Gates:
+`pnpmfile.cjs` (readPackage: native modules refused before any download, native optional / platform packages
+skipped, `@deepseek-ai/*` and `sharp` made peers so plugins share the engine's instances), `scan.js` (binaries no
+manifest declared), `precheck.js` (row modules imported in a worker; web-only services → refused). `boot.js` runs
+before dsh: crash attribution (`last-crash.json` stack → one bundle → suspended), safe mode after two unready boots,
+profile pnpm settings, overlay migration. Methods, files and error codes: `docs/PLUGINS-CONTRACT.md`.
 
 ### plugin-device
 
@@ -182,6 +202,7 @@ silently skipping. All patches are inert on desktop Linux unless the correspondi
 | `16-llm-lite-usage-null-parse-errors` | `@snnh/dsh-llm-service-lite` (vendored) | (#20, #28) OpenAI-compatible gateways (and OpenAI itself with `include_usage`) send `"usage": null` on every content frame; `usageOf` only skipped `undefined`, threw a `TypeError` on the first frame, and `classifyTransport` called every `TypeError` a network failure: `TRANSPORT`, retried ~25 s, shown as "can't reach the model service" with only `host:port`. Now: chat-completions treats null / non-object `usage`, `prompt_tokens_details`, `error`, `choices[i]`, `delta`, `tool_calls[i]` as absent (anthropic / responses already went through `asRecord`). `TRANSPORT` = undici `TypeError('fetch failed')`, a `TypeError` over a coded cause (`terminated` ← `UND_ERR_SOCKET`), or a bare network code; any other uncoded `TypeError`/`RangeError`/`SyntaxError` is `MALFORMED_RESPONSE` (not retried): `llm-service-lite: could not parse the provider's response: <Name>: <message>` (the app shows 模型服务返回的数据格式不兼容). A cause-less transport failure names the error itself (`(TypeError: fetch failed)`). A 404 says `HTTP 404 Not Found from <origin>` and, for a base URL without a path, suggests `<origin>/v1` (NVIDIA NIM). Exports `notFoundMessage`. |
 | `17-llm-lite-reasoning-echo-gateway-compat` | `@snnh/dsh-llm-service-lite` (vendored) | **Thinking echo-back.** The chat wire read thinking only from `reasoning_content` and sent it back only as `reasoning_content`, only for model ids whose catalog family declares replay. Thinking is now read from `reasoning_content`, `reasoning` (OpenRouter, vLLM, Ollama), `reasoning_details` (OpenRouter, MiniMax; merged by index, signatures kept) and thinking parts of an array `content` (Mistral); Gemini's per-call `extra_content` is kept. The finish chunk records, as adapter-private replay state on the assistant message (`source.replayState.response`, kind `llm-service-lite-chat`), which fields / shape it arrived in and the endpoint (base URL origin + path). The next request writes it back in that field / shape only to the same provider route *and* base URL: always on tool-call turns, on other turns only when the family/capabilities declare replay, never with `replayReasoning: false`; `reasoning_details` / `extra_content` only to the same model. A 400 naming an echoed field is retried once without echo and the base URL remembered. History without a record keeps the upstream rule. **Gateway compatibility** (found by `gateway-replay`): JSON (non-streaming) bodies; any `finish_reason` ends the turn (`stop` + calls = tool-calls, `error`/`network_error` = `SERVER`); tool calls matched by id then index (missing index, reused index 0, repeated names, missing ids synthesized, `""` arguments → `{}`); usage inside the choice (Moonshot), `prompt_cache_hit_tokens` / `cached_tokens`; error bodies `{"error":"…"}`, `{"detail":…}`, bare JSON strings; LM Studio's 200 `Unexpected endpoint` → 404 hint; CJK / gateway balance wording and 403 + balance → `QUOTA`. |
 | `18-llm-lite-route-headers-model-access` | `@snnh/dsh-llm-service-lite` (vendored) | **Route headers** (#32: OpenCode Go refuses chats without `x-opencode-session`). New route fields: `sessionHeader` (every model request of a harness session carries sha256(tag, route, sessionId)[0..32]: stable for the session and across restarts, unlinkable to the id, different per session / route; fresh random id without a session and on model listings), `headerEnv` (header → credential reference, resolved per request like `apiKeyEnv`; never replaces the key's authorization), `userAgent` (product token in front of the harness UA: `DSH-Android/0.2.6 deepseek-harness/…`; a declared User-Agent header wins). Final headers are lower-cased so declared headers replace defaults case-insensitively. **`MODEL_NOT_AVAILABLE`**: a 4xx (not 401/402/429) saying the model is not activated (未开通, Ark `ModelNotOpen`), or that access is denied (on a 403, or without "does not exist" wording: DashScope `Model.AccessDenied`, Zhipu 1220, SiliconFlow 30011, OpenAI project access), was AUTH / INVALID_REQUEST; now its own code (not retried), message `llm-service-lite: model "<id>" is not available to this account: <server text>`. The app maps it (`NetDiagnose.modelUnavailableOf`). |
+| `19-tool-command-owners` | `dsh-tools`, `dsh-commands` | `register()` records the Loader entry (fiber chain → `fiber.entry`) that registers each tool / command; `ownerOf(name)` returns `{ entryId, rowId, moduleName }`. plugin-extensions maps rows to third-party bundles: mode category `extensions`, ask-before-call, "provides" lists. Relies on cordis-loader's `fiber.entry`: re-check on every dsh bump. |
 
 Not patched: `terminal-bash` (`/bin/bash` default) and `dsh-api-workspace-controller` are not mounted by
 dsh-base/sdk-app; `subprocess-local`'s `/bin/sh` fallback is Linux-only (Android uses plain `child_process.spawn`; its

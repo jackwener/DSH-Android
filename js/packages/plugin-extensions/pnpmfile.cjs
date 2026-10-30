@@ -5,6 +5,12 @@
 // so the rules follow the engine. readPackage runs during resolution: a throw stops pnpm
 // before any tarball is downloaded or any profile file is written.
 //
+// pnpm passes the registry's abbreviated metadata (dependencies, optionalDependencies, bin,
+// os/cpu, hasInstallScript — no scripts, no gypfile), so dependency names carry most of the
+// signal: every common native module depends on node-addon-api, nan, bindings, node-gyp-build,
+// prebuild-install or @mapbox/node-pre-gyp. A package that ships binding.gyp without such a
+// dependency is caught by the binary scan after pnpm (scan.js).
+//
 // Per manifest (the profile's own root manifest excluded):
 //  - a hard native dependency (build scripts, gyp/prebuild tooling, a known native package)
 //    → throw `DSHA_NATIVE <name>@<version> <code> <detail>`; codes: native-addon,
@@ -67,8 +73,26 @@ function refuse(pkg, reason) {
   throw new Error(`DSHA_NATIVE ${pkg.name}@${pkg.version} ${reason.code} ${reason.detail}`)
 }
 
+/** Names some package asked for only as optional, and names some package needs (resolution order: parents first). */
+const optionalOnly = new Set()
+const required = new Set()
+
+/** A native package reached only through optionalDependencies: pnpm skips an optional dependency that does not fit the platform. */
+function skipOptional(pkg, reason) {
+  report({ kind: 'skipped-optional', name: pkg.name, version: pkg.version, dependencies: [pkg.name], ...reason })
+  pkg.os = ['dsh-android-unsupported']
+  pkg.dependencies = {}
+  pkg.optionalDependencies = {}
+  return pkg
+}
+
 function readPackage(pkg) {
-  if (isRoot(pkg)) return pkg
+  if (isRoot(pkg)) {
+    for (const dep of Object.keys(pkg.dependencies ?? {})) required.add(dep)
+    return pkg
+  }
+  const native = ownReason(pkg) ?? Object.keys(pkg.dependencies ?? {}).map(dependencyReason).find(Boolean)
+  if (native !== undefined && optionalOnly.has(pkg.name) && !required.has(pkg.name)) return skipOptional(pkg, native)
   const own = ownReason(pkg)
   if (own !== undefined) refuse(pkg, own)
   const skipped = []
@@ -84,6 +108,8 @@ function readPackage(pkg) {
     }
   }
   const deps = pkg.dependencies ?? {}
+  for (const dep of Object.keys(deps)) required.add(dep)
+  for (const dep of Object.keys(pkg.optionalDependencies ?? {})) if (!required.has(dep)) optionalOnly.add(dep)
   for (const dep of Object.keys(deps)) {
     if (SHARED.has(dep) || (dep.startsWith('@deepseek-ai/') && shipped.has(dep))) {
       pkg.peerDependencies = { ...pkg.peerDependencies, [dep]: deps[dep] }

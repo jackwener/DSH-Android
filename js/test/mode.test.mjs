@@ -189,3 +189,20 @@ test('guidance sections of hidden tools are dropped', () => {
   assert.equal(withoutHiddenToolSections(sections, normalizeMode({ id: 'default' })), sections)
   assert.equal(withoutHiddenToolSections(sections, undefined), sections)
 })
+
+test('category extensions: MCP tools and third-party plugin tools; hidden unless the mode lists it', () => {
+  const isExtension = name => name === 'hello_world'
+  assert.equal(categoryOf('mcp__github__create_issue'), 'extensions')
+  assert.equal(categoryOf('hello_world', isExtension), 'extensions')
+  assert.equal(categoryOf('hello_world'), undefined)
+  assert.equal(categoryOf('bash', () => true), 'shell', 'built-in categories win')
+  const readOnly = normalizeMode({ id: 'look', tools: ['files_read'] })
+  const withExt = normalizeMode({ id: 'all', tools: ['files_read', 'extensions'] })
+  assert.deepEqual([...withExt.tools], ['files_read', 'extensions'], 'extensions is a known category')
+  assert.equal(excludes(readOnly, 'mcp__x__y'), true)
+  assert.equal(excludes(readOnly, 'hello_world', () => undefined, isExtension), true)
+  assert.equal(excludes(withExt, 'hello_world', () => undefined, isExtension), false)
+  assert.equal(excludes(normalizeMode({ id: 'default' }), 'mcp__x__y'), false, 'the default mode hides nothing')
+  // a device tool is never an extension, whatever the resolver says
+  assert.equal(excludes(normalizeMode({ id: 'ext-only', deviceGroups: [], tools: ['extensions'] }), 'file_list', n => DEVICE[n], () => true), true)
+})

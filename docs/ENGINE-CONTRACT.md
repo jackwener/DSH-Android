@@ -8,8 +8,12 @@ The Android app (Kotlin) and the embedded dsh engine (Node 24 in process `:engin
 
 ```
 node --expose-internals <NODE_OPTIONS flags> --require <ENGINE_DIR>/node_modules/@dsh-android/bundle-android/android-env.cjs \
-     <ENGINE_DIR>/node_modules/@deepseek-ai/dsh/lib/bin.js --profile android
+     <ENGINE_DIR>/node_modules/@dsh-android/bundle-android/main.mjs
 ```
+
+`main.mjs` is dsh's own CLI (`@deepseek-ai/dsh/lib/bin.js --profile android`) plus the plugin bookkeeping of
+[`PLUGINS-CONTRACT.md`](PLUGINS-CONTRACT.md) §1 (crash attribution, safe mode, the app layer as a `--patch` overlay,
+the bundled pnpm as dsh's package manager). Arguments after it reach the booted app like bin.js's inner arguments.
 
 `--expose-internals` replaces the `node-addon-require-builtin` native addon (js patch 02); Node rejects it in
 `NODE_OPTIONS`, so it is argv-only (`EngineRuntimeEnv.nodeArgv`). stderr goes to `<filesDir>/logs/engine.log`
@@ -29,7 +33,9 @@ Environment (set with `Os.setenv` before start):
 | `HOME` | `<filesDir>/home` (also the default workspace / cwd) |
 | `TMPDIR` | `<cacheDir>/tmp` |
 | `SHELL` | `/system/bin/sh` |
-| `PATH` | `<filesDir>/bin:/system/bin:/system/xbin` (`files/bin/rg` → symlink to `<nativeLibraryDir>/librg.so`) |
+| `PATH` | `<filesDir>/bin:/system/bin:/system/xbin` (`files/bin/rg` → `<nativeLibraryDir>/librg.so`, `files/bin/node` → `<nativeLibraryDir>/libdshnode.so`) |
+| `DSH_NODE_BIN` | `<nativeLibraryDir>/libdshnode.so`, the node launcher for engine children (pnpm, npm stdio MCP servers). Optional: the engine falls back to `$DSH_NATIVE_DIR/libdshnode.so` and exports the value it uses |
+| `DSH_PLUGIN_REGISTRY`, `DSH_PLUGIN_FALLBACK_REGISTRIES`, `DSH_ANDROID_SAFE_MODE`, `DSH_MCP_*` | plugin download source, safe-mode start, MCP header secrets: [`PLUGINS-CONTRACT.md`](PLUGINS-CONTRACT.md) §1 |
 | `DSH_NATIVE_DIR` | `<nativeLibraryDir>` (native addons ship there as `libdsh_pty.so`, `libdsh_flock.so`) |
 | `DSH_BRIDGE_FD` | fd number of the capability socket (see §3) |
 | `DEEPSEEK_API_KEY` | decrypted key (never logged); **absent** when the user has no API key (account login, or nothing yet) |
@@ -46,10 +52,12 @@ Environment (set with `Os.setenv` before start):
 
 `ENGINE_DIR` = `<filesDir>/engine/<first 16 hex chars of engine.sha256>/`, unpacked from the APK asset `engine.zip` (flat tree, **no symlinks**) when its `.installed` marker is missing; other version directories are deleted. The hash only keys the directory; it is not re-verified on the device (the APK signature covers the asset).
 
-### 1.1 User patch layer (third-party providers)
+### 1.1 App settings layer (third-party providers)
 
-Before every engine start the app writes `$DSH_HOME/profiles/android/cordis.patch.yml` (atomically, only when the
-text changed; `core/provider/Providers.kt` `renderProfilePatch`). dsh applies this layer after every bundle, so each
+Before every engine start the app writes `$DSH_HOME/android/app-layer.patch.yml` (atomically, only when the
+text changed; `core/provider/Providers.kt` `renderProfilePatch`). The engine entry passes it to dsh as a `--patch`
+overlay, the highest layer (after every bundle, the profile's `cordis.patch.yml` and `$DSH_HOME/cordis.patch.yml`).
+The profile's own `cordis.patch.yml` belongs to dsh (plugin manager, config editor; PLUGINS-CONTRACT §1.2), so each
 entry replaces that row's whole `config`. The app is the file's only writer (no Web settings surface runs on the
 phone) and fully regenerates it; it holds no secret. Values are JSON (valid YAML). Contents:
 
@@ -193,11 +201,14 @@ interface SessionMode {          // `mode` of android/session/mode; null = unres
                                  //   shell: bash, pwsh, terminal_*, job_*   files_read: read, read_image, glob, grep
                                  //   files_write: write, edit   web: web_search, web_fetch
                                  //   subagent: subagent, subagent_fork, list_subagent_models, send_message, interrupt_agent, list_agents
+                                 //   extensions: tools of third-party plugins (js patch 19 ownership) and of MCP servers (mcp__*)
   skills?: boolean               // false hides the `skill` tool (and with it dsh's skill catalog); default true
 }
 ```
 
 Tools in no category (ask_user_question, todo_write, goals, working_directory, exit_plan_mode, …) are never hidden.
+`extensions` must be listed for a restricted mode to keep plugin and MCP tools: the read-only built-in modes leave it
+out (nothing says a plugin tool only reads); a user mode that lists every built-in category should get it on migration.
 Unknown category ids are ignored; the default mode (`{ id: "default" }`, nothing restricted) changes nothing.
 
 Per root session (subagents resolve to their root, like approvals), for every agent of the conversation —
@@ -216,6 +227,11 @@ on `agent/created` (new, resumed, cleared, compacted) and when the app sends the
 The app lets the user pick the mode only before the conversation's first message, so a mode never changes mid-history
 (an edited user mode applies from the next prompt). CapabilityHub additionally refuses device calls of a group the
 session's mode excludes (`not_authorized`). `capability/list` stays global.
+
+### 2.6 Extensions — `@dsh-android/plugin-extensions`
+
+Plugins, skills and MCP servers: `android/ext/*` methods and `android.ext.*` notifications, specified in
+[`PLUGINS-CONTRACT.md`](PLUGINS-CONTRACT.md) §3–§5.
 
 ## 3. Capability channel (`DSH_BRIDGE_FD`)
 

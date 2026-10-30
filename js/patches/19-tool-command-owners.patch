@@ -72,3 +72,46 @@
  	}
  	/**
  	* Restrict global tools for the calling agent scope. Empty filters, unknown
+--- a/@deepseek-ai/dsh-commands/lib/index.js
++++ b/@deepseek-ai/dsh-commands/lib/index.js
+@@ -265,7 +265,39 @@
+ 		*/
+ 		register(definition) {
+ 			const registered = normalizeDefinition(definition);
+-			return this.layers.effect(this.ctx, (layer) => layer.commands.insert(registered.definition.name, registered), { label: "commands.register()" });
++			const dispose = this.layers.effect(this.ctx, (layer) => layer.commands.insert(registered.definition.name, registered), { label: "commands.register()" });
++			// DSH-Android (js patch 19): remember which Loader entry registers each command.
++			const name = registered.definition.name;
++			let fiber = this.ctx?.fiber;
++			const seen = /* @__PURE__ */ new Set();
++			let owner;
++			while (fiber !== void 0 && fiber !== null && !seen.has(fiber)) {
++				seen.add(fiber);
++				if (fiber.entry) {
++					owner = { entryId: fiber.entry.id, rowId: fiber.entry.options?.id, moduleName: fiber.entry.options?.name };
++					break;
++				}
++				const parent = fiber.parent?.fiber;
++				if (parent === fiber) break;
++				fiber = parent;
++			}
++			if (owner === void 0) return dispose;
++			const owners = this.registrationOwners ??= /* @__PURE__ */ new Map();
++			owners.set(name, [...owners.get(name) ?? [], owner]);
++			return () => {
++				const left = (owners.get(name) ?? []).filter((item) => item !== owner);
++				if (left.length === 0) owners.delete(name);
++				else owners.set(name, left);
++				return dispose();
++			};
++		}
++		/**
++		* DSH-Android (js patch 19): the Loader entry that registered the most recent live command named `name`.
++		* @param name - command name.
++		* @returns `{ entryId, rowId, moduleName }`, or undefined outside any Loader entry.
++		*/
++		ownerOf(name) {
++			return this.registrationOwners?.get(name)?.at(-1);
+ 		}
+ 		/**
+ 		* Register the sole authority that resolves staged file receipts for command submissions.

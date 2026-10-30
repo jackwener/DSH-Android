@@ -19,6 +19,7 @@ import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { DEFAULT_INDEXES, bundlesOf, isThirdParty, registryPlanFromEnv, paths as pathsOf, preparePnpmProject, readManifest, readState, removeTree, writeState } from './boot.js'
 import { fromManagerResult, labelsOf, userError } from './errors.js'
+import { skillScripts } from './skills.js'
 
 export const name = 'android-extensions'
 export const inject = ['loader', 'profileContext']
@@ -29,6 +30,56 @@ const log = (level, message) => process.stderr.write(`[android-extensions] ${lev
 const FIBER = { PENDING: 0, LOADING: 1, ACTIVE: 2, FAILED: 3, DISPOSED: 4, UNLOADING: 5 }
 
 function flatten(rows) { return rows.flatMap(row => [row, ...(row.group && Array.isArray(row.config) ? flatten(row.config) : [])]) }
+
+/**
+ * dsh's projector describes config *files*: every value may also be a `!!js` loader expression
+ * and Schemastery types are nullable. A form edits plain values: drop the expression branch,
+ * collapse single-branch anyOf, and make `[t, "null"]` types plain `t`.
+ */
+export function formSchema(node) {
+  if (Array.isArray(node)) return node.map(formSchema)
+  if (node === null || typeof node !== 'object') return node
+  let out = {}
+  for (const [k, v] of Object.entries(node)) out[k] = (k === 'default' || k === 'const' || k === 'enum' || k === 'examples') ? v : formSchema(v)
+  if (Array.isArray(out.anyOf)) {
+    const branches = out.anyOf.filter(b => !(b && b.$ref === '#/$defs/loaderExpression') && !(b && b.type === 'null' && Object.keys(b).length === 1))
+      .flatMap(b => b && Array.isArray(b.anyOf) && Object.keys(b).length === 1 ? b.anyOf : [b])
+    // A union of constants is a choice list.
+    if (branches.length > 1 && branches.every(b => b && Object.hasOwn(b, 'const'))) {
+      delete out.anyOf
+      return { ...out, enum: branches.map(b => b.const) }
+    }
+    delete out.anyOf
+    if (branches.length === 1) out = { ...branches[0], ...out }
+    else if (branches.length > 1) out.anyOf = branches
+  }
+  if (Array.isArray(out.type)) {
+    const types = out.type.filter(t => t !== 'null')
+    out.type = types.length === 1 ? types[0] : types
+  }
+  return out
+}
+
+/** Readable names of the built-in rows plugins most often change ("会修改：…"). */
+const ROW_LABELS = {
+  web: ['联网搜索', 'web search'], 'tool-web': ['联网搜索工具', 'web tools'], 'web-search-deepseek': ['DeepSeek 搜索', 'DeepSeek search'],
+  'system-prompt': ['系统提示词', 'system prompt'], 'llm-deepseek': ['DeepSeek 模型', 'DeepSeek models'], 'llm-service-lite': ['第三方模型', 'third-party models'],
+  approval: ['审批策略', 'approval policy'], permission: ['权限预设', 'permission presets'], 'sandbox-policy': ['沙箱策略', 'sandbox policy'],
+  'compaction-basic': ['上下文压缩', 'context compaction'], skill: ['技能', 'skills'], 'skill-filesystem': ['技能目录', 'skill folders'],
+  'agent-loop': ['智能体循环', 'agent loop'], tools: ['工具', 'tools'], subagent: ['子代理', 'subagents'],
+}
+export const rowLabel = id => (ROW_LABELS[id]?.[/^zh\b/i.test(process.env.DSH_ANDROID_LOCALE ?? '') ? 0 : 1]) ?? id
+
+/** Ids of built-in rows a bundle patch text changes (its non-insert entries). */
+export async function overridesOfPatch(text) {
+  const { load, Type, DEFAULT_SCHEMA } = (await import('js-yaml')).default ?? await import('js-yaml')
+  const js = new Type('tag:yaml.org,2002:js', { kind: 'scalar', construct: v => v })
+  let doc
+  try { doc = load(String(text), { schema: DEFAULT_SCHEMA.extend([js]) }) } catch { return [] }
+  if (!Array.isArray(doc)) return []
+  const inserted = new Set(flatten(doc.flatMap(e => Array.isArray(e?.insert) ? e.insert : [])).map(r => r?.id))
+  return [...new Set(doc.filter(e => e && e.insert === undefined && typeof e.id === 'string' && !inserted.has(e.id)).map(e => e.id))]
+}
 
 /** First line of an error for one-line status. */
 const firstLine = e => String(e?.message ?? e ?? '').split('\n')[0].slice(0, 300)
@@ -71,18 +122,20 @@ export function apply(ctx) {
   // ── ownership: which tools come from third-party bundles / MCP servers ─────
   /** rowId → third-party bundle name, for the bundles selected at boot. */
   let rowOwners = new Map()
-  const computeRowOwners = async () => {
+  /** Ids of the rows a profile-installed bundle's patch inserts (selected or not). */
+  const bundleRowIds = async bundle => {
     const boot = await appBoot
+    try {
+      const dir = join(p.profile, 'node_modules', bundle)
+      const manifest = boot.readProfileManifest('dsh', dir)
+      if (manifest.dsh?.bundle === undefined) return []
+      const patches = boot.bundlePatchPaths(dir, manifest.dsh.bundle).flatMap(f => boot.loadOverlayPatches('dsh', f))
+      return flatten(boot.composeEntries([patches.filter(x => x.insert !== undefined)])).map(row => row.id).filter(id => typeof id === 'string')
+    } catch { return [] }
+  }
+  const computeRowOwners = async () => {
     const owners = new Map()
-    for (const bundle of bundlesOf(readManifest(p)).filter(isThirdParty)) {
-      try {
-        const dir = boot.resolveBundleDir('dsh', bundle, profile.installAnchor, profile.dir)
-        const manifest = boot.readProfileManifest('dsh', dir)
-        if (manifest.dsh?.bundle === undefined) continue
-        const patches = boot.bundlePatchPaths(dir, manifest.dsh.bundle).flatMap(f => boot.loadOverlayPatches('dsh', f))
-        for (const row of flatten(boot.composeEntries([patches.filter(x => x.insert !== undefined)]))) if (typeof row.id === 'string') owners.set(row.id, bundle)
-      } catch {}
-    }
+    for (const bundle of bundlesOf(readManifest(p)).filter(isThirdParty)) for (const id of await bundleRowIds(bundle)) owners.set(id, bundle)
     rowOwners = owners
   }
   const ownerRow = toolName => { try { return ctx.get('tools')?.ownerOf?.(toolName) } catch { return undefined } }
@@ -148,6 +201,26 @@ export function apply(ctx) {
     const byName = new Map(bundles.map(b => [b.name, b]))
     const names = [...new Set([...deps, ...selected.filter(isThirdParty), ...Object.keys(state.suspended)])].filter(isThirdParty)
     const tools = toolsByBundle()
+    const commands = new Map()
+    try {
+      const reg = ctx.get('commands')
+      for (const c of reg?.list?.(undefined) ?? []) {
+        const b = rowOwners.get(reg.ownerOf?.(c.name)?.rowId)
+        if (b !== undefined) commands.set(b, [...commands.get(b) ?? [], c.name])
+      }
+    } catch {}
+    const skills = new Map()
+    try {
+      const { bundlesOwning } = await import('./boot.js')
+      const nmDir = join(p.profile, 'node_modules')
+      const thirdParty = selected.filter(isThirdParty)
+      for (const sk of await ctx.get('skills')?.list({}) ?? []) {
+        const m = typeof sk.path === 'string' ? new RegExp(`^${nmDir.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/((?:@[^/]+/)?[^/]+)/`).exec(sk.path) : null
+        if (m === null) continue
+        const owners = thirdParty.includes(m[1]) ? [m[1]] : bundlesOwning(m[1], thirdParty, nmDir)
+        if (owners.length === 1) skills.set(owners[0], [...skills.get(owners[0]) ?? [], sk.name])
+      }
+    } catch {}
     const plugins = []
     for (const nm of names) {
       const b = byName.get(nm) ?? { name: nm, rows: [], overrides: [] }
@@ -199,9 +272,9 @@ export function apply(ctx) {
         ...statusDetail ? { statusDetail } : {},
         rows,
         tools: tools.get(nm) ?? [],
-        skills: [],
-        commands: [],
-        overrides: (b.overrides ?? []).map(id => ({ rowId: id, label: id })),
+        skills: skills.get(nm) ?? [],
+        commands: commands.get(nm) ?? [],
+        overrides: (b.overrides ?? []).map(id => ({ rowId: id, label: rowLabel(id) })),
         skippedOptional: state.skippedOptional?.[nm] ?? [],
         updatable: (from?.kind ?? 'npm') === 'npm',
         ...state.updates.latest[nm] && b.version && state.updates.latest[nm].version !== b.version ? { update: state.updates.latest[nm] } : {},
@@ -285,7 +358,7 @@ export function apply(ctx) {
     const hit = scanInstall(nm, changedPackages(before, installedPackages(nm)), [bundle])
     if (hit !== undefined) {
       await rollback(bundle, previous)
-      return failed(userError('prebuilt-binary', { name: bundle, pkg: hit.pkg, file: hit.file }))
+      return failed(userError(hit.code, { name: bundle, pkg: hit.pkg, file: hit.file }))
     }
     // gate 3: services only the web app has
     try {
@@ -344,8 +417,7 @@ export function apply(ctx) {
 
   async function removeNow(bundle) {
     const manager = await pm()
-    let ids = []
-    try { ids = manager.bundleRows(bundle).map(r => r.id).filter(Boolean) } catch {}
+    const ids = await bundleRowIds(bundle)
     const result = await manager.removeBundle(bundle)
     removeTree(p.store)
     if (result.application === 'failed') return failed(fromManagerResult(result, { name: bundle }))
@@ -390,6 +462,24 @@ export function apply(ctx) {
         return { ...base, error: userError(code, { name: r.source.display, input: r.source.input, registry: new URL(registry).host, host: new URL(registry).host, reason: firstLine(inspection.reason) }, { detail: inspection.reason }) }
       }
       const out = { ...base, name: inspection.name ?? r.source.display, version: inspection.version, description: inspection.description, bundle: inspection.bundle, registry: inspection.registry }
+      if (r.source.spec.startsWith('file:') && /\.(tgz|tar\.gz|tar)$/.test(r.source.spec)) {
+        try {
+          const { readTar, packageRoot, subtree } = await import('./archive.js')
+          const entries = readTar(readFileSync(r.source.spec.slice(5)))
+          const pkgEntries = subtree(entries, packageRoot(entries) ?? '')
+          const m = JSON.parse(pkgEntries.find(e => e.path === 'package.json').data.toString('utf8'))
+          Object.assign(out, { name: m.name, version: m.version, ...m.description ? { description: m.description } : {}, bundle: m.dsh?.bundle !== undefined, ...m.license ? { license: typeof m.license === 'string' ? m.license : m.license.type } : {} })
+          const ids = []
+          for (const rel of [m.dsh?.bundle?.patch].flat().filter(x => typeof x === 'string')) {
+            const e = pkgEntries.find(x => x.path === rel.replace(/^\.\//, ''))
+            if (e) ids.push(...await overridesOfPatch(e.data.toString('utf8')))
+          }
+          out.overrides = [...new Set(ids)].map(id => ({ rowId: id, label: rowLabel(id) }))
+          const boot = await appBoot
+          const issue = boot.evaluatePluginCompatibility(m, boot.readProfileVersionExemptions(profile.dir))
+          out.compatible = issue === undefined || issue.exempted
+        } catch {}
+      }
       // Registry metadata for the trust card (publisher, provenance, size, compatibility).
       if (inspection.kind === 'registry' && inspection.name) {
         try {
@@ -409,9 +499,18 @@ export function apply(ctx) {
               ...v.homepage ? { homepage: v.homepage } : {},
               ...v.repository ? { repository: typeof v.repository === 'string' ? v.repository : v.repository.url } : {},
             })
-            const overrides = []
-            // The rows this bundle's patch changes are only known after download; listed then in ExtPlugin.overrides.
-            out.overrides = overrides
+            // The built-in rows its bundle patch changes, read from a CDN copy of the published patch.
+            const patches = [v.dsh?.bundle?.patch].flat().filter(x => typeof x === 'string')
+            const ids = []
+            for (const rel of patches) {
+              for (const cdn of [`https://cdn.jsdelivr.net/npm/${inspection.name}@${v.version}/`, `https://unpkg.com/${inspection.name}@${v.version}/`, `https://registry.npmmirror.com/${inspection.name}/${v.version}/files/`]) {
+                try {
+                  const res = await fetch(cdn + rel.replace(/^\.\//, ''), { signal: AbortSignal.timeout(6000) })
+                  if (res.ok) { ids.push(...await overridesOfPatch(await res.text())); break }
+                } catch {}
+              }
+            }
+            out.overrides = [...new Set(ids)].map(id => ({ rowId: id, label: rowLabel(id) }))
           }
         } catch {}
         try {
@@ -511,7 +610,9 @@ export function apply(ctx) {
       let previous
       try { previous = JSON.parse(readFileSync(join(p.profile, 'node_modules', nm, 'package.json'), 'utf8')).version } catch {}
       if (previous === undefined) return failed(userError('not-installed', { name: nm }))
-      const version = typeof params.version === 'string' && params.version !== '' ? params.version : 'latest'
+      // An exact version: pnpm's cached metadata may still call an older one `latest`.
+      let version = typeof params.version === 'string' && params.version !== '' ? params.version : state.updates.latest[nm]?.version
+      if (version === undefined) { try { version = (await (await import('./updates.js')).latestOf(nm, plan())).version } catch { version = 'latest' } }
       const r = await installSpec(`${nm}@${version}`, { requestId: params.requestId, previous, force: params.force === true, source: { ...state.installedFrom[nm] ?? { kind: 'npm' }, input: `${nm}@${version}` } })
       return r
     }),
@@ -544,7 +645,8 @@ export function apply(ctx) {
         try {
           const project = await (await appBoot).createConfigProjector()
           const projected = project(Config, 'config')
-          schema = { ...projected.schema, ...Object.keys(projected.definitions ?? {}).length ? { $defs: projected.definitions } : {} }
+          const defs = Object.fromEntries(Object.entries(projected.definitions ?? {}).filter(([k]) => k !== 'loaderExpression').map(([k, v]) => [k, formSchema(v)]))
+          schema = { ...formSchema(projected.schema), ...Object.keys(defs).length ? { $defs: defs } : {} }
           limitations = projected.limitations ?? []
         } catch (error) { limitations = [firstLine(error)] }
       }
@@ -624,7 +726,9 @@ export function apply(ctx) {
       const items = listed.map(s => {
         const path = s.path ?? ''
         const imported = path.startsWith(p.skills + '/')
-        return { name: s.name, description: s.description, source: imported ? 'imported' : path.includes('/node_modules/') ? 'plugin' : path.includes('/.agents/skills/') ? 'agents' : s.source ?? s.provider ?? 'builtin', enabled: true, removable: imported, ...path ? { path } : {} }
+        let scripts = []
+        try { if (imported) scripts = skillScripts(join(p.skills, s.name)) } catch {}
+        return { name: s.name, description: s.description, scripts, source: imported ? 'imported' : path.includes('/node_modules/') ? 'plugin' : path.includes('/.agents/skills/') ? 'agents' : s.source ?? s.provider ?? 'builtin', enabled: true, removable: imported, ...path ? { path } : {} }
       })
       return { skills: [...items, ...(await skills()).disabled()] }
     },

@@ -191,7 +191,7 @@ grep -q 'appendPluginRecord' "$NM/@deepseek-ai/dsh-session/lib/index.js" || die 
 [[ -f "$NM/@dsh-android/plugin-mode/index.js" ]] || die "plugin-mode missing"
 [[ -f "$NM/@dsh-android/bundle-android/main.mjs" ]] || die "engine entry main.mjs missing"
 [[ -f "$NM/@dsh-android/plugin-extensions/pnpmfile.cjs" && -s "$NM/@dsh-android/plugin-extensions/installation-packages.json" ]] || die "plugin-extensions gate missing"
-grep -q 'js patch 19' "$NM/@deepseek-ai/dsh-tools/lib/index.js" || die "tools owner patch (19) missing"
+grep -q 'js patch 19' "$NM/@deepseek-ai/dsh-tools/lib/index.js" && grep -q 'js patch 19' "$NM/@deepseek-ai/dsh-commands/lib/index.js" || die "tool/command owner patch (19) missing"
 PNPM_VERSION="$(node -p 'require(process.argv[1]).dependencies.pnpm' "$JS_DIR/engine/package.json")"
 have_pnpm="$(node "$NM/pnpm/bin/pnpm.mjs" --version 2>/dev/null || true)"
 [[ "$have_pnpm" == "$PNPM_VERSION" ]] || die "bundled pnpm does not run after pruning (got '$have_pnpm', want $PNPM_VERSION)"

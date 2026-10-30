@@ -143,7 +143,7 @@ export function createMcp({ paths, registries }) {
       if (hit !== undefined) {
         await pnpm(['remove', name])
         removeTree(paths.store)
-        return { ok: false, error: userError('prebuilt-binary', { name, pkg: hit.pkg, file: hit.file }) }
+        return { ok: false, error: userError(hit.code, { name, pkg: hit.pkg, file: hit.file }) }
       }
       return { ok: true, package: name, ...binOf(dir, name) }
     },
@@ -184,7 +184,7 @@ export function createMcp({ paths, registries }) {
         return { ok: true, tools: (listed.tools ?? []).map(t => ({ name: t.name, description: t.description ?? '' })), server: client.getServerVersion?.() ?? null }
       } catch (error) {
         const text = String(error?.message ?? error)
-        const status = Number(/\b(40[13])\b/.exec(text)?.[1] ?? error?.code)
+        const status = Number(/\b(40[13])\b/.exec(text)?.[1] ?? error?.code) || (/unauthori[sz]ed|UnauthorizedError/i.test(`${error?.name} ${text}`) ? 401 : /forbidden/i.test(text) ? 403 : 0)
         if (status === 401 || status === 403) return { ok: false, error: userError('mcp-auth', { status }) }
         return { ok: false, error: userError('mcp-failed', { reason: text.slice(0, 300) }) }
       } finally {

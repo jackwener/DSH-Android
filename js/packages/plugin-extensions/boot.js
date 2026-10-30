@@ -170,6 +170,11 @@ const WORKSPACE_KEYS = p => ({
   storeDir: JSON.stringify(p.store),
   // Install scripts never run on the phone (a native build cannot work there anyway).
   ignoreScripts: 'true',
+  // A dead registry must hand over to the fallback in seconds, not after pnpm's minutes of backoff.
+  fetchRetries: '1',
+  fetchRetryMintimeout: '2000',
+  fetchRetryMaxtimeout: '5000',
+  fetchTimeout: '30000',
 })
 
 /** Ensure our pnpm settings in a pnpm-workspace.yaml text, keeping every other line. */
