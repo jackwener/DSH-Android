@@ -85,6 +85,8 @@ class SessionStore @Inject constructor(
     private val settings: SettingsRepository,
     private val capabilities: CapabilityHub,
     private val wakeLock: TurnWakeLock,
+    /** `android.ext.*` notifications (plugin progress / changes / notices) go to 设置 → 扩展. */
+    private val extensions: dagger.Lazy<io.github.jackwener.dsh.core.extensions.ExtensionsRepository>,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default + CoroutineExceptionHandler { _, e -> android.util.Log.e(TAG, "session task crashed", e) })
     private val states = ConcurrentHashMap<String, MutableStateFlow<SessionLive>>()
@@ -462,6 +464,7 @@ class SessionStore @Inject constructor(
         }
 
     suspend fun onNotification(method: String, params: JsonObject, gen: Int) {
+        if (method.startsWith("android.ext.")) { extensions.get().onNotification(method, params); return }
         if (method == "subagent.started") {
             val parent = params.s("parentSessionId") ?: return
             val child = params.s("childSessionId") ?: return

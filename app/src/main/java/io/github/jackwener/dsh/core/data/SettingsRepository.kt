@@ -4,11 +4,14 @@ import android.content.Context
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import dagger.hilt.android.qualifiers.ApplicationContext
+import io.github.jackwener.dsh.core.extensions.McpServer
+import io.github.jackwener.dsh.core.extensions.RegistryMode
 import io.github.jackwener.dsh.core.model.PermissionPreset
 import io.github.jackwener.dsh.core.model.SessionMode
 import io.github.jackwener.dsh.core.model.SessionModes
@@ -70,6 +73,13 @@ data class Settings(
     val providers: List<ProviderConfig> = emptyList(),
     /** The user's own session modes (设置 → 会话模式); the built-ins live in [SessionModes]. */
     val modes: List<SessionMode> = emptyList(),
+    /** 插件下载源 (设置 → 扩展): read by the engine's plugin-manager row at start. */
+    val pluginRegistry: RegistryMode = RegistryMode.Auto,
+    val pluginRegistryCustom: String = "",
+    /** MCP servers (设置 → 扩展 → MCP 服务); header values live in SecretStore. */
+    val mcpServers: List<McpServer> = emptyList(),
+    /** Plugin updates found by the last check: the 扩展 entry's badge. */
+    val extUpdateBadge: Int = 0,
 ) {
     /** Built-in then user modes, in display order. */
     val allModes: List<SessionMode> get() = SessionModes.all(modes)
@@ -85,6 +95,7 @@ data class Settings(
 private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 private val providerList = ListSerializer(ProviderConfig.serializer())
 private val modeList = ListSerializer(SessionMode.serializer())
+private val mcpList = ListSerializer(McpServer.serializer())
 
 @Singleton
 class SettingsRepository @Inject constructor(@ApplicationContext private val context: Context) {
@@ -108,6 +119,10 @@ class SettingsRepository @Inject constructor(@ApplicationContext private val con
         val agentScreen = booleanPreferencesKey("agent_screen")
         val reflect = booleanPreferencesKey("reflect_experience")
         val voiceOnAssist = booleanPreferencesKey("voice_on_assist")
+        val pluginRegistry = stringPreferencesKey("plugin_registry_mode")
+        val pluginRegistryCustom = stringPreferencesKey("plugin_registry_custom")
+        val mcpServers = stringPreferencesKey("mcp_servers_json")
+        val extUpdateBadge = intPreferencesKey("ext_update_badge")
     }
 
     val settings: Flow<Settings> = context.store.data.map { it.toSettings() }
@@ -134,6 +149,10 @@ class SettingsRepository @Inject constructor(@ApplicationContext private val con
         agentScreen = this[K.agentScreen] ?: true,
         reflectExperience = this[K.reflect] ?: true,
         voiceOnAssist = this[K.voiceOnAssist] ?: true,
+        pluginRegistry = RegistryMode.of(this[K.pluginRegistry]),
+        pluginRegistryCustom = this[K.pluginRegistryCustom] ?: "",
+        mcpServers = decodeMcp(this[K.mcpServers]),
+        extUpdateBadge = this[K.extUpdateBadge] ?: 0,
     )
 
     /** [provider] "" = DeepSeek. */
@@ -158,7 +177,7 @@ class SettingsRepository @Inject constructor(@ApplicationContext private val con
         require(SessionModes.builtIns.none { it.id == m.id }) { "built-in mode ${m.id} cannot be edited" }
         context.store.edit {
             val cur = decodeModes(it[K.modes])
-            val mode = m.copy(builtIn = false)
+            val mode = m.copy(builtIn = false, toolsVersion = SessionModes.TOOLS_VERSION)
             val next = if (cur.any { c -> c.id == m.id }) cur.map { c -> if (c.id == m.id) mode else c } else cur + mode
             it[K.modes] = json.encodeToString(modeList, next)
         }
@@ -185,10 +204,31 @@ class SettingsRepository @Inject constructor(@ApplicationContext private val con
     suspend fun setAgentScreen(on: Boolean) = context.store.edit { it[K.agentScreen] = on }
     suspend fun setReflectExperience(on: Boolean) = context.store.edit { it[K.reflect] = on }
     suspend fun setVoiceOnAssist(on: Boolean) = context.store.edit { it[K.voiceOnAssist] = on }
+
+    // ── 扩展 ──
+    suspend fun setPluginRegistry(mode: RegistryMode, custom: String) = context.store.edit {
+        it[K.pluginRegistry] = mode.id; it[K.pluginRegistryCustom] = custom.trim()
+    }
+    suspend fun setExtUpdateBadge(n: Int) = context.store.edit { it[K.extUpdateBadge] = n }
+    /** Adds or replaces the MCP server with [s]'s id. */
+    suspend fun saveMcpServer(s: McpServer) = context.store.edit {
+        val cur = decodeMcp(it[K.mcpServers])
+        val next = if (cur.any { c -> c.id == s.id }) cur.map { c -> if (c.id == s.id) s else c } else cur + s
+        it[K.mcpServers] = json.encodeToString(mcpList, next)
+    }
+    suspend fun updateMcpServer(id: String, transform: (McpServer) -> McpServer) = context.store.edit {
+        it[K.mcpServers] = json.encodeToString(mcpList, decodeMcp(it[K.mcpServers]).map { c -> if (c.id == id) transform(c) else c })
+    }
+    suspend fun deleteMcpServer(id: String) = context.store.edit {
+        it[K.mcpServers] = json.encodeToString(mcpList, decodeMcp(it[K.mcpServers]).filter { c -> c.id != id })
+    }
 }
+
+internal fun decodeMcp(raw: String?): List<McpServer> =
+    raw?.let { runCatching { json.decodeFromString(mcpList, it) }.getOrNull() } ?: emptyList()
 
 /** Stored user modes; an unreadable value (a future format) reads as none rather than failing settings. */
 internal fun decodeModes(raw: String?): List<SessionMode> =
-    raw?.let { runCatching { json.decodeFromString(modeList, it) }.getOrNull() } ?: emptyList()
+    raw?.let { runCatching { json.decodeFromString(modeList, it) }.getOrNull() }?.map(SessionModes::migrate) ?: emptyList()
 
 internal fun encodeModes(modes: List<SessionMode>): String = json.encodeToString(modeList, modes)

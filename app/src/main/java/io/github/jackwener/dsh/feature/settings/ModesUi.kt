@@ -65,6 +65,7 @@ private fun toolLabel(t: EngineTool) = when (t) {
     EngineTool.FilesWrite -> R.string.mode_tool_files_write to R.string.mode_tool_files_write_desc
     EngineTool.Web -> R.string.mode_tool_web to R.string.mode_tool_web_desc
     EngineTool.Subagent -> R.string.mode_tool_subagent to R.string.mode_tool_subagent_desc
+    EngineTool.Extensions -> R.string.mode_tool_extensions to R.string.mode_tool_extensions_desc
 }
 
 @Composable

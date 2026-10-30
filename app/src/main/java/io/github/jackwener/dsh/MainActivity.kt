@@ -53,6 +53,8 @@ import io.github.jackwener.dsh.feature.settings.SettingsSection
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
+import androidx.lifecycle.lifecycleScope
 import javax.inject.Inject
 
 @HiltViewModel
@@ -71,6 +73,7 @@ class MainViewModel @Inject constructor(settings: SettingsRepository, secrets: S
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
     @Inject lateinit var account: AccountRepository
+    @Inject lateinit var extensions: io.github.jackwener.dsh.core.extensions.ExtensionsRepository
     private var pendingSession by mutableStateOf<String?>(null)
     /** Settings section to open (EXTRA_SECTION, e.g. the quick panel's 登录 / 添加 API Key / 打开自检). */
     private var pendingSection by mutableStateOf<String?>(null)
@@ -87,6 +90,7 @@ class MainActivity : ComponentActivity() {
             pendingSection = intent.getStringExtra(EXTRA_SECTION)
         }
         handleAppLink(intent)
+        if (savedInstanceState == null) handleExtensionShare(intent)
         setContent {
             val vm: MainViewModel = hiltViewModel()
             val boot by vm.boot.collectAsStateWithLifecycle()
@@ -114,6 +118,23 @@ class MainActivity : ComponentActivity() {
         pendingSession = intent.getStringExtra(EXTRA_SESSION)
         pendingSection = intent.getStringExtra(EXTRA_SECTION)
         handleAppLink(intent)
+        handleExtensionShare(intent)
+    }
+
+    /**
+     * 分享 → 安装为 DSH 扩展 (the `.ExtensionInstall` alias): copy a shared file into the app (the
+     * share grant ends with this activity), then open 设置 → 扩展, which starts the install / import.
+     */
+    private fun handleExtensionShare(intent: Intent?) {
+        if (intent?.component?.className?.endsWith(".ExtensionInstall") != true) return
+        @Suppress("DEPRECATION")
+        val stream = (intent.getParcelableExtra<android.net.Uri>(Intent.EXTRA_STREAM)) ?: intent.data?.takeIf { it.scheme == "content" || it.scheme == "file" }
+        val text = intent.getStringExtra(Intent.EXTRA_TEXT)?.trim()
+        if (stream == null && text.isNullOrEmpty()) return
+        lifecycleScope.launch {
+            val input = if (stream != null) runCatching { extensions.stage(stream).path }.getOrNull() else text
+            if (input != null) { extensions.pendingInput.value = input; pendingSection = SettingsSection.Extensions.name }
+        }
     }
 
     /**
