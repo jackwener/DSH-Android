@@ -156,7 +156,7 @@ class Ledger {
 // ── model-facing text ────────────────────────────────────────────────────────
 
 /** Groups whose tools drive the UI (always need the screen) — never examples of lock-free tools. */
-const UI_GROUPS = new Set(['screen', 'vscreen', 'browser'])
+const UI_GROUPS = new Set(['screen', 'browser'])
 /** Common phone tasks, preferred as examples when the descriptor allows them. */
 const EXAMPLE_ORDER = ['alarm_set', 'volume_set', 'calendar_add', 'contacts_search', 'file_list', 'dnd_set', 'flashlight', 'wifi_toggle', 'media_control', 'rule_create']
 
@@ -165,6 +165,20 @@ export function lockFreeExamples(descriptors, max = 5) {
   const free = descriptors.filter(d => d.needsUnlock !== true && !UI_GROUPS.has(d.group) && d.risk !== 'dangerous' && !d.name.startsWith('file_')).map(d => d.name)
   const ranked = [...EXAMPLE_ORDER.filter(n => free.includes(n)), ...free.filter(n => !EXAMPLE_ORDER.includes(n)).sort()]
   return ranked.slice(0, max)
+}
+
+/** How to operate other apps' screens; only when the screen tools are registered. */
+export function screenSection(descriptors = []) {
+  if (!descriptors.some(d => d.group === 'screen')) return ''
+  return `Operating apps on screen:
+- You work on your own background screen by default: app_launch / app_open_link open apps there and screen_* tools act there, so the user keeps using the phone. Pass screen: "main" only to see or act on what the user is looking at ("how do I reply to this?"). Without Shizuku everything happens on the user's screen; the result says so.
+- Login, captcha, payment, a page that blocks screenshots, or a choice only the user can make: call hand_to_user(reason, kind) instead of guessing or typing credentials, then read the screen again when it returns.
+- Every action reports its effect. "No change" means the tap did nothing: pick another element or approach, do not repeat it. If the app says you are going too fast or hit a limit, stop and tell the user. "Switched to <app>" means another app came to the front.
+- A loop-guard warning in a result means you are repeating yourself without progress: change approach, or stop and report what blocks you. A refused call means stop and report.
+- Waits before sending, posting or replying are deliberate pacing so the app does not flag you as a bot; they are normal.
+- The first time you enter an app DSH has a guide for, the guide (facts about its UI) is appended to that result; app_guide(app) looks one up at any time.
+
+`
 }
 
 /** The English system-prompt section (the model replies in the user's language). */
@@ -192,7 +206,7 @@ Approvals and safety:
 - Before deleting, moving or overwriting files, state exactly which files and folders are affected (list them, or give the count and paths) and confirm the scope with the user unless they already named the exact items. Prefer the narrowest scope; never act on whole storage roots.
 - The app hard-blocks some shell commands (wiping storage roots or system directories, formatting or writing block devices, reboot/shutdown, fork bombs, executing decoded payloads, uninstalling system packages, deleting system settings): such a call is refused before it runs and returns HARDLINE_BLOCKED. Never try to work around a block.
 
-Shell: the bash tool runs Android's /system/bin/sh (mksh) with toybox utilities, not GNU bash/coreutils; there is no root. The user's shared storage is /sdcard (= /storage/emulated/0). Your working directory is the app's private home folder.
+${screenSection(descriptors)}Shell: the bash tool runs Android's /system/bin/sh (mksh) with toybox utilities, not GNU bash/coreutils; there is no root. The user's shared storage is /sdcard (= /storage/emulated/0). Your working directory is the app's private home folder.
 
 ${lang} Keep replies short and suited to a phone screen.`
 }

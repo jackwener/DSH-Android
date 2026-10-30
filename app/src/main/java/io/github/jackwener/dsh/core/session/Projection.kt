@@ -433,7 +433,12 @@ data class TrajRecord(
     val duration: Long? get() = end?.let { it - start }
 }
 
-data class TrajTurn(val key: String, val number: Int?, val records: List<TrajRecord>, val start: Long, val end: Long?, val usage: Usage)
+data class TrajTurn(val key: String, val number: Int?, val records: List<TrajRecord>, val start: Long, val end: Long?, val usage: Usage) {
+    val toolCalls: Int get() = records.count { it.kind == RecordKind.Tool || it.kind == RecordKind.Subtool }
+    /** Turn start to the first streamed token (or, without one, the first assistant message). */
+    val firstOutputMs: Long? get() = records.firstOrNull { it.kind == RecordKind.Assistant }
+        ?.let { (it.firstToken ?: it.end)?.minus(start) }?.takeIf { it >= 0 }
+}
 
 data class Trajectory(val turns: List<TrajTurn>, val start: Long, val end: Long, val usage: Usage) {
     val records: List<TrajRecord> get() = turns.flatMap { it.records }

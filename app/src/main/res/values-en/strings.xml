@@ -7,6 +7,9 @@
     <string name="engine_running">Agent engine running</string>
     <string name="monitor_running">Watching for automation triggers</string>
     <string name="ball_running">Floating button active</string>
+    <string name="ball_working">The agent is working</string>
+    <string name="ball_needs_you">A conversation needs you</string>
+    <string name="ball_screen_needs_a11y">Turn on DSH\'s accessibility service to send the current screen</string>
     <string name="channel_engine">Agent engine</string>
     <string name="channel_tasks">Task results</string>
     <string name="channel_attention">Needs your attention</string>
@@ -218,6 +221,7 @@
     <string name="tool_screen_type">Type</string>
     <string name="tool_screen_key">Key</string>
     <string name="tool_app_list">List apps</string>
+    <string name="tool_app_guide">App guide</string>
     <string name="tool_app_info">App info</string>
     <string name="tool_app_launch">Open app</string>
     <string name="tool_app_open_link">Open link</string>
@@ -291,6 +295,9 @@
     <string name="traj_load_earlier">Load earlier history</string>
     <string name="traj_turn">Turn %1$d</string>
     <string name="traj_between">Between turns</string>
+    <string name="traj_turn_took">took %1$s</string>
+    <string name="traj_turn_calls">%1$d calls</string>
+    <string name="traj_turn_first">first output %1$s</string>
     <string name="traj_step">Step %1$d</string>
     <string name="traj_summary">%1$d turns · %2$d calls · %3$s · %4$s tok</string>
     <string name="traj_compaction">Compacted %1$s records</string>
@@ -376,7 +383,7 @@
     <string name="busy_steer">Steer</string>
     <string name="set_entry_points">Entry points</string>
     <string name="floating_ball">Floating button</string>
-    <string name="floating_ball_desc">Summon DSH over any app</string>
+    <string name="floating_ball_desc">Tap to summon DSH over any app; double-tap to send it the current screen</string>
     <string name="default_assistant">Set as default assistant</string>
     <string name="default_assistant_desc">Summon with the power button or gesture, with the current page as context</string>
     <string name="key_connected">Connected</string>

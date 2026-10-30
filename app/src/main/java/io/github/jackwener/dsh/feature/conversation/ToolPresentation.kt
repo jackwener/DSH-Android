@@ -69,7 +69,7 @@ object ToolPresentation {
         "screen_swipe", "screen_scroll" -> ToolInfo(R.drawable.dsw_chevrons_up_down_outline, if (name == "screen_swipe") R.string.tool_screen_swipe else R.string.tool_screen_scroll, Activity.Swipe, BodyKind.Gesture)
         "screen_type" -> ToolInfo(R.drawable.dsw_edit_outline, R.string.tool_screen_type, Activity.Type, BodyKind.Gesture)
         "screen_key" -> ToolInfo(R.drawable.dsw_chevron_left_outline, R.string.tool_screen_key, Activity.Key, BodyKind.Gesture)
-        "app_list", "app_info" -> ToolInfo(R.drawable.dsw_apps_add_outline, titleOf(name), Activity.Apps, BodyKind.Text)
+        "app_list", "app_info", "app_guide" -> ToolInfo(R.drawable.dsw_apps_add_outline, titleOf(name), Activity.Apps, BodyKind.Text)
         "app_launch", "app_open_link", "app_send_intent", "share_to_app" -> ToolInfo(R.drawable.dsw_right_up_outline, titleOf(name), Activity.Apps, BodyKind.Gesture)
         "device_status" -> ToolInfo(R.drawable.dsw_gauge_outline, R.string.tool_device_status, Activity.System, BodyKind.Text)
         "sound_mode", "volume_set", "dnd_set", "brightness_set", "flashlight", "alarm_set", "wifi_toggle", "bluetooth_toggle", "mobile_data_toggle", "setting_put" ->
@@ -99,6 +99,7 @@ object ToolPresentation {
         "archive_extract" -> R.string.tool_archive_extract
         "app_list" -> R.string.tool_app_list
         "app_info" -> R.string.tool_app_info
+        "app_guide" -> R.string.tool_app_guide
         "app_launch" -> R.string.tool_app_launch
         "app_open_link" -> R.string.tool_app_open_link
         "app_send_intent" -> R.string.tool_app_send_intent
@@ -157,6 +158,7 @@ object ToolPresentation {
             "app_launch", "app_info", "share_to_app" -> a.str("package")
             "app_open_link" -> a.str("uri")
             "hand_to_user" -> a.str("reason")
+            "app_guide" -> a.str("app")
             "app_send_intent" -> a.str("action")
             "browser_open" -> a.str("url")
             "browser_click" -> a.str("id")?.let { "[$it]" }

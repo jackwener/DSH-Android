@@ -57,9 +57,11 @@ import io.github.jackwener.dsh.feature.conversation.ChatStream
 import io.github.jackwener.dsh.feature.conversation.ComposerSlot
 import io.github.jackwener.dsh.feature.conversation.QuickViewModel
 import io.github.jackwener.dsh.feature.conversation.addFile
+import io.github.jackwener.dsh.feature.conversation.addBitmap
 import io.github.jackwener.dsh.feature.conversation.addImages
 import io.github.jackwener.dsh.feature.conversation.draftFor
 import io.github.jackwener.dsh.feature.conversation.rememberComposerState
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
@@ -89,8 +91,8 @@ class QuickActivity : ComponentActivity() {
         enableEdgeToEdge()
         if (fresh) {
             useContext = ScreenContext.text != null
-            if (!isShareOrTask(intent)) reopenRecent()
-            handleIntent(intent, freshPanel = true)
+            val reopened = !isShareOrTask(intent) && reopenRecent()
+            handleIntent(intent, freshPanel = true, reopened)
         } else useContext = ScreenContext.text != null && savedInstanceState.getBoolean(STATE_USE_CONTEXT, false)
         setContent {
             val loaded by settingsRepo.settings.collectAsStateWithLifecycle(null)
@@ -151,7 +153,7 @@ class QuickActivity : ComponentActivity() {
         setIntent(intent)
         captureContext(intent)
         useContext = ScreenContext.text != null
-        handleIntent(intent, freshPanel = false)
+        handleIntent(intent, freshPanel = false, reopened = true)
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
@@ -167,14 +169,30 @@ class QuickActivity : ComponentActivity() {
     private fun isShareOrTask(i: Intent) = i.action == Intent.ACTION_SEND || i.action == Intent.ACTION_SEND_MULTIPLE || i.action == ACTION_RUN_TASK
 
     private fun captureContext(i: Intent) {
-        if (!i.getBooleanExtra(EXTRA_FROM_ASSIST, false) && i.action != ACTION_RUN_TASK) ScreenContext.captureFromAccessibility()
+        // A double tap on the floating ball captured the screen itself, before the ball was shown again.
+        if (!i.getBooleanExtra(EXTRA_FROM_ASSIST, false) && !i.getBooleanExtra(EXTRA_SCREEN, false) && i.action != ACTION_RUN_TASK) ScreenContext.captureFromAccessibility()
     }
 
     /** Re-summoning after a dismiss shows the panel's last session if it is still running or was used in the last 10 minutes. */
-    private fun reopenRecent() {
-        val id = prefs.getString(KEY_LAST, null) ?: return
+    private fun reopenRecent(): Boolean {
+        val id = prefs.getString(KEY_LAST, null) ?: return false
         val busy = store.status.value[id].let { it != null && it != RowStatus.Idle }
-        if (busy || System.currentTimeMillis() - prefs.getLong(KEY_AT, 0) < RECENT_MS) vm.open(id)
+        if (busy || System.currentTimeMillis() - prefs.getLong(KEY_AT, 0) < RECENT_MS) { vm.open(id); return true }
+        return false
+    }
+
+    /**
+     * Floating-ball double tap: the screenshot goes into the composer of the most recent conversation
+     * (the panel's own, else one used in the last 10 minutes, else a new one); the screen text rides
+     * along as the 当前页面 chip.
+     */
+    private fun attachScreen(reopened: Boolean) {
+        val shot = ScreenContext.takeShot()
+        lifecycleScope.launch {
+            if (!reopened && draftFor(vm.id).isEmpty) store.conversations.first().filter { !it.archived }.maxByOrNull { it.updatedAt }
+                ?.takeIf { System.currentTimeMillis() - it.updatedAt < RECENT_MS }?.let { vm.open(it.id) }
+            shot?.let { addBitmap(draftFor(vm.id), it) }
+        }
     }
 
     /** A share or RUN_TASK goes to a fresh session unless the current one is still untouched. */
@@ -182,7 +200,8 @@ class QuickActivity : ComponentActivity() {
         if (vm.live.value.running || vm.live.value.events.isNotEmpty() || !draftFor(vm.id).isEmpty) vm.newSession()
     }
 
-    private fun handleIntent(i: Intent, freshPanel: Boolean) {
+    private fun handleIntent(i: Intent, freshPanel: Boolean, reopened: Boolean) {
+        if (i.getBooleanExtra(EXTRA_SCREEN, false)) return attachScreen(reopened)
         if (i.action == ACTION_RUN_TASK) {
             val task = i.getStringExtra(EXTRA_TASK)?.takeIf { it.isNotBlank() } ?: return
             lifecycleScope.launch {
@@ -232,6 +251,8 @@ class QuickActivity : ComponentActivity() {
 
     companion object {
         const val EXTRA_FROM_ASSIST = "from_assist"
+        /** Set by the floating ball's double tap: ScreenContext holds a fresh screenshot and screen text. */
+        const val EXTRA_SCREEN = "screen"
         const val ACTION_RUN_TASK = "io.github.jackwener.dsh.RUN_TASK"
         const val EXTRA_TASK = "task"
         private const val STATE_USE_CONTEXT = "use_context"

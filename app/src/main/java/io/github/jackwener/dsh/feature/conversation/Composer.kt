@@ -517,11 +517,29 @@ private suspend fun loadImage(context: Context, uri: Uri): ImageAttachment? = wi
         var sample = 1
         while (maxOf(opts.outWidth, opts.outHeight) / sample > 1600) sample *= 2
         val bmp = context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, BitmapFactory.Options().apply { inSampleSize = sample }) } ?: return@runCatching null
-        val out = ByteArrayOutputStream()
-        bmp.compress(Bitmap.CompressFormat.JPEG, 85, out)
-        val thumb = Bitmap.createScaledBitmap(bmp, 128, (128f * bmp.height / bmp.width).toInt().coerceAtLeast(1), true)
-        ImageAttachment("image/jpeg", Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP), thumb)
+        encodeImage(bmp)
     }.getOrNull()
+}
+
+private fun encodeImage(bmp: Bitmap): ImageAttachment {
+    val out = ByteArrayOutputStream()
+    bmp.compress(Bitmap.CompressFormat.JPEG, 85, out)
+    val thumb = Bitmap.createScaledBitmap(bmp, 128, (128f * bmp.height / bmp.width).toInt().coerceAtLeast(1), true)
+    return ImageAttachment("image/jpeg", Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP), thumb)
+}
+
+/** Adds an in-memory image (a screenshot), scaled down like picked images. */
+suspend fun addBitmap(state: ComposerState, bmp: Bitmap) {
+    if (state.images.size + state.pending >= MAX_IMAGES) return
+    state.pending += 1
+    val img = withContext(Dispatchers.Default) {
+        runCatching {
+            val scale = 1600f / maxOf(bmp.width, bmp.height)
+            encodeImage(if (scale < 1f) Bitmap.createScaledBitmap(bmp, (bmp.width * scale).toInt(), (bmp.height * scale).toInt(), true) else bmp)
+        }.getOrNull()
+    }
+    state.pending -= 1
+    if (img != null) state.images += img
 }
 
 /** Copies a picked document into the agent's home so dsh's file tools can read it. */

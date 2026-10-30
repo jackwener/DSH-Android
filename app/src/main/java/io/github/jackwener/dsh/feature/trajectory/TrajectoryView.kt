@@ -205,12 +205,21 @@ private fun TurnHeaderRow(turn: TrajTurn, collapsed: Boolean, onToggle: () -> Un
             Text(turn.number?.let { stringResource(R.string.traj_turn, it) } ?: stringResource(R.string.traj_between), style = DshType.xs13m, color = c.labelPrimary)
             Spacer(Modifier.width(8.dp))
             Text(Fmt.dateTime(turn.start).substringAfter(' '), style = DshType.xxs12, color = c.labelCaption)
-            Spacer(Modifier.weight(1f))
-            turn.end?.let { Text(Fmt.duration(context, it - turn.start), style = DshType.xxs12, color = c.labelTertiary) }
-            if (!turn.usage.isEmpty) Text("  ${Fmt.tokens(turn.usage.total)} tok", style = DshType.xxs12, color = c.labelTertiary)
         }
+        if (turn.number != null) Text(turnSummary(context, turn), Modifier.padding(start = 26.dp, end = 4.dp, bottom = 6.dp),
+            style = DshType.xxxs11, color = c.labelCaption, maxLines = 1, overflow = TextOverflow.Ellipsis)
         HDivider()
     }
+}
+
+/** 用时 · 调用次数 · Token · 首次反馈 for one turn; parts the log has no data for are left out. */
+private fun turnSummary(context: android.content.Context, turn: TrajTurn): String {
+    return listOfNotNull(
+        turn.end?.let { context.getString(R.string.traj_turn_took, Fmt.duration(context, it - turn.start)) },
+        context.getString(R.string.traj_turn_calls, turn.toolCalls),
+        turn.usage.takeIf { !it.isEmpty }?.let { "${Fmt.tokens(it.total)} tok" },
+        turn.firstOutputMs?.let { context.getString(R.string.traj_turn_first, Fmt.shortDuration(it)) },
+    ).joinToString(" · ")
 }
 
 @Composable

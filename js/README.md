@@ -20,6 +20,7 @@ DeepSeek Harness (dsh) **0.2.1-rc.2**, installed unmodified from npm and customi
 | `scripts/make-zip.py` | deterministic zip (sorted, fixed mtimes, rejects symlinks) |
 | `scripts/bench-cold-start.mjs` | host cold-start benchmark (spawn → `initialize`) |
 | `test/hardline.test.mjs` | hardline unit tests: `node --test js/test/hardline.test.mjs` |
+| `test/prompt.test.mjs` | system prompt section tests: `node --test js/test/prompt.test.mjs` |
 | `test/host-e2e.mjs` | host end-to-end run of the built `engine.zip` with a fake bridge |
 | `test/host-ac8-resume.mjs` | host repro of engine kill + `session/resume` + continuation |
 
