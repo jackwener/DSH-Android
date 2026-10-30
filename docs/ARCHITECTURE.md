@@ -74,10 +74,10 @@ Shizuku 用户服务（shell uid，可选）：ShellUserService
 |---|---|
 | files | `file_search` `file_read` `file_list` `file_stat`（读）；`file_write` `file_move` `file_mkdir` `archive_extract` `archive_create`（写）；`file_delete`（危险）。`file_read` 能抽取 PDF、docx、xlsx、pptx 的文本 |
 | apps | `app_list` `app_info`；`app_launch` `app_open_link` `app_send_intent` `share_to_app`（需解锁） |
-| screen | `screen_read` `screen_capture` `screen_wait` `screen_tap` `screen_swipe` `screen_scroll` `screen_type` `screen_key`（全部需解锁）；`hand_to_user`（交给用户处理：登录、验证码、付款等）。参数 `screen: agent / main`，有后台屏时默认后台屏（见 `docs/AGENT-SCREEN-V2.md`） |
-| system | `device_status` `setting_get`；`sound_mode` `volume_set` `dnd_set` `brightness_set` `flashlight` `wifi_toggle` `bluetooth_toggle` `mobile_data_toggle` `alarm_set`；`location_get`（敏感）；`setting_put`（危险，仅 Shizuku） |
+| screen | `screen_read` `screen_capture` `screen_wait` `screen_tap` `screen_swipe` `screen_scroll` `screen_type` `screen_key` `screen_set_wheel`（全部需解锁）；`hand_to_user`（交给用户处理：登录、验证码、付款等）。参数 `screen: agent / main`，有后台屏时默认后台屏（见 `docs/AGENT-SCREEN-V2.md`） |
+| system | `device_status` `setting_get`；`sound_mode` `volume_set` `dnd_set` `brightness_set` `flashlight` `wifi_toggle` `bluetooth_toggle` `mobile_data_toggle` `alarm_set` `alarm_show`；`location_get`（敏感）；`setting_put`（危险，仅 Shizuku） |
 | notifications | `notification_list`（敏感）；`notification_dismiss` `notification_open`；`notification_reply`（危险） |
-| comms | `contacts_search` `sms_read` `calendar_read` `call_log_read`（敏感）；`calendar_add`；`sms_send`（危险） |
+| comms | `contacts_search` `sms_read` `calendar_read` `call_log_read`（敏感）；`calendar_add` `calendar_new_event`（打开日历自带的新建页，无需日历权限）；`sms_send`（危险） |
 | media / clipboard | `media_control`；`clipboard_get`（敏感）`clipboard_set` |
 | browser | `browser_open` `browser_read` `browser_screenshot` `browser_scroll` `browser_back` `browser_click` `browser_type`：App 内一个不显示在屏幕上的 WebView |
 | rules | `rule_create` `rule_list` `rule_update` `rule_delete` |

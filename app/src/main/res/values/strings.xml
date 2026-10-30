@@ -235,6 +235,7 @@
     <string name="tool_screen_capture">截屏</string>
     <string name="tool_screen_tap">点击</string>
     <string name="tool_screen_swipe">滑动</string>
+    <string name="tool_screen_set_wheel">设置滚轮</string>
     <string name="tool_screen_scroll">滚动</string>
     <string name="tool_screen_type">输入</string>
     <string name="tool_screen_key">按键</string>
@@ -270,6 +271,7 @@
     <string name="tool_brightness">亮度</string>
     <string name="tool_flashlight">手电筒</string>
     <string name="tool_alarm">设置闹钟</string>
+    <string name="tool_alarm_show">查看闹钟</string>
     <string name="tool_wifi">Wi‑Fi</string>
     <string name="tool_bluetooth">蓝牙</string>
     <string name="tool_mobile_data">移动数据</string>
@@ -281,6 +283,7 @@
     <string name="tool_call_log">通话记录</string>
     <string name="tool_calendar_read">读取日程</string>
     <string name="tool_calendar_add">添加日程</string>
+    <string name="tool_calendar_new_event">打开新建日程</string>
     <string name="tool_sms_send">发送短信</string>
     <string name="tool_browser_open">打开网页</string>
     <string name="tool_browser_read">读取网页</string>

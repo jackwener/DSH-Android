@@ -38,3 +38,11 @@ test('app note guidance only when app_note is registered', () => {
   assert.ok(!screenSection([screen, launch, guide]).includes('app_note'))
   assert.ok(withNote.endsWith('\n\n'))
 })
+
+test('picker guidance only when screen_set_wheel is registered', () => {
+  const wheel = { name: 'screen_set_wheel', group: 'screen', risk: 'write', needsUnlock: true }
+  const withWheel = screenSection([screen, wheel])
+  assert.ok(withWheel.includes('screen_set_wheel(node, value)'))
+  assert.ok(withWheel.endsWith('\n\n'))
+  assert.ok(!screenSection([screen]).includes('screen_set_wheel'))
+})

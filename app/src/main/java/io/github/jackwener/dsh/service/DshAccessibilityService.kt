@@ -15,6 +15,8 @@ import android.view.inputmethod.InputMethodManager
 import androidx.annotation.RequiresApi
 import io.github.jackwener.dsh.core.capability.Frame
 import io.github.jackwener.dsh.core.capability.UiElement
+import io.github.jackwener.dsh.core.capability.WheelItem
+import io.github.jackwener.dsh.core.capability.WheelPlan
 import io.github.jackwener.dsh.core.trigger.TriggerEvents
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -141,6 +143,7 @@ class DshAccessibilityService : AccessibilityService() {
                 if (n.isClickable) add("click"); if (n.isLongClickable) add("long"); if (n.isEditable) add("edit")
                 if (n.isScrollable) add("scroll"); if (n.isCheckable) add(if (n.isChecked) "checked" else "unchecked")
                 if (!n.isEnabled) add("disabled"); if (n.isFocused) add("focused")
+                if (isWheel(n)) add("wheel")
             }
             els += UiElement(n.className?.toString()?.substringAfterLast('.') ?: "View", text, desc, n.viewIdResourceName?.substringAfter(":id/"),
                 r.centerX(), r.centerY(), depth, flags, n.isEditable, system)
@@ -149,14 +152,40 @@ class DshAccessibilityService : AccessibilityService() {
         for (i in 0 until n.childCount) n.getChild(i)?.let { walk(it, d, system, out, els) }
     }
 
+    /** A picker wheel (screen_set_wheel sets it): only checked for scrollable nodes and picker/wheel classes. */
+    private fun isWheel(n: AccessibilityNodeInfo): Boolean {
+        val cls = n.className?.toString() ?: return false
+        if (!n.isScrollable && !cls.contains("Picker") && !cls.contains("Wheel", ignoreCase = true) && !cls.contains("LoopView")) return false
+        return runCatching { WheelPlan.looksLikeWheel(cls, n.isScrollable, textItems(n, maxDepth = 3, limit = 20).map { it.first }) }.getOrDefault(false)
+    }
+
+    /** Whether a keyboard is showing on [displayId] (something there takes text input). */
+    fun imeShown(displayId: Int = Display.DEFAULT_DISPLAY): Boolean = runCatching {
+        val wins = if (Build.VERSION.SDK_INT >= 30) windowsOnAllDisplays.get(displayId).orEmpty() else windows
+        wins.any { it.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD }
+    }.getOrDefault(false)
+
     suspend fun tap(x: Float, y: Float, durationMs: Long = 60, displayId: Int = Display.DEFAULT_DISPLAY) =
         gesture(Path().apply { moveTo(x, y) }, durationMs, displayId)
 
     suspend fun swipe(x1: Float, y1: Float, x2: Float, y2: Float, durationMs: Long, displayId: Int = Display.DEFAULT_DISPLAY) =
         gesture(Path().apply { moveTo(x1, y1); lineTo(x2, y2) }, durationMs, displayId)
 
-    private suspend fun gesture(path: Path, durationMs: Long, displayId: Int): Boolean = suspendCancellableCoroutine { cont ->
-        val builder = GestureDescription.Builder().addStroke(GestureDescription.StrokeDescription(path, 0, durationMs))
+    /**
+     * A slow vertical drag that rests [holdMs] at the end before lifting, so the view sees no
+     * velocity and does not fling (wheels then move by exactly the dragged distance and snap).
+     */
+    suspend fun drag(x: Float, y1: Float, y2: Float, durationMs: Long, holdMs: Long, displayId: Int = Display.DEFAULT_DISPLAY): Boolean {
+        val move = GestureDescription.StrokeDescription(Path().apply { moveTo(x, y1); lineTo(x, y2) }, 0, durationMs, true)
+        if (!dispatch(GestureDescription.Builder().addStroke(move), displayId)) return false
+        val rest = move.continueStroke(Path().apply { moveTo(x, y2); lineTo(x, y2) }, 0, holdMs, false)
+        return dispatch(GestureDescription.Builder().addStroke(rest), displayId)
+    }
+
+    private suspend fun gesture(path: Path, durationMs: Long, displayId: Int): Boolean =
+        dispatch(GestureDescription.Builder().addStroke(GestureDescription.StrokeDescription(path, 0, durationMs)), displayId)
+
+    private suspend fun dispatch(builder: GestureDescription.Builder, displayId: Int): Boolean = suspendCancellableCoroutine { cont ->
         if (Build.VERSION.SDK_INT >= 30) builder.setDisplayId(displayId)
         val ok = dispatchGesture(builder.build(), object : GestureResultCallback() {
             override fun onCompleted(g: GestureDescription?) { if (cont.isActive) cont.resume(true) }
@@ -211,6 +240,25 @@ class DshAccessibilityService : AccessibilityService() {
     }
 
     companion object {
+        /**
+         * Visible descendants of [root] (itself included) that show text, with their bounds, top to
+         * bottom: the items of a wheel. Content descriptions count when there is no text.
+         */
+        fun textItems(root: AccessibilityNodeInfo, maxDepth: Int = 4, limit: Int = 40): List<Pair<WheelItem, AccessibilityNodeInfo>> {
+            val out = ArrayList<Pair<WheelItem, AccessibilityNodeInfo>>()
+            fun visit(n: AccessibilityNodeInfo, depth: Int) {
+                if (out.size >= limit || !n.isVisibleToUser) return
+                val label = n.text?.toString()?.takeIf { it.isNotBlank() } ?: n.contentDescription?.toString()?.takeIf { it.isNotBlank() }
+                if (label != null && (n !== root || n.childCount == 0)) {
+                    val r = Rect().also(n::getBoundsInScreen)
+                    if (!r.isEmpty) out += WheelItem(label.take(40), r.left, r.top, r.right, r.bottom) to n
+                }
+                if (depth < maxDepth) for (i in 0 until n.childCount) n.getChild(i)?.let { visit(it, depth + 1) }
+            }
+            visit(root, 0)
+            return out.sortedBy { it.first.cy }
+        }
+
         @Volatile var instance: DshAccessibilityService? = null
             private set
         private const val SYSTEM_UI = "com.android.systemui"

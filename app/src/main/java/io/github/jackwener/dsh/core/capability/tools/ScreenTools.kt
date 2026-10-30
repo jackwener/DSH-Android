@@ -367,7 +367,7 @@ class ScreenTools @Inject constructor(
             "Read what is on screen as a list of UI elements: [e12] Type \"text\" #resource-id {flags} @x,y (center, in screen pixels). " +
                 "Ids stay the same across reads while the element is unchanged; use them with screen_tap/screen_type/screen_scroll. " +
                 "When the tree has little text (custom-drawn apps, games) recognized text lines [t1]… are added, tappable the same way. " +
-                "Prefer this over screenshots.", {
+                "{wheel} marks a picker wheel: set it with screen_set_wheel. Prefer this over screenshots.", {
                 bool("ocr", "Also recognize text in a screenshot (when elements are missing from the list)")
             }) {
             override suspend fun run(args: JsonObject, call: CallContext, t: ScreenTarget): ToolResult {
@@ -463,19 +463,62 @@ class ScreenTools @Inject constructor(
                 val d = t.displayId
                 val r = read(call, d)
                 val hit = locate(call, d, args.only("node"), r)
-                val target = hit?.node ?: focusedInput(d, r)
-                val out = textInput.type(svc(), target, args.reqStr("text"), args.bool("append") == true, d)
+                val text = args.reqStr("text")
+                val append = args.bool("append") == true
+                val focused = if (hit == null) focusedInput(d, r) else null
+                // Without a field id, typing goes to whatever holds input focus: with no focused field and no
+                // keyboard showing, the text would go nowhere (or be pasted somewhere), so do not try.
+                if (hit == null && focused?.isEditable != true && !svc().imeShown(d)) return ToolResult.error("no_focus",
+                    "No input field has focus on this screen and no keyboard is showing, so nothing was typed. " +
+                        "Tap the field first (screen_tap), or pass its id as node, then call screen_type again.")
+                val target = hit?.node ?: focused
+                val before = target?.takeUnless { it.isPassword }?.let { TextInput.shownText(it) }
+                val out = textInput.type(svc(), target, text, append, d)
                     ?: return ToolResult.error("input_failed", if (target == null) "No focused input field; tap the field first, then call screen_type again."
                         else "The field did not accept text by any method (set text, keyboard, Shizuku, paste). Tap the field and retry, or ask the user to type it.")
                 val watch = if (t.agent) agent.watch(call.sessionId) else null
+                // Read back the field that received the text (the focused one when no field was known beforehand).
+                val shown = out.fieldText ?: if (target == null) focusedInput(d, read(call, d))?.takeIf { it.isEditable && !it.isPassword }?.let { TextInput.shownText(it) } else null
+                val expected = if (append) (before.orEmpty() + text) else text
+                val readBack = shown?.let { s ->
+                    "; the field now shows: \"${s.take(300)}\"" + if (TextInput.differs(expected, s))
+                        " — this differs from the requested text (the field may have rejected, reformatted or truncated it, or kept old text); check and correct it" else ""
+                } ?: ""
                 val submitted = if (args.bool("submit") == true) " and pressed " + (pressEnter(false, d, r) ?: "Enter (failed: no method worked)") else ""
-                return after(call, t, r.frame, listOfNotNull(hit?.note, "Entered text (${out.method})$submitted" +
-                    (out.fieldText?.let { "; the field now shows: \"${it.take(300)}\"" } ?: "")).joinToString("\n"), watch)
+                return after(call, t, r.frame, listOfNotNull(hit?.note, "Entered text (${out.method})$submitted$readBack").joinToString("\n"), watch)
             }
 
             private fun focusedInput(d: Int, r: Read): AccessibilityNodeInfo? =
                 if (d == Display.DEFAULT_DISPLAY) svc().findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
                 else r.snap.nodes.firstOrNull { it.isEditable && it.isFocused }
+        },
+        object : ScreenTool("screen_set_wheel", Risk.write, true,
+            "Set a wheel picker to a value in one call (time/date/number spinners, NumberPicker, the scrolling columns in alarm, " +
+                "train/flight booking and similar apps) instead of swiping it step by step. Give the wheel's id (marked {wheel} in screen_read) " +
+                "or the id of the value it shows now (e12, or t3 for recognized text), and the value as the wheel writes it (\"07\", \"40\", \"下午\", \"2026年\"). " +
+                "One column per call: for hour and minute call it twice. Uses the picker's text field, scroll actions or slow drags, reading the value back after each move. " +
+                "Returns the value now shown (with the previous value, attempts and method), or wheel_at_end / wheel_unreadable / wheel_not_moving / wheel_not_reached with what it shows.", {
+                string("node", "Id of the wheel or of the value it currently shows (e12 / t3)", required = true)
+                string("value", "Target value as shown on the wheel", required = true)
+            }) {
+            override suspend fun run(args: JsonObject, call: CallContext, t: ScreenTarget): ToolResult {
+                val d = t.displayId
+                if (t.agent && agent.showsProtected(d)) return protectedScreen(call, t, name)
+                val value = args.reqStr("value").trim().ifEmpty { throw InvalidArgsException("value is empty") }
+                val r = read(call, d)
+                val hit = locate(call, d, args.only("node"), r) ?: throw InvalidArgsException("Give node: the id of the wheel or of the value it shows (call screen_read first)")
+                val (x, y) = hit.node?.let { n -> Rect().also(n::getBoundsInScreen).let { it.centerX() to it.centerY() } } ?: (hit.x to hit.y)
+                val m = metrics(d)
+                val watch = if (t.agent) agent.watch(call.sessionId) else null
+                val setter = WheelSetter(svc(), d, m.heightPixels, m.density) {
+                    screenshot(t)?.takeUnless { isBlank(it) }?.let { b -> runCatching { ocr.read(b) }.getOrNull() }
+                }
+                return when (val out = setter.set(hit.node, x, y, value)) {
+                    is WheelSetter.Done -> after(call, t, r.frame, listOfNotNull(hit.note,
+                        "Wheel set: value \"${out.value}\" (from \"${out.from}\", ${out.attempts} attempts, method ${out.method})").joinToString("\n"), watch)
+                    is WheelSetter.Failed -> ToolResult.error(out.code, listOfNotNull(hit.note, out.message).joinToString("\n"))
+                }
+            }
         },
         object : ScreenTool("screen_swipe", Risk.write, true, "Swipe/drag from (x1,y1) to (x2,y2), in screen pixels.", {
             number("x1", "Start X (screen pixels)", required = true); number("y1", "Start Y (screen pixels)", required = true)
