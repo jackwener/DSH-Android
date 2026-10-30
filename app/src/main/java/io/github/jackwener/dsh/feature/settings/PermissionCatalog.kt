@@ -121,23 +121,4 @@ object PermissionCatalog {
         val flat = Settings.Secure.getString(c.contentResolver, "enabled_notification_listeners") ?: return false
         return flat.contains(ComponentName(c, DshNotificationListener::class.java).flattenToString())
     }
-
-    /** Best-effort deep links to vendor "autostart / background" screens; falls back to App info. */
-    fun vendorKeepAlive(c: Context): Pair<String, Intent> {
-        val m = Build.MANUFACTURER.lowercase()
-        val (tip, comp) = when {
-            "xiaomi" in m || "redmi" in m || "poco" in m -> "小米/红米：自启动 → 打开 DSH；省电策略 → 无限制" to
-                ComponentName("com.miui.securitycenter", "com.miui.permcenter.autostart.AutoStartManagementActivity")
-            "huawei" in m || "honor" in m -> "华为/荣耀：应用启动管理 → DSH → 关闭“自动管理”，允许自启动、关联启动、后台活动" to
-                ComponentName("com.huawei.systemmanager", "com.huawei.systemmanager.startupmgr.ui.StartupNormalAppListActivity")
-            "oppo" in m || "realme" in m || "oneplus" in m -> "OPPO/一加/真我：应用详情 → 耗电管理 → 允许后台行为、允许自启动" to
-                ComponentName("com.coloros.safecenter", "com.coloros.safecenter.permission.startup.StartupAppListActivity")
-            "vivo" in m || "iqoo" in m -> "vivo/iQOO：i管家 → 应用管理 → 自启动；电池 → 后台耗电管理 → 允许" to
-                ComponentName("com.vivo.permissionmanager", "com.vivo.permissionmanager.activity.BgStartUpManagerActivity")
-            "samsung" in m -> "三星：设置 → 电池 → 后台使用限制 → 将 DSH 加入“从不休眠的应用”" to null
-            else -> "在“应用信息 → 电池”中选择“不受限制”" to null
-        }
-        val intent = comp?.let { Intent().setComponent(it) }?.takeIf { it.resolveActivity(c.packageManager) != null } ?: appDetails(c)
-        return tip to intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-    }
 }

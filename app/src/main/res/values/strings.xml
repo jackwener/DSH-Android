@@ -445,6 +445,14 @@
     <string name="notification_apps">允许读取通知的应用（默认全部）</string>
     <string name="notification_apps_desc">默认可以读取所有 App 的通知，可在这里排除不想让它读的 App</string>
     <string name="keep_alive">后台保活</string>
+    <string name="keep_alive_device">本机：%1$s</string>
+    <string name="keep_alive_desc">不少手机系统会在后台结束 DSH，导致自动化和长任务中断。逐项打开下面的设置：</string>
+    <string name="keep_alive_autostart">自启动</string>
+    <string name="keep_alive_background">后台运行与省电</string>
+    <string name="keep_alive_battery">电池优化</string>
+    <string name="keep_alive_open">去设置</string>
+    <string name="keep_alive_exempt">已豁免</string>
+    <string name="keep_alive_via_app_info">在应用信息中：%1$s</string>
     <string name="shizuku_missing">未安装（可选增强）</string>
     <string name="shizuku_stopped">已安装但未启动</string>
     <string name="shizuku_unauthorized">未授权</string>
