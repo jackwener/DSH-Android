@@ -67,8 +67,20 @@ phone) and fully regenerates it; it holds no secret. Values are JSON (valid YAML
 or just `[]` when no provider is enabled and web search is available. Only enabled providers with ≥ 1 model are
 written; `apiKeyEnv` only when a key is stored (an open endpoint gets no credential). Every model gets the same
 `contextWindow` 131072 and request cap `maxTokens` 16384 (sent as `max_tokens`; some vendors default to 1–4K and
-truncate tool calls). No reasoning effort is configured: the adapter applies the model family's documented default.
+truncate tool calls). Reasoning choices come from the adapter's resolved metadata through
+`android/models/reasoning { routes: [{provider, model}] }`. This read-only SDK extension resolves at most
+256 routes per batch through `llm.resolveModelInfo`, without making provider HTTP requests. It returns
+`{models:[{provider,id,reasoning?:{efforts:[{id,name}],defaultEffort?}}]}`; plain or unavailable models
+have no picker. The app keeps third-party selections per provider/model in `provider_efforts_json`,
+separate from the native DeepSeek setting. With no saved supported choice, the adapter default applies.
 Route ids are the preset id (`kimi`, then `kimi-2`, …), never `deepseek-*`.
+
+OpenCode/Go requests to `opencode.ai` (or its subdomains) carry `x-opencode-session` from the harness
+conversation id (patch 16 at the adapter's shared request boundary). It stays the same across turns in
+one conversation; other conversations remain separate. An explicit profile header is preserved, and
+sessionless auxiliary calls get an isolated UUID. Model discovery runs in Kotlin before a conversation
+exists: it uses the app's own User-Agent and a fresh routing UUID for each OpenCode listing. Neither
+path sends the OpenCode header to other providers, and the generated profile contains no static session id.
 
 Web search (`web_search`, DeepSeek search) needs a DeepSeek credential: `DEEPSEEK_API_KEY`, or the account login while
 the session runs on `deepseek-account`. The app therefore turns the tool off when a third-party model is selected and
@@ -89,7 +101,9 @@ an offset past its log (`LogSeqs`), never treating a seq as a cross-generation i
   (dsh's `initializeDefaultModel` precedence: the account route only without a key), else `deepseek-official` (the engine
   still starts so the user can sign in; the app refuses prompts with "当前模型暂不可用，请登录后再试"). With a third-party model selected
   (设置 → 模型服务), `provider` is that provider's route id (§1.1), `model` its model id, and `reasoningEffort` is
-  omitted. If that route fails `initialize`, the engine is initialized on the DeepSeek route instead (so sign-in still
+  the saved choice only while the adapter advertises that exact id for that provider/model; otherwise it is omitted.
+  Metadata is read before initialization. An effort change follows the existing route-change rule and never restarts an active run.
+  If that route fails `initialize`, the engine is initialized on the DeepSeek route instead (so sign-in still
   works) and prompts fail with the route's error until the configuration changes. The app reads
   `account/state` before `initialize`. A route change (provider, model or effort) re-sends `initialize` while no SDK
   session is open in the process (patch-free: the server just replaces its route), otherwise restarts the idle engine.

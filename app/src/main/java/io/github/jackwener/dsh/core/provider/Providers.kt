@@ -1,5 +1,6 @@
 package io.github.jackwener.dsh.core.provider
 
+import io.github.jackwener.dsh.BuildConfig
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -14,6 +15,7 @@ import kotlinx.serialization.json.putJsonObject
 import kotlinx.serialization.json.addJsonObject
 import java.net.HttpURLConnection
 import java.net.URL
+import java.util.UUID
 
 /**
  * Third-party model providers (OpenAI-compatible Chat Completions endpoints), served in the engine
@@ -178,7 +180,7 @@ fun fetchModels(baseUrl: String, key: String?): Result<List<String>> = runCatchi
     val c = url.openConnection() as HttpURLConnection
     try {
         c.connectTimeout = 10_000; c.readTimeout = 15_000
-        c.setRequestProperty("Accept", "application/json")
+        modelListHeaders(baseUrl).forEach { (name, value) -> c.setRequestProperty(name, value) }
         if (!key.isNullOrBlank()) {
             c.setRequestProperty("Authorization", "Bearer $key")
             // Anthropic's listing reads x-api-key (its OpenAI-compatible layer takes the bearer).
@@ -189,6 +191,16 @@ fun fetchModels(baseUrl: String, key: String?): Result<List<String>> = runCatchi
         if (code !in 200..299) error("HTTP $code ${body.take(160).replace('\n', ' ')}".trim())
         parseModelIds(body)
     } finally { c.disconnect() }
+}
+
+/** Discovery has no conversation yet, so each OpenCode listing gets an isolated routing id. */
+internal fun modelListHeaders(baseUrl: String): Map<String, String> = buildMap {
+    put("Accept", "application/json")
+    val host = runCatching { URL(baseUrl).host.lowercase() }.getOrNull()
+    if (host == "opencode.ai" || host?.endsWith(".opencode.ai") == true) {
+        put("User-Agent", "deepseek-harness-android/${BuildConfig.VERSION_NAME}")
+        put("x-opencode-session", UUID.randomUUID().toString())
+    }
 }
 
 fun parseModelIds(body: String): List<String> {

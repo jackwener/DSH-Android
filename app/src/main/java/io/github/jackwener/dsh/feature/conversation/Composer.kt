@@ -65,6 +65,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.jackwener.dsh.R
 import io.github.jackwener.dsh.core.data.Effort
+import io.github.jackwener.dsh.core.provider.ModelReasoning
 import io.github.jackwener.dsh.core.provider.DEEPSEEK_MODELS
 import io.github.jackwener.dsh.core.provider.ModelChoice
 import io.github.jackwener.dsh.core.provider.ProviderConfig
@@ -188,10 +189,11 @@ fun Composer(
     model: ModelChoice,
     /** Third-party providers; their enabled models are listed under the provider's name. */
     providers: List<ProviderConfig>,
-    effort: Effort,
+    reasoning: ModelReasoning,
+    selectedEffort: String?,
     /** (provider route id or "" for DeepSeek, model id). */
     onModel: (String, String) -> Unit,
-    onEffort: (Effort) -> Unit,
+    onEffort: (String) -> Unit,
     contextTokens: Long,
     onSend: () -> Unit,
     onStop: () -> Unit,
@@ -327,8 +329,8 @@ fun Composer(
             Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.End)) {
             if (showChips && contextTokens > 0) ContextRing(contextTokens, model.contextWindow)
             if (showChips) Box(Modifier.weight(1f, fill = false)) {
-                // Third-party models have no effort selector (the model family's default level applies).
-                val effortLabel = if (model.isDeepSeek) effort.label else ""
+                val selectedLevel = reasoning.selected(selectedEffort)
+                val effortLabel = selectedLevel?.name.orEmpty()
                 val modelDesc = stringResource(R.string.model_chip_desc, modelLabel(model.model), effortLabel)
                 Row(Modifier.heightIn(min = 28.dp).widthIn(max = 200.dp).clip(Radius.sm).pressable({ if (settled()) modelOpen = true }, Radius.sm)
                     .semantics(mergeDescendants = true) { contentDescription = modelDesc }.padding(start = 6.dp, end = 2.dp),
@@ -341,17 +343,20 @@ fun Composer(
                     Chevron(Modifier.padding(start = 2.dp), size = 12.dp)
                 }
                 DMenu(modelOpen, { modelOpen = false }) {
+                    if (reasoning.efforts.isNotEmpty()) {
+                        MenuSectionTitle(stringResource(R.string.effort))
+                        reasoning.efforts.forEach { e ->
+                            val description = Effort.entries.firstOrNull { it.id == e.id }?.let { stringResource(effortDesc(it)) }
+                            MenuItem(e.name, { modelOpen = false; onEffort(e.id) }, null, description, selected = e.id == selectedLevel?.id)
+                        }
+                        MenuDivider()
+                    }
                     MenuSectionTitle("DeepSeek")
                     Models.forEach { (id, label) -> MenuItem(label, { modelOpen = false; onModel("", id) }, R.drawable.dsw_data_outline, selected = model.isDeepSeek && id == model.model) }
                     providers.filter { it.enabled && it.models.isNotEmpty() }.forEach { p ->
                         MenuDivider()
                         MenuSectionTitle(p.name)
                         p.models.forEach { m -> MenuItem(m, { modelOpen = false; onModel(p.id, m) }, R.drawable.dsw_data_outline, selected = model.provider?.id == p.id && model.model == m) }
-                    }
-                    if (model.isDeepSeek) {
-                        MenuDivider()
-                        MenuSectionTitle(stringResource(R.string.effort))
-                        Effort.entries.forEach { e -> MenuItem(e.label, { modelOpen = false; onEffort(e) }, null, stringResource(effortDesc(e)), selected = e == effort) }
                     }
                     if (modelChangePending) Text(stringResource(R.string.model_applies_next), Modifier.padding(8.dp), style = DshType.xxs12, color = c.labelCaption)
                 }

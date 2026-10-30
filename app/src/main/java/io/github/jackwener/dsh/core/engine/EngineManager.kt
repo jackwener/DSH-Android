@@ -15,8 +15,12 @@ import io.github.jackwener.dsh.core.capability.CapabilityHub
 import io.github.jackwener.dsh.core.data.SecretStore
 import io.github.jackwener.dsh.core.data.SettingsRepository
 import io.github.jackwener.dsh.core.provider.renderProfilePatch
+import io.github.jackwener.dsh.core.provider.ModelMetadata
+import io.github.jackwener.dsh.core.provider.ModelsMetadata
+import io.github.jackwener.dsh.core.provider.requestedEffort
 import io.github.jackwener.dsh.core.session.SessionStore
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -33,6 +37,9 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.addJsonObject
+import kotlinx.serialization.json.putJsonArray
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonObject
 import java.io.File
@@ -56,7 +63,7 @@ class EngineBackgroundStartException(cause: Throwable) : Exception("foreground s
 
 /**
  * The process-wide SDK route (`initialize`): provider + model + effort ([effort] is the Effort id;
- * "" for third-party routes, which use the model family's own default and send none).
+ * "" leaves a third-party route's reasoning level at its adapter default).
  */
 data class EngineRoute(val provider: String, val model: String, val effort: String)
 
@@ -108,6 +115,9 @@ class EngineManager @Inject constructor(
     private val _route = MutableStateFlow<EngineRoute?>(null)
     /** Route of the running engine (null while stopped). A settings change that differs waits until no run is active. */
     val route: StateFlow<EngineRoute?> = _route.asStateFlow()
+    private val _modelMetadata = MutableStateFlow<List<ModelMetadata>>(emptyList())
+    /** Adapter-owned choices; retained while idle so opening the picker does not require a live run. */
+    val modelMetadata: StateFlow<List<ModelMetadata>> = _modelMetadata.asStateFlow()
     private var activeRoute: EngineRoute?
         get() = _route.value
         set(v) { _route.value = v }
@@ -123,8 +133,28 @@ class EngineManager @Inject constructor(
 
     private fun wantedRoute(st: io.github.jackwener.dsh.core.data.Settings, hasKey: Boolean): EngineRoute {
         val choice = st.choice
-        choice.provider?.let { return EngineRoute(it.id, choice.model, "") }
+        choice.provider?.let { return EngineRoute(it.id, choice.model, reasoningEffort(st)) }
         return EngineRoute(if (!hasKey && account.get().signedIn) "deepseek-account" else "deepseek-official", choice.model, st.effort.id)
+    }
+
+    fun reasoningEffort(st: io.github.jackwener.dsh.core.data.Settings): String =
+        st.choice.requestedEffort(st.effort, st.providerEfforts, modelMetadata.value)
+
+    private suspend fun readModelMetadata(peer: JsonRpcPeer, st: io.github.jackwener.dsh.core.data.Settings) {
+        val routes = st.providers.filter { it.enabled && it.baseUrl.isNotBlank() }
+            .flatMap { p -> p.models.distinct().map { p.id to it } }
+        val found = ArrayList<ModelMetadata>()
+        val json = Json { ignoreUnknownKeys = true }
+        for (batch in routes.chunked(256)) {
+            try {
+                val response = withTimeoutOrNull(10_000) { peer.request("android/models/reasoning", buildJsonObject {
+                    putJsonArray("routes") { batch.forEach { (provider, model) -> addJsonObject { put("provider", provider); put("model", model) } } }
+                }) } ?: throw IllegalStateException("model reasoning metadata timed out")
+                found += json.decodeFromJsonElement(ModelsMetadata.serializer(), response).models
+            } catch (e: CancellationException) { throw e }
+            catch (e: Exception) { Log.w(TAG, "model reasoning metadata unavailable", e) }
+        }
+        _modelMetadata.value = found
     }
 
     /** web_search needs a DeepSeek credential: the API key, or the account while on the account route. */
@@ -251,6 +281,7 @@ class EngineManager @Inject constructor(
                 .onSuccess { account.get().onEngineView(it) }
                 .onFailure { Log.w(TAG, "account/state unavailable", it) }
             val tBooted = System.currentTimeMillis()
+            readModelMetadata(peer, st)
             val want = wantedRoute(st, hasKey)
             failedRoute = null
             try {

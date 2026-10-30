@@ -42,7 +42,7 @@ cp "$JS_DIR/engine/package.json" "$JS_DIR/engine/package-lock.json" "$STAGE/"
 # js/packages/<dir> → node_modules/<package name>: our @dsh-android packages plus the vendored
 # third-party LLM adapter @snnh/dsh-llm-service-lite (MIT; see its package.json "//vendored").
 log "adding @dsh-android packages + vendored @snnh/dsh-llm-service-lite"
-OUR_PKGS=(bundle-android plugin-device plugin-guard plugin-mode plugin-account llm-service-lite)
+OUR_PKGS=(bundle-android plugin-device plugin-guard plugin-mode plugin-models plugin-account llm-service-lite)
 for pkg in "${OUR_PKGS[@]}"; do
   node -e '
     const [src, nm, stagePkg] = process.argv.slice(1)
@@ -172,11 +172,15 @@ grep -q 'describeTransportCause' "$NM/@snnh/dsh-llm-service-lite/lib/index.js" |
 grep -q 'patch 15' "$NM/@deepseek-ai/dsh-http-proxy/lib/index.js" || die "http-proxy exclusion-glob patch missing"
 grep -q 'appendPluginRecord' "$NM/@deepseek-ai/dsh-session/lib/index.js" || die "dsh-session lacks appendPluginRecord (plugin-mode records its selection with it)"
 [[ -f "$NM/@dsh-android/plugin-mode/index.js" ]] || die "plugin-mode missing"
+[[ -f "$NM/@dsh-android/plugin-models/index.js" ]] || die "plugin-models missing"
+[[ -f "$NM/@snnh/dsh-llm-service-lite/lib/opencode-session.js" ]] || die "OpenCode session header helper missing"
+grep -q 'headers: withOpenCodeSessionHeader(request.url, request.headers, options.sessionId)' "$NM/@snnh/dsh-llm-service-lite/lib/index.js" || die "OpenCode session header patch missing"
+grep -q 'if (usage === void 0 || usage === null || typeof usage.prompt_tokens' "$NM/@snnh/dsh-llm-service-lite/lib/index.js" || die "nullable streaming usage patch missing"
 log "no symlinks; entry point and patches verified"
 
 # ── 8. version, zip, digest, report ──────────────────────────────────────────
 INPUT_HASH=$( (cd "$JS_DIR" && cat engine/package-lock.json patches/*.patch \
-  packages/bundle-android/cordis.patch.yml packages/bundle-android/android-env.cjs packages/*/package.json packages/plugin-*/*.js packages/llm-service-lite/lib/index.js scripts/*.mjs build-engine.sh) | sha256sum | cut -c1-10)
+  packages/bundle-android/cordis.patch.yml packages/bundle-android/android-env.cjs packages/*/package.json packages/plugin-*/*.js packages/llm-service-lite/lib/*.js scripts/*.mjs build-engine.sh) | sha256sum | cut -c1-10)
 ENGINE_VERSION="${DSH_VERSION}-a${INPUT_HASH}"
 printf '%s\n' "$ENGINE_VERSION" > "$STAGE/engine-version.txt"
 printf '%s\n' "$ENGINE_VERSION" > "$OUT_DIR/engine-version.txt"

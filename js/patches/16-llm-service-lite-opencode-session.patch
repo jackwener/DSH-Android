@@ -1,0 +1,19 @@
+--- a/@snnh/dsh-llm-service-lite/lib/index.js
++++ b/@snnh/dsh-llm-service-lite/lib/index.js
+@@ -5,6 +5,7 @@
+ import { longEdgeDimensions, requestImageDimensions } from "@deepseek-ai/dsh-attachment";
+ import { credentialRef } from "@deepseek-ai/dsh-credentials";
+ import { readFileSync } from "node:fs";
++import { withOpenCodeSessionHeader } from "./opencode-session.js";
+ import z from "@deepseek-ai/schemastery";
+ import { EventSourceParserStream, ParseError } from "eventsource-parser/stream";
+ /** Long-edge ceiling for one request image; a larger source is scaled down, never up. */
+@@ -4807,7 +4808,7 @@
+ 		const request = transport.request(profile, model, options, apiKey, versions);
+ 		const response = await fetch(request.url, {
+ 			method: "POST",
+-			headers: request.headers,
++			headers: withOpenCodeSessionHeader(request.url, request.headers, options.sessionId),
+ 			body: request.body,
+ 			signal,
+ 			redirect: "error"
