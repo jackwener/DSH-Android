@@ -76,3 +76,48 @@ cannot predict a future network response; explicit `wait`/`assert` remains neces
 sampled visual comparisons, and ordered text overlap does not provide database row identity.
 
 See [usage and test commands](PHONE-AUTOMATION.md) to reproduce the suite.
+
+
+## Additional installed daily-build acceptance — 2026-10-31
+
+The original 24-test run above targeted the isolated feature APK. A separate acceptance run now
+checks the **actually installed local integration APK**, `0.2.5-local.2` / versionCode 16, SHA-256
+`8e40a9f890426f6f5bb5723dc1cd76e8675c6187e3ba5faec191d31e2af4e84c`.
+Every test verifies that installed APK hash. The complete run passed **35/35 tests in 341.398 s**:
+31 shared phone-feature cases, one local engine-recovery case, and three real model-driven cases.
+The integration includes the provider/reasoning changes from PR #30 and a local engine-generation
+lifecycle fix; it is not a standalone build of this PR. All 13 runtime files changed by the phone
+features were compared byte-for-byte with this branch and matched.
+
+| Feature | Evidence on the installed integration APK |
+| --- | --- |
+| Sequential native actions | One eight-step Clock navigation/assertion batch, 4617 ms, no explicit wait and no timer/alarm mutation. A real model independently completed four Clock navigation steps in one batch, 2571 ms. |
+| Multi-screen collection | All 60 fixture rows in both directions, seven pages each, including repeated values; 7057/7012 ms. The real model collected two actual Settings home pages and 26 entries, 4254 ms. |
+| Adaptive waiting | Direct taps without explicit wait: quick update 613 ms; a 900 ms delayed update returned with the result present in 1441 ms; no effect bounded at 1818 ms; continuously changing content bounded at 1843 ms with `screen_unstable`. The real model used one two-step batch with no wait, 1475 ms, one dispatch. |
+| OCR frame validation | Real Settings: old ID and post-scroll frame both rejected without a tap; a fresh OCR target navigated. Canvas tests cover recognition-time changes, old-ID non-reuse and animation rejection. The real model used a fresh OCR ID once and verified count 1. |
+
+All three real model cases returned zero tool errors and reached both SDK completion and the app's
+idle state. A separate recovery check induced a failed engine start and confirmed its replacement
+remained usable. That local engine lifecycle repair is outside this phone-feature PR.
+
+The expanded **31-case shared suite is included in this PR**; its instrumentation APK compiles.
+Local-only provider configuration and the four integration-specific cases are not included here.
+Test setup waits for a focused, on-screen stable fixture after closing the previous Activity;
+window/decor access runs on the main thread. It restores the prior settings after each case and
+refuses configured `-local.` daily builds, which require the local backup/exact-APK opt-in suite.
+Failed/interrupted fixture runs were retained and excluded from the complete passing run.
+
+The new four-tap measurements were 2306/2305/2335 ms individually (median 2306 ms), versus
+2427/2395/2392 ms in one batch (median 2395 ms). These samples **do not show a native execution
+speedup**; the verified reduction is four caller tool invocations to one. No end-to-end LLM/network
+speedup is claimed. The final integration also passed 155 JVM tests; its lint errors match the
+seven occurrences on clean v0.2.5, with no added errors.
+
+### Observed Redmi limitation
+
+The Settings “更多连接” subpage does not expose its active application root to DSH's accessibility
+service. An independent test observer sees `accessibilityDataSensitive=true`; DSH's current fallback
+reports the launcher package. A batch stops with `app_changed` and does not execute later actions.
+**Continuous operation inside that subpage is not accepted as working.** A fresh OCR tap can enter
+it, with the destination verified independently; that does not prove DSH can read the destination.
+Other ROMs, virtual displays and arbitrary app flows remain outside this acceptance scope.
