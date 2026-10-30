@@ -294,6 +294,9 @@
     <string name="traj_load_earlier">Load earlier history</string>
     <string name="traj_turn">Turn %1$d</string>
     <string name="traj_between">Between turns</string>
+    <string name="traj_turn_took">took %1$s</string>
+    <string name="traj_turn_calls">%1$d calls</string>
+    <string name="traj_turn_first">first output %1$s</string>
     <string name="traj_step">Step %1$d</string>
     <string name="traj_summary">%1$d turns · %2$d calls · %3$s · %4$s tok</string>
     <string name="traj_compaction">Compacted %1$s records</string>

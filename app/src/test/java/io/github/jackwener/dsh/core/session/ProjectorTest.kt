@@ -155,4 +155,23 @@ class ProjectorTest {
         assertEquals("one\n\ntwo", live.restoredDraft)
         assertNull(SessionLive("s", running = true).idle().restoredDraft)
     }
+
+    @Test fun `turn summary counts calls and time to first output`() {
+        val events = listOf(
+            ev(0, "turn/start", """{"turn":1}"""),
+            ev(1, "step/start", """{"turn":1,"step":1}"""),
+            ev(3, "assistant/message", """{"turn":1,"step":1,"firstTokenTime":1500,"message":{"content":[{"type":"tool-call","name":"screen_read"}]}}"""),
+            ev(4, "tool/call", """{"callId":"c1","name":"screen_read","arguments":"{}"}"""),
+            result(5, "ok"),
+            ev(6, "assistant/message", """{"turn":1,"step":2,"message":{"content":[{"type":"text","text":"done"}]}}"""),
+            ev(7, "turn/end", """{"turn":1,"reason":{"kind":"completed"}}"""),
+        )
+        val turn = Projector.trajectory(events, emptyList(), running = false).turns.single { it.number == 1 }
+        assertEquals(1, turn.toolCalls)
+        assertEquals(1500L, turn.firstOutputMs)
+        assertEquals(7000L, turn.end!! - turn.start)
+        val noToken = Projector.trajectory(events.map { if (it.seq == 3L) ev(3, "assistant/message", """{"turn":1,"step":1,"message":{"content":[]}}""") else it },
+            emptyList(), running = false).turns.single { it.number == 1 }
+        assertEquals(3000L, noToken.firstOutputMs)
+    }
 }

@@ -294,6 +294,9 @@
     <string name="traj_load_earlier">加载更早的历史</string>
     <string name="traj_turn">第 %1$d 轮</string>
     <string name="traj_between">轮次之间</string>
+    <string name="traj_turn_took">用时 %1$s</string>
+    <string name="traj_turn_calls">%1$d 次调用</string>
+    <string name="traj_turn_first">首次反馈 %1$s</string>
     <string name="traj_step">第 %1$d 步</string>
     <string name="traj_summary">%1$d 轮 · %2$d 次调用 · %3$s · %4$s tok</string>
     <string name="traj_compaction">压缩 %1$s 条记录</string>
