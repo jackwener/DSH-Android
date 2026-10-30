@@ -169,6 +169,68 @@ class ProvidersTest {
         assertEquals(p, json.decodeFromString(ProviderConfig.serializer(), json.encodeToString(ProviderConfig.serializer(), p)))
     }
 
+    @Test fun preR5ProvidersDecodeWithoutHeaders() {
+        // Settings migration for the header fields: stored JSON is decoded with defaults, no rewrite needed.
+        val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true; encodeDefaults = true }
+        val v026 = """{"id":"kimi","preset":"kimi","name":"Kimi","baseUrl":"https://api.moonshot.cn/v1","models":["kimi-k3"],"enabled":true,"hasKey":true,"contextWindow":null,"maxTokens":null,"limits":{},"verified":["kimi-k3"]}"""
+        val old = json.decodeFromString(ProviderConfig.serializer(), v026)
+        assertTrue(old.headers.isEmpty()); assertNull(old.sessionHeader); assertEquals(listOf("kimi-k3"), old.verified)
+        // Unchanged output for a provider without headers: no headers / headerEnv / sessionHeader keys.
+        val yml = renderProfilePatch(listOf(old), true)
+        assertFalse(yml.contains("headers")); assertFalse(yml.contains("sessionHeader")); assertFalse(yml.contains("headerEnv"))
+        val p = old.copy(headers = listOf(ProviderHeader("X-Team", "blue"), ProviderHeader("X-Api-Token", secret = true)), sessionHeader = "x-opencode-session")
+        assertEquals(p, json.decodeFromString(ProviderConfig.serializer(), json.encodeToString(ProviderConfig.serializer(), p)))
+    }
+
+    @Test fun profilePatchCarriesHeadersButNoSecret() {
+        val p = ProviderConfig("opencode-go", "opencode-go", "OpenCode Go", "https://opencode.ai/zen/go/v1", listOf("glm-5.3"), hasKey = true,
+            headers = listOf(ProviderHeader("X-Team", "blue"), ProviderHeader("X-Api-Token", secret = true)), sessionHeader = OPENCODE_SESSION_HEADER)
+        val yml = renderProfilePatch(listOf(p), true, appProductToken("0.2.6"))
+        assertTrue(yml, yml.contains("\"headers\":{\"X-Team\":\"blue\"}"))
+        assertTrue(yml, yml.contains("\"headerEnv\":{\"X-Api-Token\":\"DSH_ANDROID_HDR_OPENCODE_GO_X_API_TOKEN\"}"))
+        assertTrue(yml, yml.contains("\"sessionHeader\":\"x-opencode-session\""))
+        assertTrue(yml, yml.contains("\"userAgent\":\"DSH-Android/0.2.6\""))
+        assertEquals("DSH_ANDROID_HDR_OPENCODE_GO_X_API_TOKEN", p.headerEnv("X-Api-Token"))
+        assertEquals("provider-opencode-go-h-x-api-token", p.headerSecretName("X-Api-Token"))
+    }
+
+    @Test fun openCodeGoPreset() {
+        val go = presetOf("opencode-go")!!
+        assertEquals("https://opencode.ai/zen/go/v1", go.baseUrl)
+        assertEquals(OPENCODE_SESSION_HEADER, go.sessionHeader)
+        assertFalse(go.keyOptional)
+    }
+
+    @Test fun headerRules() {
+        assertTrue(isUsableHeaderName("x-opencode-session")); assertTrue(isUsableHeaderName("X-Api-Key"))
+        assertFalse(isUsableHeaderName("bad header")); assertFalse(isUsableHeaderName("Content-Type")); assertFalse(isUsableHeaderName("host")); assertFalse(isUsableHeaderName(""))
+        assertFalse(isUsableHeaderValue("a\nb")); assertTrue(isUsableHeaderValue("a b\tc"))
+        assertTrue(looksSecretHeader("X-Api-Key", "abc")); assertTrue(looksSecretHeader("Authorization", "x")); assertTrue(looksSecretHeader("X-Thing", "sk-abc"))
+        assertTrue(looksSecretHeader("X-Thing", "Bearer abc")); assertFalse(looksSecretHeader("X-Team", "blue")); assertFalse(looksSecretHeader("HTTP-Referer", "https://x"))
+        val h = appRequestHeaders(mapOf("user-agent" to "mine/1", OPENCODE_SESSION_HEADER to "typed"), OPENCODE_SESSION_HEADER, appUserAgent("1"))
+        assertEquals("mine/1", h["user-agent"]); assertFalse(h.containsKey("User-Agent"))
+        assertTrue(h[OPENCODE_SESSION_HEADER]!!.matches(Regex("[0-9a-f]{32}")))
+        assertEquals(mapOf("User-Agent" to "DSH-Android/1 $HARNESS_USER_AGENT"), appRequestHeaders(emptyMap(), null, appUserAgent("1")))
+    }
+
+    @Test fun headerPlanKeepsSecretsOutOfSettings() {
+        val first = planHeaders("gw", listOf(HeaderRow(" X-Team ", "blue"), HeaderRow("X-Api-Key", "s3cret"), HeaderRow("", "x"), HeaderRow("X-Empty", "")), null)
+        assertEquals(listOf(ProviderHeader("X-Team", "blue"), ProviderHeader("X-Api-Key", secret = true)), first.headers)
+        assertEquals(mapOf("provider-gw-h-x-api-key" to "s3cret"), first.write)
+        assertTrue(first.clear.isEmpty())
+        val saved = ProviderConfig("gw", CUSTOM, "g", "https://gw/v1", listOf("m"), headers = first.headers)
+        // Editing: the secret row comes back blank and keeps the saved value; nothing is rewritten.
+        assertEquals(listOf(HeaderRow("X-Team", "blue"), HeaderRow("X-Api-Key", "")), headerRowsOf(saved))
+        val keep = planHeaders("gw", headerRowsOf(saved), saved)
+        assertEquals(first.headers, keep.headers); assertTrue(keep.write.isEmpty()); assertTrue(keep.clear.isEmpty())
+        assertEquals(mapOf("X-Team" to "blue", "X-Api-Key" to "s3cret"), resolveHeaderRows(headerRowsOf(saved), saved) { if (it == "provider-gw-h-x-api-key") "s3cret" else null })
+        // Removing the secret row clears its stored value.
+        val removed = planHeaders("gw", listOf(HeaderRow("X-Team", "blue")), saved)
+        assertEquals(listOf("provider-gw-h-x-api-key"), removed.clear)
+        // A saved secret stays secret even when the new value does not look like one.
+        assertEquals(mapOf("provider-gw-h-x-api-key" to "plain"), planHeaders("gw", listOf(HeaderRow("X-Api-Key", "plain")), saved).write)
+    }
+
     @Test fun refreshReplacesListKeepingCheckedOnTop() {
         // Stale unchecked models go, new ones come in the fetched order; checked-but-gone stay on top, flagged.
         val r = refreshOffered(current = listOf("old1", "old2", "keep", "a"), fetched = listOf("a", "n1", "n2"), keep = listOf("keep", "a"))

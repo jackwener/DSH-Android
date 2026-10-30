@@ -8,7 +8,7 @@ import io.github.jackwener.dsh.core.provider.VerifyOutcome
 /** One failed connection test in plain words; the server's own message is kept where it explains more. */
 fun describeFailure(context: Context, f: VerifyFailure): String = when (f) {
     is VerifyFailure.KeyInvalid -> context.getString(R.string.verify_key, f.message)
-    is VerifyFailure.ModelNotAvailable -> context.getString(R.string.verify_unavailable, f.message)
+    is VerifyFailure.ModelNotAvailable -> context.getString(R.string.verify_unavailable, f.message.trimEnd('.', '。', ' '))
     is VerifyFailure.ModelNotFound -> context.getString(R.string.verify_not_found, f.message)
     is VerifyFailure.ToolsUnsupported -> context.getString(R.string.verify_no_tools, f.message)
     is VerifyFailure.NoToolCall -> if (f.reply.isBlank()) context.getString(R.string.verify_no_tool_call) else context.getString(R.string.verify_no_tool_call_reply, f.reply)

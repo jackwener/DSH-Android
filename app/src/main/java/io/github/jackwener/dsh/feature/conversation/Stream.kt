@@ -263,9 +263,12 @@ private fun ErrorRow(e: TurnError, onRetry: (TurnError) -> Unit, onOpenSettings:
     val net = remember(e) { NetDiagnose.ofEngineError(e.code, e.message) }
     // The provider answered in a shape the adapter cannot read (js patch 16): not the network.
     val format = remember(e) { NetDiagnose.formatErrorOf(e.code, e.message) }
+    // The account has not enabled the model (js patch 18): not the key, not the network.
+    val unavailable = remember(e) { NetDiagnose.modelUnavailableOf(e.code, e.message) }
     val title = when {
         needsSignIn -> stringResource(R.string.acct_model_sign_in_required)
         net != null -> stringResource(R.string.net_title)
+        unavailable != null -> stringResource(R.string.err_model_unavailable_title)
         accountQuota -> stringResource(R.string.acct_quota_title)
         e.kind == "engine" -> stringResource(R.string.err_engine_title)
         e.kind == "engine_lost" -> stringResource(R.string.err_engine_lost_title)
@@ -277,6 +280,7 @@ private fun ErrorRow(e: TurnError, onRetry: (TurnError) -> Unit, onOpenSettings:
         accountQuota -> stringResource(R.string.acct_quota_desc)
         net != null -> stringResource(net.cause.message) + (net.cause.hint?.let { " " + stringResource(it) } ?: "")
         format != null -> stringResource(R.string.err_provider_format, format)
+        unavailable != null -> stringResource(R.string.err_model_unavailable, unavailable.model ?: "?", unavailable.serverText)
         e.code?.contains("auth", true) == true || e.message.contains("401") -> stringResource(R.string.err_invalid_key)
         e.message.contains("402") || e.message.contains("insufficient", true) -> stringResource(R.string.err_quota)
         else -> e.message
@@ -300,6 +304,10 @@ private fun ErrorRow(e: TurnError, onRetry: (TurnError) -> Unit, onOpenSettings:
                     }
                     accountQuota -> {
                         DButton(stringResource(R.string.acct_quota_top_up), { openPlatform(account?.state?.value?.topUpUrl ?: "https://platform.deepseek.com/top_up") }, size = BtnSize.Sm)
+                        DButton(stringResource(R.string.retry), { onRetry(e) }, size = BtnSize.Sm, variant = BtnVariant.Outline, icon = R.drawable.dsw_refresh_outline)
+                    }
+                    unavailable != null -> {
+                        DButton(stringResource(R.string.err_open_model_settings), { onOpenSettings("Model") }, size = BtnSize.Sm)
                         DButton(stringResource(R.string.retry), { onRetry(e) }, size = BtnSize.Sm, variant = BtnVariant.Outline, icon = R.drawable.dsw_refresh_outline)
                     }
                     e.kind == "engine" || e.kind == "engine_lost" -> {

@@ -89,4 +89,11 @@ class NetDiagnosisTest {
         assertEquals(listOf("localhost", "*.lan"), EngineProxy.parseNonProxyHosts("localhost|*.lan|"))
         assertEquals("LOCALHOST,127.0.0.1,::1,[::1]", EngineProxy.env(EngineProxy.Proxy("p", 1, listOf("LOCALHOST")))["NO_PROXY"])
     }
+
+    @Test fun modelNotAvailableIsNotTheKey() {
+        val u = NetDiagnose.modelUnavailableOf("MODEL_NOT_AVAILABLE", "llm-service-lite: model \"qwen-max\" is not available to this account: Model access denied.")
+        assertEquals(NetDiagnose.ModelUnavailable("qwen-max", "Model access denied"), u)
+        assertEquals(NetDiagnose.ModelUnavailable(null, "您无权访问glm-4-plus"), NetDiagnose.modelUnavailableOf("MODEL_NOT_AVAILABLE", "llm-service-lite: the model is not available to this account: 您无权访问glm-4-plus"))
+        assertNull(NetDiagnose.modelUnavailableOf("AUTH", "llm-service-lite: model \"x\" is not available to this account: y"))
+    }
 }

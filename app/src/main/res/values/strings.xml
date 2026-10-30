@@ -765,7 +765,7 @@
     <string name="prov_main_untested">默认模型 %1$s 未测试通过</string>
     <string name="prov_retest">重新测试</string>
     <string name="verify_key">API Key 不对或已失效。服务商说：%1$s</string>
-    <string name="verify_unavailable">账号还没开通这个模型，或没有使用权限。服务商说：%1$s</string>
+    <string name="verify_unavailable">这个账号没有开通这个模型，或没有使用权限：%1$s。可以换一个模型，或到服务商后台开通。</string>
     <string name="verify_not_found">服务商找不到这个模型名，请检查拼写。服务商说：%1$s</string>
     <string name="verify_no_tools">这个模型不支持工具调用，DSH 要靠工具调用来干活。服务商说：%1$s</string>
     <string name="verify_no_tool_call">模型回复了，但没有按要求调用工具，在 DSH 里用不好。</string>
@@ -782,4 +782,18 @@
     <string name="diag_title">诊断信息</string>
     <string name="diag_note">下面就是全部内容。API Key、登录凭据、对话和屏幕内容都不在里面，IP 地址和邮箱也已隐藏。只有点「复制」或「分享」才会带出去，不会自动发送。</string>
     <string name="share">分享</string>
+    <string name="err_model_unavailable_title">模型未开通</string>
+    <string name="err_model_unavailable">这个账号没有开通模型「%1$s」：%2$s。去 设置 → 模型 换一个，或到服务商后台开通。</string>
+    <string name="err_open_model_settings">去设置</string>
+    <string name="prov_advanced">高级设置</string>
+    <string name="prov_headers">额外请求头</string>
+    <string name="prov_headers_hint">每次请求模型（含获取模型列表和测试）都会带上。名称含 key / token / secret / auth，或值以 sk- / Bearer 开头的，与 API Key 一样加密保存，留空则保留已保存的值。</string>
+    <string name="prov_header_name">名称</string>
+    <string name="prov_header_value">值</string>
+    <string name="prov_header_saved">已加密保存</string>
+    <string name="prov_header_add">添加请求头</string>
+    <string name="prov_header_remove">删除这个请求头</string>
+    <string name="prov_session_header">会话标识请求头</string>
+    <string name="prov_session_header_hint">服务商要求按对话标识请求时填它的请求头名称（如 x-opencode-session）。同一对话的每次请求带同一个匿名标识（由对话 id 单向哈希得到），不同对话不同。</string>
+    <string name="prov_err_header">请求头名称或值无效：名称只能用字母、数字和 - _ . 等符号，不能是 Host、Content-Type 等由应用设置的请求头；值不能换行。</string>
 </resources>

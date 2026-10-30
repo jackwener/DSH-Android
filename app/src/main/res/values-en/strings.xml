@@ -765,7 +765,7 @@
     <string name="prov_main_untested">Default model %1$s has not passed the test</string>
     <string name="prov_retest">Test again</string>
     <string name="verify_key">The API key is wrong or expired. The provider said: %1$s</string>
-    <string name="verify_unavailable">Your account has not enabled this model or may not use it. The provider said: %1$s</string>
+    <string name="verify_unavailable">This account has not enabled this model, or may not use it: %1$s. Pick another model, or enable it in the provider\'s console.</string>
     <string name="verify_not_found">The provider does not know this model name; check the spelling. The provider said: %1$s</string>
     <string name="verify_no_tools">This model does not support tool calls, which DSH needs to get things done. The provider said: %1$s</string>
     <string name="verify_no_tool_call">The model replied but did not call the tool as asked, so it will not work well in DSH.</string>
@@ -782,4 +782,18 @@
     <string name="diag_title">Diagnostics</string>
     <string name="diag_note">This is everything in the report. API keys, sign-in credentials, conversations and screen content are not included; IP addresses and emails are hidden. It leaves this page only when you tap Copy or Share; nothing is sent automatically.</string>
     <string name="share">Share</string>
+    <string name="err_model_unavailable_title">Model not enabled</string>
+    <string name="err_model_unavailable">This account has not enabled the model “%1$s”: %2$s. Pick another one in Settings → Model, or enable it in the provider\'s console.</string>
+    <string name="err_open_model_settings">Settings</string>
+    <string name="prov_advanced">Advanced</string>
+    <string name="prov_headers">Extra request headers</string>
+    <string name="prov_headers_hint">Sent with every model request (including model listing and the test). Values whose name contains key / token / secret / auth, or that start with sk- / Bearer, are stored encrypted like the API key; leave blank to keep the saved value.</string>
+    <string name="prov_header_name">Name</string>
+    <string name="prov_header_value">Value</string>
+    <string name="prov_header_saved">Saved (encrypted)</string>
+    <string name="prov_header_add">Add header</string>
+    <string name="prov_header_remove">Remove this header</string>
+    <string name="prov_session_header">Session header</string>
+    <string name="prov_session_header_hint">If the provider wants a per-conversation id, enter its header name (e.g. x-opencode-session). Every request of a conversation carries the same anonymous id (a one-way hash of the conversation id); other conversations get other ids.</string>
+    <string name="prov_err_header">Invalid header: names use letters, digits and - _ . etc., and cannot be one the app sets (Host, Content-Type…); values must be a single line.</string>
 </resources>

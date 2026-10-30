@@ -114,6 +114,8 @@ object VerifyErrors {
             status == 402 || status == 429 || "1113" in tags -> VerifyFailure.Quota(message)
             status in 400..499 && has(TOOLS) -> VerifyFailure.ToolsUnsupported(message)
             status in 400..499 && has(NOT_ACTIVATED) -> VerifyFailure.ModelNotAvailable(message)
+            // A 403 that says access is denied is about the account, even with a model_not_found code (OpenAI projects); js patch 18 agrees.
+            status == 403 && !has(KEY) && !has(REGION) && has(NOT_AVAILABLE) -> VerifyFailure.ModelNotAvailable(message)
             status in 400..499 && ("1211" in tags || "20012" in tags || has(NOT_FOUND) || modelNotFoundPhrase(message.lowercase())) -> VerifyFailure.ModelNotFound(message)
             status in 400..499 && has(KEY) -> VerifyFailure.KeyInvalid(message)
             status == 403 && has(REGION) -> VerifyFailure.Server(status, message)
@@ -201,7 +203,10 @@ fun rankCandidates(listed: List<RemoteModel>, preset: ProviderPreset?, main: Str
 
 // ── the probe ──
 
-/** The engine's User-Agent (dsh-llm attributionHeaders), so gateways that filter clients treat the test like a chat. */
+/**
+ * The harness part of the engine's User-Agent (dsh-llm attributionHeaders), so gateways that filter clients
+ * treat the test like a chat; the app puts `DSH-Android/<version>` in front ([appUserAgent]), as the engine does.
+ */
 const val HARNESS_USER_AGENT = "deepseek-harness (+https://github.com/deepseek-ai/deepseek-harness)"
 const val PROBE_TOOL = "dsh_connection_check"
 
@@ -234,7 +239,8 @@ fun probeBody(model: String, forceTool: Boolean): String = buildJsonObject {
  * Runs on the caller's thread (call from Dispatchers.IO). The read timeout is generous: a local
  * server (Ollama, LM Studio) may load the model before the first byte.
  */
-fun probeToolCall(baseUrl: String, key: String?, model: String, forceTool: Boolean = true, connectTimeoutMs: Int = 10_000, readTimeoutMs: Int = 90_000): VerifyFailure? = try {
+fun probeToolCall(baseUrl: String, key: String?, model: String, forceTool: Boolean = true, connectTimeoutMs: Int = 10_000, readTimeoutMs: Int = 90_000,
+    headers: Map<String, String> = emptyMap()): VerifyFailure? = try {
     val c = URL(baseUrl.trim().trimEnd('/') + "/chat/completions").openConnection() as HttpURLConnection
     try {
         c.connectTimeout = connectTimeoutMs; c.readTimeout = readTimeoutMs
@@ -242,6 +248,8 @@ fun probeToolCall(baseUrl: String, key: String?, model: String, forceTool: Boole
         c.setRequestProperty("content-type", "application/json")
         c.setRequestProperty("accept", "text/event-stream")
         c.setRequestProperty("user-agent", HARNESS_USER_AGENT)
+        // The provider's extra headers, session header and app User-Agent (appRequestHeaders), as the engine sends them.
+        headers.forEach { (k, v) -> c.setRequestProperty(k, v) }
         if (!key.isNullOrBlank()) c.setRequestProperty("authorization", "Bearer ${key.trim()}")
         c.outputStream.use { it.write(probeBody(model, forceTool).toByteArray()) }
         val code = c.responseCode
@@ -305,7 +313,8 @@ private fun errorStatus(o: JsonObject): Int {
  * [probeToolCall], and once more without `tool_choice` when the server rejects that field: the
  * engine never sends it, so a model that calls the tool on its own still works in chats.
  */
-fun probeModel(baseUrl: String, key: String?, model: String, probe: (Boolean) -> VerifyFailure? = { force -> probeToolCall(baseUrl, key, model, force) }): VerifyFailure? {
+fun probeModel(baseUrl: String, key: String?, model: String, headers: Map<String, String> = emptyMap(),
+    probe: (Boolean) -> VerifyFailure? = { force -> probeToolCall(baseUrl, key, model, force, headers = headers) }): VerifyFailure? {
     val first = probe(true) ?: return null
     val msg = when (first) {
         is VerifyFailure.ToolsUnsupported -> first.message

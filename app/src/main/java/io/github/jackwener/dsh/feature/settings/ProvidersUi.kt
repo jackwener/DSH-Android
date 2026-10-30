@@ -51,6 +51,10 @@ import io.github.jackwener.dsh.core.provider.CUSTOM
 import io.github.jackwener.dsh.core.provider.DEEPSEEK_MODELS
 import io.github.jackwener.dsh.core.provider.EffectiveLimits
 import io.github.jackwener.dsh.core.provider.FetchedModels
+import io.github.jackwener.dsh.core.provider.HeaderRow
+import io.github.jackwener.dsh.core.provider.headerRowsOf
+import io.github.jackwener.dsh.core.provider.isUsableHeaderName
+import io.github.jackwener.dsh.core.provider.isUsableHeaderValue
 import io.github.jackwener.dsh.core.provider.VerifyErrors
 import io.github.jackwener.dsh.core.provider.VerifyFailure
 import io.github.jackwener.dsh.core.provider.VerifyOutcome
@@ -233,6 +237,13 @@ private fun ProviderEditor(vm: SettingsViewModel, existing: ProviderConfig?, pre
     var savedId by rememberSaveable { mutableStateOf<String?>(null) }
     val current = existing ?: s.providers.firstOrNull { it.id == savedId }
     val needsKey = !preset.keyOptional && current?.hasKey != true
+    // 高级设置: extra request headers and the per-conversation session header (js patch 18).
+    val headerRows = remember { mutableStateListOf<HeaderRow>().apply { addAll(headerRowsOf(existing)) } }
+    var sessionHeader by rememberSaveable { mutableStateOf(if (existing != null) existing.sessionHeader.orEmpty() else preset.sessionHeader.orEmpty()) }
+    var advanced by rememberSaveable { mutableStateOf(existing?.headers?.isNotEmpty() == true || existing?.sessionHeader != null) }
+    fun sessionHeaderOrNull() = sessionHeader.trim().ifEmpty { null }
+    fun headersValid() = headerRows.all { r -> r.name.isBlank() || (isUsableHeaderName(r.name.trim()) && isUsableHeaderValue(r.value)) } &&
+        (sessionHeader.isBlank() || isUsableHeaderName(sessionHeader.trim()))
 
     fun applyListing(fetched: FetchedModels<RemoteModel>) {
         val list = fetched.models
@@ -257,7 +268,7 @@ private fun ProviderEditor(vm: SettingsViewModel, existing: ProviderConfig?, pre
     suspend fun testAndSave() {
         result = null
         testing = context.getString(R.string.prov_testing_list)
-        val listing = vm.fetchModels(baseUrl, key, current)
+        val listing = vm.fetchModels(baseUrl, key, current, headerRows.toList(), sessionHeaderOrNull())
         listing.onSuccess(::applyListing)
         listing.exceptionOrNull()?.let { t ->
             val f = VerifyErrors.ofThrowable(t)
@@ -276,7 +287,7 @@ private fun ProviderEditor(vm: SettingsViewModel, existing: ProviderConfig?, pre
             testing = null; result = false to context.getString(if (listed == null) R.string.prov_test_need_model else R.string.prov_test_no_chat_model); return
         }
         val base = baseUrl.trim().trimEnd('/')
-        val outcome = vm.verifyModels(base, key, current, candidates) { m -> testing = context.getString(R.string.prov_testing_model, m) }
+        val outcome = vm.verifyModels(base, key, current, candidates, { m -> testing = context.getString(R.string.prov_testing_model, m) }, headerRows.toList(), sessionHeaderOrNull())
         testing = null
         val plan = planSave(outcome, checked, current?.verified.orEmpty(), makeMain = existing == null || s.choice.provider?.id == current?.id)
         if (plan.save) {
@@ -287,7 +298,8 @@ private fun ProviderEditor(vm: SettingsViewModel, existing: ProviderConfig?, pre
             val limits = models.associateWith { stored(it) }.filterValues { !it.isEmpty }
             vm.saveTested(ProviderConfig(id, preset.id, name.trim().ifEmpty { defaultName }, base, models,
                 enabled = current?.enabled ?: true, hasKey = current?.hasKey ?: false,
-                contextWindow = tokensOrNull(ctxText), maxTokens = tokensOrNull(maxText)?.toIntSat(), limits = limits, verified = plan.verified), key, plan.main)
+                contextWindow = tokensOrNull(ctxText), maxTokens = tokensOrNull(maxText)?.toIntSat(), limits = limits, verified = plan.verified,
+                sessionHeader = sessionHeaderOrNull()), key, plan.main, headerRows.toList())
             savedId = id
         }
         result = (outcome is VerifyOutcome.Passed) to describeOutcome(context, outcome, becameMain = plan.main != null)
@@ -316,7 +328,7 @@ private fun ProviderEditor(vm: SettingsViewModel, existing: ProviderConfig?, pre
                     if (!isHttpUrl(baseUrl)) { error = R.string.prov_err_url; return@DButton }
                     fetchState = "busy"
                     scope.launch {
-                        vm.fetchModels(baseUrl, key, current).onSuccess(::applyListing).onFailure { t ->
+                        vm.fetchModels(baseUrl, key, current, headerRows.toList(), sessionHeaderOrNull()).onSuccess(::applyListing).onFailure { t ->
                             fetchOk = false
                             // Same wording as a failed chat turn (Stream.kt ErrorRow): cause, hint, raw detail.
                             fetchNet = NetDiagnose.ofException(t)
@@ -348,6 +360,28 @@ private fun ProviderEditor(vm: SettingsViewModel, existing: ProviderConfig?, pre
                 }
             }
             Text(stringResource(R.string.prov_limits_hint, ThirdParty.DEFAULT_CONTEXT_WINDOW, ThirdParty.DEFAULT_MAX_TOKENS), style = DshType.xxs12, color = c.labelTertiary)
+            Row(Modifier.fillMaxWidth().clip(Radius.sm).clickable { advanced = !advanced }.padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(stringResource(R.string.prov_advanced), Modifier.weight(1f), style = DshType.xs13m, color = c.labelSecondary)
+                DIcon(if (advanced) R.drawable.dsw_chevron_up_outline else R.drawable.dsw_chevron_down_outline, size = 14.dp, tint = c.labelTertiary)
+            }
+            if (advanced) {
+                Text(stringResource(R.string.prov_session_header), style = DshType.xs13m, color = c.labelSecondary)
+                DInput(sessionHeader, { sessionHeader = it.trim() }, placeholder = "x-opencode-session")
+                Text(stringResource(R.string.prov_session_header_hint), style = DshType.xxs12, color = c.labelTertiary)
+                Text(stringResource(R.string.prov_headers), style = DshType.xs13m, color = c.labelSecondary)
+                headerRows.forEachIndexed { i, r ->
+                    val savedSecret = existing?.headers?.any { it.secret && it.name.equals(r.name.trim(), true) } == true
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        DInput(r.name, { headerRows[i] = r.copy(name = it.trim()) }, Modifier.weight(1f), placeholder = stringResource(R.string.prov_header_name))
+                        DInput(r.value, { headerRows[i] = r.copy(value = it) }, Modifier.weight(1.4f),
+                            placeholder = stringResource(if (savedSecret) R.string.prov_header_saved else R.string.prov_header_value), secret = savedSecret)
+                        IconBtn(R.drawable.dsw_close_outline, { headerRows.removeAt(i) }, size = 32.dp, iconSize = 14.dp, tint = c.labelTertiary,
+                            contentDescription = stringResource(R.string.prov_header_remove))
+                    }
+                }
+                DButton(stringResource(R.string.prov_header_add), { headerRows.add(HeaderRow("", "")) }, variant = BtnVariant.Outline, size = BtnSize.Sm)
+                Text(stringResource(R.string.prov_headers_hint), style = DshType.xxs12, color = c.labelTertiary)
+            }
         }
     }
 
@@ -412,6 +446,7 @@ private fun ProviderEditor(vm: SettingsViewModel, existing: ProviderConfig?, pre
             DButton(stringResource(R.string.prov_test_save), {
                 error = when {
                     !isHttpUrl(baseUrl) -> R.string.prov_err_url
+                    !headersValid() -> R.string.prov_err_header
                     needsKey && key.isBlank() -> R.string.prov_err_key
                     (listOf(ctxText, maxText) + overrides.values.flatMap { listOf(it.first, it.second) }).any { parseTokenInput(it).isFailure } -> R.string.prov_err_limits
                     else -> null

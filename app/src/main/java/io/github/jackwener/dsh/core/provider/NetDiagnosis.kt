@@ -67,6 +67,23 @@ object NetDiagnose {
         return detail.ifEmpty { code }
     }
 
+    /** The model and the server's own words of a `MODEL_NOT_AVAILABLE` turn error. */
+    data class ModelUnavailable(val model: String?, val serverText: String)
+
+    private val UNAVAILABLE = Regex("^llm-service-lite: (?:model \"(.*)\"|the model) is not available to this account: (.*)$", RegexOption.DOT_MATCHES_ALL)
+
+    /**
+     * The account has not enabled (开通) the model or may not use it (js patch 18: `MODEL_NOT_AVAILABLE`,
+     * `llm-service-lite: model "<id>" is not available to this account: <server text>`). Not the key:
+     * the app says so instead of "API key invalid". Null for any other error.
+     */
+    fun modelUnavailableOf(code: String?, message: String): ModelUnavailable? {
+        if (code != "MODEL_NOT_AVAILABLE") return null
+        val m = UNAVAILABLE.find(message.trim())
+        val text = (m?.groupValues?.get(2) ?: message.removePrefix("llm-service-lite: ")).trim().trimEnd('.', '。', ' ')
+        return ModelUnavailable(m?.groupValues?.get(1)?.takeIf { it.isNotEmpty() }, text.ifEmpty { code })
+    }
+
     /** A 获取模型列表 failure (HttpURLConnection); null for non-network failures (HTTP status, bad JSON). */
     fun ofException(t: Throwable): NetDiagnosis? {
         val chain = generateSequence(t) { it.cause.takeIf { c -> c !== it } }.take(8).toList()

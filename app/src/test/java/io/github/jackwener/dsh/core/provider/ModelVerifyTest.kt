@@ -48,6 +48,11 @@ class ModelVerifyTest {
         assertIs<VerifyFailure.ModelNotAvailable>(c(400, """{"error":{"message":"该模型未开通，请先在控制台开通","type":"invalid_request_error"}}"""))
         assertIs<VerifyFailure.ModelNotAvailable>(c(403, """{"error":{"message":"Forbidden"}}"""))
         assertIs<VerifyFailure.ModelNotAvailable>(c(403, "<html><body>403 Forbidden</body></html>"))
+        // OpenAI project without access: 403 + model_not_found code is about the account (as the engine's MODEL_NOT_AVAILABLE).
+        assertIs<VerifyFailure.ModelNotAvailable>(c(403, """{"error":{"message":"Project `proj_x` does not have access to model `gpt-5`","type":"invalid_request_error","code":"model_not_found"}}"""))
+        assertIs<VerifyFailure.ModelNotAvailable>(c(403, """{"error":{"message":"Model access denied.","type":"Model.AccessDenied","code":"Model.AccessDenied"}}"""))
+        // A plain typo stays "not found".
+        assertIs<VerifyFailure.ModelNotFound>(c(404, """{"error":{"message":"The model `gpt-9` does not exist or you do not have access to it.","code":"model_not_found"}}"""))
         assertTrue(c(403, "{}").modelSpecific)
     }
 
@@ -254,6 +259,21 @@ class ModelVerifyTest {
         requests.clear()
         assertIs<VerifyOutcome.Stopped>(verifyCandidates(listOf("k1", "works")) { probeModel(base, "k", it) })
         assertEquals(1, requests.size)
+    }
+
+    @Test fun probeSendsProviderHeadersLikeTheEngine() {
+        // OpenCode Go (#32): the chat needs x-opencode-session; the probe carries it with a fresh id, plus the extra headers and the app UA.
+        answers["glm-5.3"] = Triple(200, "text/event-stream", sse(toolCall))
+        val h1 = appRequestHeaders(mapOf("X-Team" to "blue", "Authorization" to "Bearer other"), OPENCODE_SESSION_HEADER, appUserAgent("0.2.6"))
+        val h2 = appRequestHeaders(emptyMap(), OPENCODE_SESSION_HEADER, appUserAgent("0.2.6"))
+        assertNull(probeModel(base, "sk-test", "glm-5.3", h1))
+        assertNull(probeModel(base, "sk-test", "glm-5.3", h2))
+        val (a, b) = requests.map { it.first }
+        assertTrue(a["x-opencode-session"]!!.matches(Regex("[0-9a-f]{32}")))
+        assertTrue("a test call stands alone: a fresh id each time", a["x-opencode-session"] != b["x-opencode-session"])
+        assertEquals("blue", a["x-team"])
+        assertEquals("the key wins over an extra Authorization header", "Bearer sk-test", a["authorization"])
+        assertTrue(a["user-agent"]!!.startsWith("DSH-Android/0.2.6 deepseek-harness"))
     }
 
     @Test fun unreachableIsNetwork() {

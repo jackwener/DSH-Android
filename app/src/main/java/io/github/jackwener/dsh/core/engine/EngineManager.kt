@@ -131,11 +131,15 @@ class EngineManager @Inject constructor(
     private fun webSearch(st: io.github.jackwener.dsh.core.data.Settings, hasKey: Boolean) = hasKey || st.choice.isDeepSeek
 
     private fun profilePatch(st: io.github.jackwener.dsh.core.data.Settings, hasKey: Boolean) =
-        renderProfilePatch(st.providers, webSearch(st, hasKey))
+        renderProfilePatch(st.providers, webSearch(st, hasKey), io.github.jackwener.dsh.core.provider.appProductToken(io.github.jackwener.dsh.BuildConfig.VERSION_NAME))
 
-    /** Provider keys for the engine environment (env var name → key). */
-    private fun providerKeys(st: io.github.jackwener.dsh.core.data.Settings): Map<String, String> =
-        st.providers.filter { it.enabled && it.hasKey }.mapNotNull { p -> secrets.read(p.secretName)?.let { p.keyEnv to it } }.toMap()
+    /** Provider keys and secret header values for the engine environment (env var name → value). */
+    private fun providerKeys(st: io.github.jackwener.dsh.core.data.Settings): Map<String, String> {
+        val enabled = st.providers.filter { it.enabled }
+        val keys = enabled.filter { it.hasKey }.mapNotNull { p -> secrets.read(p.secretName)?.let { p.keyEnv to it } }
+        val headers = enabled.flatMap { p -> p.headers.filter { it.secret }.mapNotNull { h -> secrets.read(p.headerSecretName(h.name))?.let { p.headerEnv(h.name) to it } } }
+        return (keys + headers).toMap()
+    }
 
     /** What a running process has baked in at start: the patch layer and the provider keys (hashed, never stored). */
     private fun profileFingerprint(st: io.github.jackwener.dsh.core.data.Settings, hasKey: Boolean): String {

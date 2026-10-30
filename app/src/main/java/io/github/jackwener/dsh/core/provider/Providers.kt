@@ -45,6 +45,8 @@ data class ProviderPreset(
     val family: List<String> = emptyList(),
     /** A server on the user's computer (Ollama, LM Studio): the editor explains how to reach it from the phone. */
     val localHint: Int? = null,
+    /** Header the provider wants a per-conversation id in (prefilled in the editor; see [ProviderConfig.sessionHeader]). */
+    val sessionHeader: String? = null,
 )
 
 /*
@@ -68,6 +70,10 @@ val PRESETS = listOf(
     ProviderPreset("minimax", "MiniMax", "https://api.minimax.cn/v1", listOf("MiniMax-M3"), keysUrl = "https://platform.minimax.cn/user-center/basic-information/interface-key", family = listOf("minimax")),
     ProviderPreset("siliconflow", "硅基流动 SiliconFlow", "https://api.siliconflow.cn/v1", keysUrl = "https://cloud.siliconflow.cn/account/ak"),
     ProviderPreset("stepfun", "阶跃星辰 StepFun", "https://api.stepfun.com/v1", listOf("step-5"), keysUrl = "https://platform.stepfun.com/interface-key", family = listOf("step")),
+    // #32. opencode.ai/docs/go (2026-10): clients should send a stable per-conversation id in x-opencode-session
+    // and their own User-Agent; chats without the header are refused (INVALID_REQUEST), /models answers anyway.
+    // Base URL as reported working in #32; the docs also list https://opencode.ai/inference/go/openai/v1.
+    ProviderPreset("opencode-go", "OpenCode Go", "https://opencode.ai/zen/go/v1", keysUrl = "https://opencode.ai/docs/go/", sessionHeader = OPENCODE_SESSION_HEADER),
     // On the user's computer: the phone reaches it at the computer's LAN IP (the editor's localhost warning says so).
     ProviderPreset("ollama", "Ollama", "http://localhost:11434/v1", keyOptional = true, editableUrl = true, localHint = R.string.prov_hint_ollama),
     ProviderPreset("lmstudio", "LM Studio", "http://localhost:1234/v1", keyOptional = true, editableUrl = true, localHint = R.string.prov_hint_lmstudio),
@@ -75,6 +81,7 @@ val PRESETS = listOf(
 )
 
 const val CUSTOM = "custom"
+const val OPENCODE_SESSION_HEADER = "x-opencode-session"
 
 fun presetOf(id: String?): ProviderPreset? = PRESETS.firstOrNull { it.id == id }
 
@@ -98,10 +105,115 @@ data class ProviderConfig(
     val limits: Map<String, ModelLimits> = emptyMap(),
     /** Models that passed the connection test (a real chat request with a tool call); see ModelVerify.kt. */
     val verified: List<String> = emptyList(),
+    /** Extra request headers on every model request; a [ProviderHeader.secret] one keeps its value in SecretStore, like the key. */
+    val headers: List<ProviderHeader> = emptyList(),
+    /**
+     * Header carrying a per-conversation id (e.g. OpenCode Go's `x-opencode-session`): the engine sends a
+     * one-way hash of the session id, the same for every request of a conversation (js patch 18).
+     */
+    val sessionHeader: String? = null,
 ) {
     /** `apiKeyEnv` the engine resolves per request; set in the `:engine` environment only. */
     val keyEnv: String get() = keyEnvOf(id)
     val secretName: String get() = "provider-$id"
+    /** SecretStore name of a secret header's value. */
+    fun headerSecretName(header: String) = "provider-$id-h-" + header.lowercase().filter { it.isLetterOrDigit() || it == '-' || it == '_' }
+    /** Engine environment variable a secret header's value travels in (`headerEnv` in the patch layer). */
+    fun headerEnv(header: String) = headerEnvOf(id, header)
+}
+
+/** One extra request header. [value] is empty for a [secret] one (the value lives in SecretStore). */
+@Serializable
+data class ProviderHeader(val name: String, val value: String = "", val secret: Boolean = false)
+
+fun headerEnvOf(routeId: String, header: String) =
+    "DSH_ANDROID_HDR_" + (routeId + "_" + header).uppercase().map { if (it.isLetterOrDigit()) it else '_' }.joinToString("")
+
+/** Headers the app or the HTTP stack sets itself; the editor refuses them. */
+private val RESERVED_HEADERS = setOf("host", "content-type", "content-length", "transfer-encoding", "connection", "accept", "accept-encoding", "keep-alive", "upgrade", "te", "trailer")
+
+/** An RFC 9110 field name the user may set (not one the request sets itself). */
+fun isUsableHeaderName(name: String): Boolean =
+    name.isNotEmpty() && name.all { it in 'a'..'z' || it in 'A'..'Z' || it in '0'..'9' || it in "!#$%&'*+-.^_`|~" } && name.lowercase() !in RESERVED_HEADERS
+
+/** A single-line value (no control characters). */
+fun isUsableHeaderValue(value: String): Boolean = value.none { it == '\r' || it == '\n' || (it < ' ' && it != '\t') || it == '\u007f' }
+
+private val SECRET_NAME = Regex("key|token|secret|auth|passw|cookie|signature|credential|session-id", RegexOption.IGNORE_CASE)
+private val SECRET_VALUE = Regex("^(sk-|sk_|bearer |basic |ey[A-Za-z0-9_-]{10,}\\.)", RegexOption.IGNORE_CASE)
+
+/** Stored like the API key (SecretStore) rather than in settings: a credential-sounding name or a key-shaped value. */
+fun looksSecretHeader(name: String, value: String): Boolean = SECRET_NAME.containsMatchIn(name) || SECRET_VALUE.containsMatchIn(value.trim())
+
+/** An editor row of 额外请求头: [value] blank on a stored secret row means "keep the saved value". */
+data class HeaderRow(val name: String, val value: String)
+
+/** What saving the editor's header rows does: the stored list, SecretStore writes (secret name → value) and clears. */
+data class HeaderPlan(val headers: List<ProviderHeader>, val write: Map<String, String>, val clear: List<String>)
+
+/**
+ * Plan the headers of route [routeId] from the editor [rows]. A row whose name is blank, or whose
+ * value is blank and was not a saved secret, is dropped. A secret ([looksSecretHeader], or saved as
+ * a secret before) keeps its value in SecretStore only; a blank value keeps the saved one. Secrets
+ * of [previous] headers no longer present (or no longer secret) are cleared.
+ */
+fun planHeaders(routeId: String, rows: List<HeaderRow>, previous: ProviderConfig?): HeaderPlan {
+    val cfg = ProviderConfig(routeId, "", "", "", emptyList())
+    val wasSecret = previous?.headers.orEmpty().filter { it.secret }.map { it.name.lowercase() }.toSet()
+    val headers = mutableListOf<ProviderHeader>()
+    val write = LinkedHashMap<String, String>()
+    rows.map { HeaderRow(it.name.trim(), it.value.trim()) }.filter { it.name.isNotEmpty() }.distinctBy { it.name.lowercase() }.forEach { r ->
+        val keepSaved = r.value.isEmpty() && r.name.lowercase() in wasSecret && previous?.id == routeId
+        when {
+            keepSaved -> headers += ProviderHeader(r.name, secret = true)
+            r.value.isEmpty() -> {}
+            looksSecretHeader(r.name, r.value) || r.name.lowercase() in wasSecret -> { headers += ProviderHeader(r.name, secret = true); write[cfg.headerSecretName(r.name)] = r.value }
+            else -> headers += ProviderHeader(r.name, r.value)
+        }
+    }
+    val kept = headers.filter { it.secret }.map { cfg.headerSecretName(it.name) }.toSet()
+    val clear = previous?.headers.orEmpty().filter { it.secret }.map { previous!!.headerSecretName(it.name) }.filter { previous!!.id != routeId || it !in kept }
+    return HeaderPlan(headers, write, clear)
+}
+
+/**
+ * The editor rows resolved to values for a request: typed values, or (blank) the saved secret
+ * value [readSecret] returns for a secret header of [existing].
+ */
+fun resolveHeaderRows(rows: List<HeaderRow>, existing: ProviderConfig?, readSecret: (String) -> String?): Map<String, String> {
+    val out = LinkedHashMap<String, String>()
+    rows.forEach { r ->
+        val name = r.name.trim()
+        if (name.isEmpty()) return@forEach
+        val saved = existing?.headers?.firstOrNull { it.name.equals(name, true) }
+        val v = r.value.trim().ifEmpty { if (saved?.secret == true) readSecret(existing.headerSecretName(saved.name)).orEmpty() else "" }
+        if (v.isNotEmpty()) out[name] = v
+    }
+    return out
+}
+
+/** The stored headers of [p] as editor rows (secret values blank: kept unless retyped). */
+fun headerRowsOf(p: ProviderConfig?): List<HeaderRow> = p?.headers.orEmpty().map { HeaderRow(it.name, if (it.secret) "" else it.value) }
+
+/** A fresh opaque id for a request outside any conversation (model listing, connection test). */
+fun freshSessionId(): String = java.util.UUID.randomUUID().toString().replace("-", "")
+
+/** The engine's User-Agent for third-party providers: `DSH-Android/<version>` in front of the harness one. */
+fun appUserAgent(version: String) = "${appProductToken(version)} $HARNESS_USER_AGENT"
+/** The product token alone; the engine puts it in front of its own `deepseek-harness/<v> (+url)`. */
+fun appProductToken(version: String) = "DSH-Android/$version"
+
+/**
+ * Headers for the app's own requests to a provider (获取模型列表, the connection test), matching what
+ * the engine sends: [resolved] extra headers (secret values already read), the app User-Agent unless
+ * a header sets one, and [sessionHeader] with a fresh id (these requests belong to no conversation).
+ */
+fun appRequestHeaders(resolved: Map<String, String>, sessionHeader: String?, userAgent: String?): Map<String, String> {
+    val out = LinkedHashMap<String, String>()
+    if (userAgent != null && resolved.keys.none { it.equals("user-agent", true) }) out["User-Agent"] = userAgent
+    resolved.forEach { (k, v) -> if (k.isNotBlank()) out[k] = v }
+    sessionHeader?.trim()?.takeIf { it.isNotEmpty() }?.let { h -> out.keys.removeAll { it.equals(h, true) }; out[h] = freshSessionId() }
+    return out
 }
 
 fun keyEnvOf(routeId: String) = "DSH_ANDROID_KEY_" + routeId.uppercase().map { if (it.isLetterOrDigit()) it else '_' }.joinToString("")
@@ -213,10 +325,11 @@ fun resolveChoice(provider: String, model: String, providers: List<ProviderConfi
  * bundle). The app is its only writer and rewrites it before each engine start; it carries no
  * secret, only `apiKeyEnv` names. Values are JSON (a YAML subset), so no quoting rules apply.
  *
+ * @param userAgent product token the engine puts in front of its User-Agent (`DSH-Android/<version>`).
  * @param webSearch false turns off the `web_search` tool (it needs a DeepSeek credential: the
  *   API key, or the account login only while the conversation uses the account route).
  */
-fun renderProfilePatch(providers: List<ProviderConfig>, webSearch: Boolean): String {
+fun renderProfilePatch(providers: List<ProviderConfig>, webSearch: Boolean, userAgent: String? = null): String {
     val active = providers.filter { it.enabled && it.models.isNotEmpty() && it.baseUrl.isNotBlank() }
     val json = Json { prettyPrint = false }
     val sb = StringBuilder()
@@ -231,6 +344,13 @@ fun renderProfilePatch(providers: List<ProviderConfig>, webSearch: Boolean): Str
                         put("interfaceType", "openai-chat-completions")
                         put("baseURL", p.baseUrl.trim().trimEnd('/'))
                         if (p.hasKey) put("apiKeyEnv", p.keyEnv)
+                        // js patch 18: static headers here, secret ones by env name only, the session header, the UA token.
+                        val plain = p.headers.filter { !it.secret && isUsableHeaderName(it.name) }
+                        if (plain.isNotEmpty()) putJsonObject("headers") { plain.forEach { put(it.name, it.value) } }
+                        val secret = p.headers.filter { it.secret && isUsableHeaderName(it.name) }
+                        if (secret.isNotEmpty()) putJsonObject("headerEnv") { secret.forEach { put(it.name, p.headerEnv(it.name)) } }
+                        p.sessionHeader?.trim()?.takeIf { isUsableHeaderName(it) }?.let { put("sessionHeader", it) }
+                        if (userAgent != null) put("userAgent", userAgent)
                         put("includeUsage", true)
                         putJsonArray("models") {
                             p.models.forEach { m ->
@@ -276,11 +396,12 @@ class HttpStatusException(val status: Int, val body: String) : Exception("HTTP $
  * Doubles as the connection test. Runs on the caller's thread (call from Dispatchers.IO).
  * https, or http for a user's LAN gateway (network_security_config permits cleartext).
  */
-fun fetchModels(baseUrl: String, key: String?): Result<List<RemoteModel>> = runCatching {
+fun fetchModels(baseUrl: String, key: String?, headers: Map<String, String> = emptyMap()): Result<List<RemoteModel>> = runCatching {
     val url = URL(baseUrl.trim().trimEnd('/') + "/models")
     val c = url.openConnection() as HttpURLConnection
     try {
         c.connectTimeout = 10_000; c.readTimeout = 15_000
+        headers.forEach { (k, v) -> c.setRequestProperty(k, v) }
         c.setRequestProperty("Accept", "application/json")
         if (!key.isNullOrBlank()) {
             c.setRequestProperty("Authorization", "Bearer $key")

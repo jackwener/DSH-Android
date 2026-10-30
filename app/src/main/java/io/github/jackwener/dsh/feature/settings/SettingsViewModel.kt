@@ -25,7 +25,13 @@ import io.github.jackwener.dsh.R
 import io.github.jackwener.dsh.core.diagnostics.DiagnosticsInput
 import io.github.jackwener.dsh.core.diagnostics.DiagnosticsReport
 import io.github.jackwener.dsh.core.diagnostics.ProviderFacts
+import io.github.jackwener.dsh.core.provider.HeaderRow
 import io.github.jackwener.dsh.core.provider.ProviderConfig
+import io.github.jackwener.dsh.core.provider.appRequestHeaders
+import io.github.jackwener.dsh.core.provider.appUserAgent
+import io.github.jackwener.dsh.core.provider.headerRowsOf
+import io.github.jackwener.dsh.core.provider.planHeaders
+import io.github.jackwener.dsh.core.provider.resolveHeaderRows
 import io.github.jackwener.dsh.core.provider.VerifyFailure
 import io.github.jackwener.dsh.core.provider.VerifyOutcome
 import io.github.jackwener.dsh.core.provider.probeModel
@@ -81,35 +87,51 @@ class SettingsViewModel @Inject constructor(
     // ── third-party providers ──
     // Saving changes the engine's patch layer / key environment: the engine picks it up on its next
     // idle restart (EngineManager.profileFingerprint), so nothing running is interrupted here.
-    /** Saves [p]; a non-blank [key] replaces the stored key (Keystore-encrypted, never in settings). */
-    suspend fun saveProvider(p: ProviderConfig, key: String?) {
+    /**
+     * Saves [p]; a non-blank [key] replaces the stored key (Keystore-encrypted, never in settings).
+     * [headerRows] (the editor's 额外请求头) replace [p]'s headers: secret-looking values go to
+     * SecretStore like the key (planHeaders); null keeps [p.headers] as they are.
+     */
+    suspend fun saveProvider(p: ProviderConfig, key: String?, headerRows: List<HeaderRow>? = null) {
         val k = key?.trim().orEmpty()
-        withContext(Dispatchers.IO) { if (k.isNotEmpty()) secrets.write(p.secretName, k) }
-        repo.saveProvider(p.copy(hasKey = p.hasKey || k.isNotEmpty()))
+        val previous = repo.current().providers.firstOrNull { it.id == p.id }
+        val plan = headerRows?.let { planHeaders(p.id, it, previous) }
+        withContext(Dispatchers.IO) {
+            if (k.isNotEmpty()) secrets.write(p.secretName, k)
+            plan?.write?.forEach { (name, value) -> secrets.write(name, value) }
+            plan?.clear?.forEach { secrets.clear(it) }
+        }
+        repo.saveProvider(p.copy(hasKey = p.hasKey || k.isNotEmpty(), headers = plan?.headers ?: p.headers))
     }
     fun deleteProvider(p: ProviderConfig) = viewModelScope.launch {
-        withContext(Dispatchers.IO) { secrets.clear(p.secretName) }
+        withContext(Dispatchers.IO) { secrets.clear(p.secretName); p.headers.filter { it.secret }.forEach { secrets.clear(p.headerSecretName(it.name)) } }
         repo.deleteProvider(p.id)
     }
+    /** Headers of the app's own requests to a provider (listing, connection test): the editor's rows or [p]'s stored ones. */
+    private fun requestHeaders(existing: ProviderConfig?, rows: List<HeaderRow>?, sessionHeader: String?): Map<String, String> =
+        appRequestHeaders(resolveHeaderRows(rows ?: headerRowsOf(existing), existing) { secrets.read(it) }, sessionHeader, appUserAgent(io.github.jackwener.dsh.BuildConfig.VERSION_NAME))
     fun setProviderEnabled(p: ProviderConfig, on: Boolean) = viewModelScope.launch { repo.saveProvider(p.copy(enabled = on)) }
     /** `GET {baseUrl}/models` with [key] (or the stored key of [existing]); also the connection test. */
-    suspend fun fetchModels(baseUrl: String, key: String?, existing: ProviderConfig?): Result<io.github.jackwener.dsh.core.provider.FetchedModels<io.github.jackwener.dsh.core.provider.RemoteModel>> = withContext(Dispatchers.IO) {
+    suspend fun fetchModels(baseUrl: String, key: String?, existing: ProviderConfig?, headerRows: List<HeaderRow>? = null, sessionHeader: String? = existing?.sessionHeader): Result<io.github.jackwener.dsh.core.provider.FetchedModels<io.github.jackwener.dsh.core.provider.RemoteModel>> = withContext(Dispatchers.IO) {
         val k = key?.trim()?.takeIf { it.isNotEmpty() } ?: existing?.takeIf { it.hasKey }?.let { secrets.read(it.secretName) }
-        io.github.jackwener.dsh.core.provider.fetchModelsResolving(baseUrl, k) { u, kk -> io.github.jackwener.dsh.core.provider.fetchModels(u, kk) }
+        val headers = requestHeaders(existing, headerRows, sessionHeader)
+        io.github.jackwener.dsh.core.provider.fetchModelsResolving(baseUrl, k) { u, kk -> io.github.jackwener.dsh.core.provider.fetchModels(u, kk, headers) }
     }
     private fun keyFor(existing: ProviderConfig?, typed: String?): String? =
         typed?.trim()?.takeIf { it.isNotEmpty() } ?: existing?.takeIf { it.hasKey }?.let { secrets.read(it.secretName) }
 
     /** 测试并保存: real chat requests with a tool, [candidates] in order (ModelVerify.kt). [onTesting] runs on an IO thread. */
-    suspend fun verifyModels(baseUrl: String, key: String?, existing: ProviderConfig?, candidates: List<String>, onTesting: (String) -> Unit): VerifyOutcome =
+    suspend fun verifyModels(baseUrl: String, key: String?, existing: ProviderConfig?, candidates: List<String>, onTesting: (String) -> Unit,
+        headerRows: List<HeaderRow>? = null, sessionHeader: String? = existing?.sessionHeader): VerifyOutcome =
         withContext(Dispatchers.IO) {
             val k = keyFor(existing, key)
-            verifyCandidates(candidates, onTesting = onTesting) { probeModel(baseUrl, k, it) }
+            // A fresh session id per probe: each test call stands alone (appRequestHeaders).
+            verifyCandidates(candidates, onTesting = onTesting) { probeModel(baseUrl, k, it, requestHeaders(existing, headerRows, sessionHeader)) }
         }
 
     /** Saves a tested provider and, when [main] is set, makes that model the main model. */
-    suspend fun saveTested(p: ProviderConfig, key: String?, main: String?) {
-        saveProvider(p, key)
+    suspend fun saveTested(p: ProviderConfig, key: String?, main: String?, headerRows: List<HeaderRow>? = null) {
+        saveProvider(p, key, headerRows)
         if (main != null) repo.setModel(p.id, main)
     }
 
@@ -126,7 +148,7 @@ class SettingsViewModel @Inject constructor(
         if (modelCheck.value?.busy == true) return@launch
         if (select && model in p.verified) { modelCheck.value = null; repo.setModel(p.id, model); return@launch }
         modelCheck.value = ModelCheck(p.id, model, busy = true)
-        val f = withContext(Dispatchers.IO) { probeModel(p.baseUrl, keyFor(p, null), model) }
+        val f = withContext(Dispatchers.IO) { probeModel(p.baseUrl, keyFor(p, null), model, requestHeaders(p, null, p.sessionHeader)) }
         repo.updateProvider(p.id) { cur -> cur.copy(verified = if (f == null) (cur.verified + model).distinct() else cur.verified - model) }
         modelCheck.value = when {
             f == null -> {
