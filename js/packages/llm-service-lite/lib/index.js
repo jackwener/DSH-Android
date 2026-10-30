@@ -3392,7 +3392,7 @@ function finishReasonOf$1(reason, sawDone, sawOutput, hasToolCalls) {
 /** Validated token accounting from one provider usage report. */
 function usageOf$1(chunk) {
 	const usage = chunk.usage;
-	if (usage === void 0 || typeof usage.prompt_tokens !== "number" || typeof usage.completion_tokens !== "number") return;
+	if (usage === void 0 || usage === null || typeof usage.prompt_tokens !== "number" || typeof usage.completion_tokens !== "number") return;
 	const prompt = usage.prompt_tokens;
 	const completion = usage.completion_tokens;
 	if (!Number.isSafeInteger(prompt) || prompt < 0 || !Number.isSafeInteger(completion) || completion < 0) throw new LlmError("llm-service-lite: provider returned invalid token usage", "MALFORMED_RESPONSE");
@@ -4037,7 +4037,7 @@ function countOf(usage, field) {
 * @returns token usage, or undefined when the stream reported none.
 */
 function usageOf(usage) {
-	if (usage === void 0) return void 0;
+	if (usage === void 0 || usage === null) return void 0;
 	const input = countOf(usage, "input_tokens");
 	const output = countOf(usage, "output_tokens");
 	if (input === void 0 || output === void 0) return void 0;
