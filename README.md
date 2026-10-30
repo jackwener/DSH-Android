@@ -1,8 +1,8 @@
 <div align="center">
 
-# DSH-Android
+<img src="docs/screenshots/hero.webp" width="100%" alt="DSH-Android：让 DSH 替你用手机">
 
-### 让 DSH 替你用手机
+<br />
 
 不要 root，不用电脑，直接跑在你的安卓手机上。真正的手机 Agent，替你把手机上的事干完。
 
@@ -16,10 +16,6 @@
 ![License](https://img.shields.io/badge/license-Apache--2.0-blue?style=flat-square)
 
 **[下载 APK](../../releases/latest)** • **[快速开始](#快速开始)** • **[架构](#架构)** • **[从源码构建](#开发者)**
-
-<br />
-
-<img src="docs/screenshots/hero.webp" width="100%" alt="DSH-Android：让 DSH 替你用手机">
 
 </div>
 
