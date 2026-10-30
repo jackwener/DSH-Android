@@ -144,6 +144,8 @@ private fun ProviderEditor(vm: SettingsViewModel, existing: ProviderConfig?, pre
     var key by rememberSaveable { mutableStateOf("") }
     val selected = remember { mutableStateListOf<String>().apply { addAll(existing?.models ?: preset.models) } }
     val offered = remember { mutableStateListOf<String>().apply { addAll(existing?.models ?: preset.models) } }
+    /** Model ids the user typed in by hand: a refresh keeps these, the endpoint's answer replaces the rest. */
+    val manual = remember { mutableStateListOf<String>() }
     var typed by rememberSaveable { mutableStateOf("") }
     var fetchState by remember { mutableStateOf<String?>(null) } // null | "busy" | message
     var fetchOk by remember { mutableStateOf(false) }
@@ -176,7 +178,15 @@ private fun ProviderEditor(vm: SettingsViewModel, existing: ProviderConfig?, pre
                         vm.fetchModels(baseUrl, key, existing).onSuccess { ids ->
                             fetchOk = true
                             fetchState = context.getString(R.string.prov_fetch_ok, ids.size)
-                            ids.forEach { if (it !in offered) offered.add(it) }
+                            // A refresh *replaces* the form, it does not merge into it: models an earlier
+                            // call listed but the endpoint no longer returns have to go, or the count above
+                            // says "共 N 个模型" while the list still reads exactly as before (they were only
+                            // ever appended, below the fold). What the user chose to keep survives: models
+                            // they typed in, and ones already ticked (dropping those would silently edit a
+                            // saved provider).
+                            val kept = offered.filter { it in manual || it in selected }
+                            offered.clear(); offered.addAll(ids)
+                            kept.forEach { if (it !in offered) offered.add(it) }
                         }.onFailure { t ->
                             fetchOk = false
                             // Same wording as a failed chat turn (Stream.kt ErrorRow): cause, hint, raw detail.
@@ -212,7 +222,12 @@ private fun ProviderEditor(vm: SettingsViewModel, existing: ProviderConfig?, pre
         Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             DInput(typed, { typed = it.trim() }, Modifier.weight(1f), placeholder = stringResource(R.string.prov_add_model))
             DButton(stringResource(R.string.prov_add_model_btn), {
-                if (typed.isNotEmpty()) { if (typed !in offered) offered.add(typed); if (typed !in selected) selected.add(typed); typed = "" }
+                if (typed.isNotEmpty()) {
+                    if (typed !in offered) offered.add(typed)
+                    if (typed !in manual) manual.add(typed)
+                    if (typed !in selected) selected.add(typed)
+                    typed = ""
+                }
             }, variant = BtnVariant.Outline, size = BtnSize.Sm, enabled = typed.isNotEmpty())
         }
     }
