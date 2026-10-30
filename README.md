@@ -6,7 +6,7 @@
 
 不要 root，不用电脑，直接跑在你的安卓手机上。真正的手机 Agent，替你把手机上的事干完。
 
-在安卓手机上运行 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（dsh）：用一句话让它整理文件、操作 App、修改系统设置，或者设置自动执行的任务。
+在安卓手机上运行 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（dsh）：让它操作 App、整理文件、修改系统设置，或者自动执行任务。
 
 [![Release](https://img.shields.io/github/v/release/jackwener/DSH-Android?style=flat-square&color=4D6BFE&label=release)](../../releases/latest)
 ![Android](https://img.shields.io/badge/Android-10%2B-34A853?style=flat-square&logo=android&logoColor=white)
