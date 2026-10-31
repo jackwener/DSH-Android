@@ -329,6 +329,19 @@ class SessionStore @Inject constructor(
         prompt(sessionId, error.retryText ?: context.getString(R.string.retry_continue_prompt))
     }
 
+    /**
+     * 继续 on a turn's end card (work remains: the model stopped with open todos, the continuation
+     * cap, a budget, the output cap). Logs a [USER_CONTINUE] notice, so the continuation folds into
+     * the ended turn (one task), then sends the app's continuation prompt, which tells the model not
+     * to repeat what already took effect.
+     */
+    suspend fun continueTask(sessionId: String) {
+        if (flowOf(sessionId).value.running) return
+        autoContinued.remove(sessionId)
+        appendLocal(sessionId, "app/notice", buildJsonObject { put("kind", USER_CONTINUE); put("text", context.getString(R.string.user_continue_notice)) })
+        prompt(sessionId, CONTINUE_TASK, ruleIdOfSession(sessionId))
+    }
+
     private suspend fun fail(sessionId: String, kind: String, message: String, code: String?, retryText: String?) {
         dao.setRunning(sessionId, false)
         appendLocal(sessionId, "app/error", buildJsonObject {
@@ -724,7 +737,9 @@ class SessionStore @Inject constructor(
         if (!isViewed(sessionId) || !AppVisibility.isForeground) dao.setUnread(sessionId, true)
         if (!AppVisibility.isForeground) {
             val conv = Projector.conversation(live.events, running = false)
-            val reply = conv.turns.lastOrNull()?.reply?.text ?: return
+            val last = conv.turns.lastOrNull()
+            // Work remains (open todos, a limit): say so first, not as a normal reply.
+            val reply = (last?.reply?.text ?: return).let { if (last.endReason?.continuable == true) context.getString(R.string.notify_not_finished, it) else it }
             Notifications.post(context, Notifications.CHANNEL_TASKS, sessionId.hashCode(),
                 live.title.ifBlank { context.getString(R.string.app_name) }, reply.take(300), sessionId)
         }
@@ -828,6 +843,11 @@ class SessionStore @Inject constructor(
             "previous turn ended early; the network is back now. Every tool call shown above already ran and its effect is done. Do NOT call " +
             "any tool to repeat or re-apply them, even if the device state now looks different: the user may have changed it since " +
             "(e.g. turned the network back on). Only do steps of the task that were never attempted; if all its actions are done, just give the final reply."
+
+        /** Model-facing prompt of 继续 on an end card ([continueTask]). */
+        const val CONTINUE_TASK = APP_PROMPT_PREFIX + "The user tapped Continue: carry on with the task from where it stopped. First check the todo " +
+            "list and the tool results above: every action with a successful result already took effect, so do NOT repeat it. Then do the " +
+            "remaining items, keeping the todo list current, until the task is done; if you have to stop, say why, what is done and what remains."
 
         /** Model error codes of a request that could not reach the provider (dsh LlmError). */
         val NETWORK_CODES = setOf("TRANSPORT", "TIMEOUT")

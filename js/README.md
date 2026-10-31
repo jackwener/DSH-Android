@@ -12,7 +12,7 @@ DeepSeek Harness (dsh) **0.2.1-rc.5**, installed unmodified from npm and customi
 | `packages/bundle-android/` | the dsh bundle behind profile `android` (`cordis.patch.yml`), the `android-env.cjs` preload and the engine entry `main.mjs` |
 | `packages/plugin-extensions/` | plugins, skills, MCP servers: the phone gate around dsh's plugin manager and the `android/ext/*` SDK methods ([`../docs/PLUGINS-CONTRACT.md`](../docs/PLUGINS-CONTRACT.md)); `boot.js` is main.mjs's pre-boot bookkeeping |
 | `packages/plugin-device/` | capability bridge client (`DSH_BRIDGE_FD`) → dynamic dsh tools |
-| `packages/plugin-guard/` | hardline shell floor, approval policy, budgets, phone system prompt |
+| `packages/plugin-guard/` | hardline shell floor, approval policy, budgets, phone system prompt, long-task continuation and turn-end reasons (`continuation.js`, ENGINE-CONTRACT §2.7) |
 | `packages/plugin-mode/` | session modes: per-conversation tool restriction, skills switch, mode prompt section (`android/session/mode`, ENGINE-CONTRACT §2.5); deferred tools: catalog section + `load_tools` (`deferred.js`, §2.5.1) |
 | `packages/plugin-account/` | DeepSeek account login: loopback OAuth callback server + `account/*` SDK methods |
 | `packages/llm-service-lite/` | vendored `@snnh/dsh-llm-service-lite` 0.2.1 (MIT, snnh): third-party OpenAI-compatible model routes; built `lib/index.js` copied verbatim from the npm tarball (provenance in its `package.json` `//vendored`), Web client dropped. Upgrade = replace `lib/index.js` + note; changes go in `patches/` (14, 16, 17, 18); upstreaming notes in [`patches/UPSTREAM.md`](patches/UPSTREAM.md) |
@@ -35,6 +35,8 @@ DeepSeek Harness (dsh) **0.2.1-rc.5**, installed unmodified from npm and customi
 | `test/guard-ask.test.mjs` | plugin-guard's per-plugin ask-before-call |
 | `test/host-e2e.mjs` | host end-to-end run of the built `engine.zip` with a fake bridge; phase H checks deferred tool loading on the wire (capture proxy in front of DeepSeek); phase X installs real plugins from npm |
 | `test/host-ac8-resume.mjs` | host repro of engine kill + `session/resume` + continuation |
+| `test/continuation.test.mjs` | plugin-guard `continuation.js` (#37): when a text-only stop is continued (open todos, "will continue" claims), questions, no-progress and cap stops, the outcome record: `node --test js/test/continuation.test.mjs` |
+| `test/long-task.test.mjs` | long tasks end to end on a built stage (real engine, scripted fake OpenAI-compatible model, fake bridge): "next round" text with open todos continues in the same turn (no idle gap), `pending_work` / `needs_user` / `continue_limit` / `budget` outcomes, no goal tools; same `DSH_STAGE_NM` (`DSH_NATIVE_DIR` defaults to its `../../host-native`), ~1 min |
 
 Our packages are plain ESM with no dependencies outside `node:` built-ins; there is no compile step (the vendored adapter is shipped as built upstream).
 

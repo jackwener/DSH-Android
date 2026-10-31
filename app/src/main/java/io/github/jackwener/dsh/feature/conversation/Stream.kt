@@ -68,6 +68,7 @@ import io.github.jackwener.dsh.core.designsystem.elevated
 import io.github.jackwener.dsh.core.designsystem.pressable
 import io.github.jackwener.dsh.core.session.Block
 import io.github.jackwener.dsh.core.session.Conversation
+import io.github.jackwener.dsh.core.session.EndReason
 import io.github.jackwener.dsh.core.session.SessionLive
 import io.github.jackwener.dsh.core.session.Turn
 import io.github.jackwener.dsh.core.provider.NetDiagnose
@@ -92,6 +93,7 @@ fun ChatStream(
     onRetry: (TurnError) -> Unit,
     onOpenSettings: (section: String) -> Unit,
     modifier: Modifier = Modifier,
+    onContinue: () -> Unit = {},
     compact: Boolean = false,
 ) {
     val scope = rememberCoroutineScope()
@@ -107,7 +109,7 @@ fun ChatStream(
         LazyColumn(Modifier.fillMaxSize(), state = listState, contentPadding = PaddingValues(horizontal = 16.dp, vertical = 16.dp)) {
             items(conv.turns, key = { it.key }) { turn ->
                 val isLast = turn === conv.turns.last()
-                TurnView(turn, isLast, live, details, onInspect, onRetry, onOpenSettings, compact)
+                TurnView(turn, isLast, live, details, onInspect, onRetry, onOpenSettings, onContinue, compact)
             }
             item(key = "tail") {
                 Box(Modifier.fillMaxWidth().heightIn(min = 8.dp)) {
@@ -131,7 +133,7 @@ fun ChatStream(
 @Composable
 private fun TurnView(
     turn: Turn, isLast: Boolean, live: SessionLive, details: WorkDetails,
-    onInspect: (String) -> Unit, onRetry: (TurnError) -> Unit, onOpenSettings: (String) -> Unit, compact: Boolean,
+    onInspect: (String) -> Unit, onRetry: (TurnError) -> Unit, onOpenSettings: (String) -> Unit, onContinue: () -> Unit, compact: Boolean,
 ) {
     val running = turn.status == TurnStatus.Running
     val process = turn.process
@@ -155,10 +157,11 @@ private fun TurnView(
             Spacer(Modifier.height(12.dp))
             SelectionContainer { DshMarkdown(reply.text) }
         }
-        if (turn.status == TurnStatus.Stopped && turn.error == null && !running) {
+        val end = turn.endReason
+        if (turn.status == TurnStatus.Stopped && turn.error == null && !running && end != EndReason.Budget) {
             Spacer(Modifier.height(8.dp)); Tag(stringResource(R.string.stopped), Tone.Neutral)
         }
-        if (turn.status == TurnStatus.MaxTokens) OutputCapRow()
+        if (end != null && end.continuable) EndCard(turn, end, canContinue = isLast && !live.running, onContinue, onOpenSettings)
         turn.error?.let { ErrorRow(it, onRetry, onOpenSettings, retryable = isLast && !live.running) }
         if (turn.reply != null && !running) TailActions(turn)
     }
@@ -322,12 +325,36 @@ private fun ErrorRow(e: TurnError, onRetry: (TurnError) -> Unit, onOpenSettings:
     }
 }
 
+/**
+ * A turn that ended with work left (#37): why it stopped, the todo progress, what is next, and 继续
+ * (only on the last turn while nothing runs). Never looks like a normal reply.
+ */
 @Composable
-private fun OutputCapRow() {
+private fun EndCard(turn: Turn, end: EndReason, canContinue: Boolean, onContinue: () -> Unit, onOpenSettings: (String) -> Unit) {
     val c = Dsh.colors
-    Column(Modifier.padding(top = 10.dp)) {
-        Text(stringResource(R.string.output_cap), style = DshType.xs13.copy(fontWeight = FontWeight(600)), color = c.amber)
-        Text(stringResource(R.string.output_cap_hint), style = DshType.xs13, color = c.labelSecondary)
+    val todos = turn.todoCounts
+    val title = when (end) {
+        EndReason.PendingWork -> stringResource(R.string.end_pending_title)
+        EndReason.ContinueLimit -> stringResource(R.string.end_limit_title, turn.outcome?.nudges ?: 0)
+        EndReason.Budget -> stringResource(R.string.end_budget_title)
+        else -> stringResource(R.string.output_cap)
+    }
+    val hint = when (end) {
+        EndReason.Budget -> stringResource(R.string.end_budget_hint)
+        EndReason.MaxTokens -> stringResource(R.string.output_cap_hint)
+        else -> stringResource(R.string.end_continue_hint)
+    }
+    val next = turn.todos?.firstOrNull { it.status == "in_progress" } ?: turn.todos?.firstOrNull { it.status == "pending" }
+    Column(Modifier.padding(top = 10.dp).fillMaxWidth().clip(Radius.md).background(c.selector).padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text(title, style = DshType.xs13.copy(fontWeight = FontWeight(600)), color = c.amber)
+        if (todos != null && todos.total > 0) Text(stringResource(R.string.end_progress, todos.completed, todos.total), style = DshType.xs13, color = c.labelSecondary)
+        next?.let { Text(stringResource(R.string.end_next, it.content), style = DshType.xs13, color = c.labelSecondary) }
+        Text(hint, style = DshType.xs13, color = c.labelTertiary)
+        if (canContinue) Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            DButton(stringResource(R.string.continue_task), onContinue, size = BtnSize.Sm)
+            if (end == EndReason.Budget) DButton(stringResource(R.string.end_budget_settings), { onOpenSettings("Agent") }, size = BtnSize.Sm, variant = BtnVariant.Outline)
+        }
     }
 }
 

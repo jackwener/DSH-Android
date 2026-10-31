@@ -49,7 +49,9 @@ import io.github.jackwener.dsh.core.designsystem.DotKind
 import io.github.jackwener.dsh.core.designsystem.pressable
 import io.github.jackwener.dsh.core.designsystem.Chevron
 import io.github.jackwener.dsh.core.session.Block
+import io.github.jackwener.dsh.core.session.AUTO_CONTINUE
 import io.github.jackwener.dsh.core.session.NETWORK_WAIT
+import io.github.jackwener.dsh.core.session.USER_CONTINUE
 import io.github.jackwener.dsh.core.session.ToolState
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -245,7 +247,12 @@ fun CompactionRow(b: Block.Compaction) {
 fun NoticeRow(b: Block.Notice) {
     val c = Dsh.colors
     // A continuation notice whose continuation has started is history, not a warning.
-    val text = if (!b.resumed) b.text else stringResource(if (b.kind == NETWORK_WAIT) R.string.network_resumed else R.string.engine_resumed)
+    val text = when {
+        b.kind == AUTO_CONTINUE -> stringResource(R.string.auto_continue_notice)
+        b.kind == USER_CONTINUE -> stringResource(R.string.user_continue_notice)
+        !b.resumed -> b.text
+        else -> stringResource(if (b.kind == NETWORK_WAIT) R.string.network_resumed else R.string.engine_resumed)
+    }
     Row(Modifier.padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
         Box(Modifier.size(6.dp).clip(CircleShape).background(if (b.resumed) c.labelTertiary else c.warn))
         Spacer(Modifier.width(8.dp))

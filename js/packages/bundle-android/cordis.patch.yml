@@ -85,6 +85,18 @@
   disabled: true
 - id: workspace-dependencies
   disabled: true
+# Same-session goals (create_goal / update_goal, /goal, automatic goal rounds). A goal round is
+# a new turn started while the session is idle: on the phone each round ended the run in the app,
+# rounds never stopped by themselves (256 by default, also after a text-only answer), and any engine
+# restart (idle shutdown, crash recovery, route change) silently disarmed them; their prompt taught
+# the model to say the "next round" continues. Long tasks continue inside the turn instead, from
+# the todo list (plugin-guard continuation.js, #37). The `goal` domain stays for old sessions' logs.
+- id: tool-goal
+  disabled: true
+- id: goal-round-driver
+  disabled: true
+- id: command-goal
+  disabled: true
 # tmux context is meaningless on Android (no tmux).
 - id: tmux-context
   disabled: true

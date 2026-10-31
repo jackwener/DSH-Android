@@ -10,9 +10,10 @@
     ".": "./index.js",
     "./hardline": "./hardline.js",
     "./experience": "./experience.js",
+    "./continuation": "./continuation.js",
     "./package.json": "./package.json"
   },
-  "files": ["index.js", "hardline.js", "experience.js", "package.json"],
+  "files": ["index.js", "hardline.js", "experience.js", "continuation.js", "package.json"],
   "engines": {
     "dsh": "0.2.1-rc.5"
   }

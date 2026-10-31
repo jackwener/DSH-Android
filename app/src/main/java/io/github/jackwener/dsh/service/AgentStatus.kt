@@ -60,7 +60,8 @@ object AgentStatus {
         val turn = lastTurn(live.events, live.running)
         if (!live.running) return when (turn?.status) {
             null, TurnStatus.Running -> null
-            TurnStatus.Completed -> CapsuleStatus.Ended(CapsuleStatus.End.Done)
+            // Work left (open todos, the continuation cap): not "done".
+            TurnStatus.Completed -> CapsuleStatus.Ended(if (turn.endReason?.continuable == true) CapsuleStatus.End.Stopped else CapsuleStatus.End.Done)
             TurnStatus.Stopped -> CapsuleStatus.Ended(CapsuleStatus.End.Stopped)
             TurnStatus.Failed, TurnStatus.MaxTokens -> CapsuleStatus.Ended(CapsuleStatus.End.Failed)
         }

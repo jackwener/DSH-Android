@@ -81,7 +81,37 @@ const val ENGINE_RECOVERING = "engine_recovering"
  * prompt ([APP_PROMPT_PREFIX]) arrives, its turn is folded into the interrupted one, so the user
  * sees one task whose status is the continuation's, and the notice is marked [Block.Notice.resumed].
  */
-val CONTINUATION_NOTICES = setOf(NETWORK_WAIT, ENGINE_RECOVERING)
+/** `kind` of the `app/notice` logged when the user taps 继续 on a turn's end card (SessionStore.continueTask). */
+const val USER_CONTINUE = "user_continue"
+
+val CONTINUATION_NOTICES = setOf(NETWORK_WAIT, ENGINE_RECOVERING, USER_CONTINUE)
+
+/** [Block.Notice.kind] of plugin-guard's continuation nudge (a `user/message` with this `source.kind`, ENGINE-CONTRACT §2.7). */
+const val AUTO_CONTINUE = "android-continue"
+
+/** plugin-guard's ignorable record of why a turn ended (ENGINE-CONTRACT §2.7). */
+const val TURN_OUTCOME = "plugin:android-guard/turn-outcome"
+
+data class TodoCounts(val pending: Int, val inProgress: Int, val completed: Int) {
+    val open get() = pending + inProgress
+    val total get() = open + completed
+    companion object {
+        fun of(o: JsonObject?): TodoCounts? = o?.let { TodoCounts(it.i("pending") ?: 0, it.i("inProgress") ?: 0, it.i("completed") ?: 0) }
+        fun of(items: List<TodoItem>): TodoCounts = TodoCounts(items.count { it.status == "pending" }, items.count { it.status == "in_progress" }, items.count { it.status == "completed" })
+    }
+}
+
+/** plugin-guard's turn outcome: [reason] done | needs_user | pending_work | continue_limit | budget; [budgetKind] for budget. */
+data class TurnOutcome(val reason: String, val todos: TodoCounts?, val nudges: Int, val budgetKind: String? = null)
+
+/**
+ * Why a finished turn ended, as the user should read it. [Done] and [NeedsUser] read as a normal
+ * reply; the others mean work remains and get an end card with 继续 ([continuable]).
+ */
+enum class EndReason {
+    Done, NeedsUser, PendingWork, ContinueLimit, Budget, MaxTokens, Error, Stopped;
+    val continuable get() = this == PendingWork || this == ContinueLimit || this == Budget || this == MaxTokens
+}
 
 // ---- conversation projection --------------------------------------------------------------------
 
@@ -113,6 +143,25 @@ data class UserMsg(val seq: Long, val time: Long, val text: String, val images: 
 
 enum class TurnStatus { Running, Completed, Failed, Stopped, MaxTokens }
 
+/**
+ * [Turn.endReason]: from the turn's status, plugin-guard's outcome record and (for an engine without
+ * the record) the turn's own todo list. Null while the turn runs.
+ */
+fun endReasonOf(status: TurnStatus, outcome: TurnOutcome?, todos: TodoCounts?): EndReason? = when (status) {
+    TurnStatus.Running -> null
+    TurnStatus.Failed -> EndReason.Error
+    TurnStatus.MaxTokens -> EndReason.MaxTokens
+    TurnStatus.Stopped -> if (outcome?.reason == "budget") EndReason.Budget else EndReason.Stopped
+    TurnStatus.Completed -> when (outcome?.reason) {
+        "needs_user" -> EndReason.NeedsUser
+        "pending_work" -> EndReason.PendingWork
+        "continue_limit" -> EndReason.ContinueLimit
+        "budget" -> EndReason.Budget
+        "done" -> EndReason.Done
+        else -> if ((todos?.open ?: 0) > 0) EndReason.PendingWork else EndReason.Done
+    }
+}
+
 /** kind: llm | engine | engine_lost | no_credentials (legacy no_key) | budget. [retryText] re-sends a prompt that never reached the engine. */
 data class TurnError(val kind: String, val message: String, val code: String?, val retryText: String?)
 
@@ -126,7 +175,13 @@ data class Turn(
     val status: TurnStatus,
     val error: TurnError?,
     val usage: Usage,
+    /** plugin-guard's record of why it ended (null while running, or from an older engine). */
+    val outcome: TurnOutcome? = null,
+    /** This turn's own todo list (dsh's todos are turn-scoped); null when it wrote none. */
+    val todos: List<TodoItem>? = null,
 ) {
+    val todoCounts: TodoCounts? get() = todos?.let { TodoCounts.of(it) } ?: outcome?.todos
+    val endReason: EndReason? get() = endReasonOf(status, outcome, todoCounts)
     /** The closing assistant reply: the final text block, shown outside the process fold. */
     val reply: Block.Text? get() = (blocks.lastOrNull() as? Block.Text)?.takeIf { status != TurnStatus.Running }
     val process: List<Block> get() = if (reply != null) blocks.dropLast(1) else blocks
@@ -153,7 +208,9 @@ object Projector {
         var status = TurnStatus.Running
         var error: TurnError? = null
         var usage = Usage()
-        fun build() = Turn(key, number, user, blocks.toList(), start, end, status, error, usage)
+        var outcome: TurnOutcome? = null
+        var todos: List<TodoItem>? = null
+        fun build() = Turn(key, number, user, blocks.toList(), start, end, status, error, usage, outcome, todos)
     }
 
     fun conversation(events: List<LoggedEvent>, running: Boolean): Conversation {
@@ -174,7 +231,7 @@ object Projector {
         // The continuation prompt was logged before its turn/start: that turn/start continues this one.
         var resumeInto: TurnB? = null
         fun resume(prev: TurnB, number: Int?) {
-            prev.number = number ?: prev.number; prev.end = null; prev.status = TurnStatus.Running; prev.error = null
+            prev.number = number ?: prev.number; prev.end = null; prev.status = TurnStatus.Running; prev.error = null; prev.outcome = null
             prev.blocks.replaceAll { b -> if (b is Block.Notice && b.kind in CONTINUATION_NOTICES) b.copy(resumed = true) else b }
         }
 
@@ -190,6 +247,8 @@ object Projector {
                     turns += TurnB("t${e.seq}", d.i("turn"), e.time)
                 }
                 "user/message" -> {
+                    // plugin-guard continued the turn: the model stopped with open todos.
+                    if (d.o("source")?.s("kind") == AUTO_CONTINUE && !e.isReplacement()) { current(e.time, e.seq).blocks += Block.Notice("n${e.seq}", "", AUTO_CONTINUE); continue }
                     if (d.o("source")?.s("kind") != "user" || e.isReplacement()) continue
                     val content = d["content"]
                     val prev = awaiting
@@ -241,7 +300,14 @@ object Projector {
                         ) else b
                     }
                 }
-                "todo/write" -> todos = d.a("todos")?.mapNotNull { (it as? JsonObject)?.let { o -> TodoItem(o.s("content") ?: "", o.s("status") ?: "pending") } }
+                "todo/write" -> {
+                    todos = d.a("todos")?.mapNotNull { (it as? JsonObject)?.let { o -> TodoItem(o.s("content") ?: "", o.s("status") ?: "pending") } }
+                    open()?.todos = todos
+                }
+                TURN_OUTCOME -> open()?.let { t ->
+                    if (t.number != null && d.i("turn") != null && d.i("turn") != t.number) return@let
+                    t.outcome = TurnOutcome(d.s("reason") ?: "done", TodoCounts.of(d.o("todos")), d.i("nudges") ?: 0, d.s("kind"))
+                }
                 "compaction/start" -> current(e.time, e.seq).blocks += Block.Compaction("m${d.s("compactionId") ?: e.seq}", true, 0, 0, "", false)
                 "compaction/summary" -> {
                     val key = "m${d.s("compactionId")}"
@@ -283,6 +349,8 @@ object Projector {
                     // The failure it follows is not final: the turn stays open until the continuation (or a stop).
                     val kind = d.s("kind")
                     if (kind == NETWORK_WAIT) turns.lastOrNull()?.takeIf { it.status == TurnStatus.Failed }?.let { it.end = null; it.status = TurnStatus.Running; it.error = null }
+                    // 继续 on an end card: the continuation is the rest of the same task.
+                    if (kind == USER_CONTINUE) turns.lastOrNull()?.takeIf { it.end != null }?.let { it.end = null; it.status = TurnStatus.Running; it.error = null; it.outcome = null }
                     val t = current(e.time, e.seq)
                     t.blocks += Block.Notice("n${e.seq}", d.s("text") ?: "", kind)
                     if (kind in CONTINUATION_NOTICES) awaiting = t

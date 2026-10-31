@@ -17,12 +17,15 @@
 //     unattended automation runs (`auto_…` sessions), whose questions are
 //     answered automatically.
 //  5. dsh runtime warnings/errors (ctx.logger) mirrored to stderr = engine.log.
+//  6. Long tasks (continuation.js): a root turn the model ends with open todos (or a claim that it
+//     goes on by itself) continues with a nudge, capped; every turn end records its reason.
 import { mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { basename, dirname, join, posix } from 'node:path'
 import { format } from 'node:util'
 import { checkCommand, isReadOnlyCommand, refusalText } from './hardline.js'
 import { setupExperience } from './experience.js'
+import { setupContinuation } from './continuation.js'
 
 export { checkCommand, isReadOnlyCommand, refusalText } from './hardline.js'
 
@@ -229,6 +232,8 @@ Approvals and safety:
 - The app hard-blocks some shell commands, in bash and adb_shell alike (wiping storage roots or system directories, formatting or writing block devices, reboot/shutdown, fork bombs, executing decoded payloads, uninstalling system packages, deleting system settings): such a call is refused before it runs and returns HARDLINE_BLOCKED. Never try to work around a block.
 
 ${screenSection(descriptors)}${shell ? "Shell: the bash tool runs Android's /system/bin/sh (mksh) with toybox utilities, not GNU bash/coreutils; there is no root. " : ''}The user's shared storage is /sdcard (= /storage/emulated/0). Your working directory is the app's private home folder.
+
+Long tasks (working through a list, many screens): keep calling tools until the task is done. A reply without a tool call ends the task — there is no automatic next round, so never say you will continue later or automatically. Track progress with todo_write (which items are done) so a resumed task does not repeat actions that already took effect; if you must stop, say why, what is done, what remains and how to continue.
 
 ${lang} Keep replies short and suited to a phone screen.`
 }
@@ -466,6 +471,8 @@ export function apply(ctx, config = {}) {
   })
   // ── 3b. App 经验库: routes and post-turn reflection (experience.js) ──────────
   setupExperience(ctx, { bridge, rootOf: agent => rootSessionId(ctx, agent), meter, withinBudget: root => overBudget(root) === undefined, log })
+  // ── 6. Long tasks: continuation with open todos, explicit turn-end reasons ──
+  const continuation = setupContinuation(ctx, { log, ...config.appendRecord === undefined ? {} : { appendRecord: config.appendRecord } })
   ctx.on('agent/pre-step', async (input, next) => {
     const sessionId = rootSessionId(ctx, input.agent)
     const over = sessionId === undefined ? undefined : overBudget(sessionId)
@@ -474,6 +481,8 @@ export function apply(ctx, config = {}) {
     try {
       bridge()?.notify?.('budget/exceeded', { sessionId, ...over })
     } catch {}
+    // The turn ends `blocked`; the record says it was this budget (the app's end card).
+    if (input.agent?.session !== undefined) await continuation.record(input.agent.session, { turn: input.turn, reason: 'budget', ...over })
     return { kind: 'reject' }
   }, { prepend: true })
   ctx.inject(['androidBridge'], child => {
