@@ -1,21 +1,21 @@
 {
   "format": 1,
   "packageName": "io.github.jackwener.dsh",
-  "versionCode": 21,
-  "versionName": "0.3.3",
+  "versionCode": 22,
+  "versionName": "0.3.4",
   "minSdk": 29,
   "apk": {
-    "name": "DSH-Android-v0.3.3-arm64.apk",
-    "size": 100217368,
-    "sha256": "aa1b6d28eeed618be26a6dd35c247f4be8378dfbc5ba5f56f1454f0faf0b796a",
+    "name": "DSH-Android-v0.3.4-arm64.apk",
+    "size": 100434272,
+    "sha256": "17549579a505c5af4b53f144eebc4c2586e7307e454d3077300d79ce3a32d5ea",
     "urls": [
-      "https://github.com/jackwener/DSH-Android/releases/download/v0.3.3/DSH-Android-v0.3.3-arm64.apk"
+      "https://github.com/jackwener/DSH-Android/releases/download/v0.3.4/DSH-Android-v0.3.4-arm64.apk"
     ]
   },
   "signerSha256": "2b37a375ead19476e5d0d9e38920032ea9822e880dcc7540a14e5ab6ac1f4f69",
   "notes": {
-    "zh": "- **从链接导入技能、插件更稳**（#17）：所有用户贴的链接统一走带镜像切换的下载路径，慢但能连上的源不会被提前放弃；github.com 的 blob/tree 链接会自动换成文件本身，导入 SKILL.md 时会带上整个技能目录。失败时列出试过的每个源和具体错误\n- **安全模式的提示不再残留**：已安装的插件里没有被暂停的，安全模式就自动结束。旧版本误进的安全模式在升级后清除一次，插件重新启用\n- 返回键、插件安装、技能导入、诊断导出已在真机上测过（v0.3.2 基础上）；本版改动只在电脑上测试过\n- 仅支持 arm64-v8a，Android 10 及以上；正式签名，可直接覆盖安装 v0.1.1 及以后版本",
-    "en": "- **More reliable skill and plugin imports from links** (#17): every link you paste now goes through the same download path with mirror fallback, and a slow source that does connect is no longer given up early. github.com blob/tree links are turned into the file itself, and importing a SKILL.md brings its whole skill folder. On failure, every source tried and its error are listed\n- **No leftover safe-mode notice**: safe mode ends by itself once no installed plugin is paused. A safe mode an older version entered by mistake is cleared once after the update and plugins are re-enabled\n- Back navigation, plugin install, skill import and diagnostics export were tested on a real device (on top of v0.3.2); this version's changes were tested on a computer only\n- arm64-v8a only, Android 10 or later; release-signed, installs over v0.1.1 and later"
+    "zh": "- **应用内更新**：设置 → 关于 可以检查更新，默认每天在后台自动检查一次。有新版时显示更新说明，可以选更新、稍后或跳过此版本；在 App 内下载（支持断点续传），先核对 SHA-256 和签名，再用系统安装器安装，会话、设置和插件都保留。从这个版本起，以后的版本都可以在 App 里直接更新\n- **长任务不再中途停下**（#37）：模型在待办还没做完时提前停下，会在同一轮里自动继续，界面保持运行状态；每轮结束都会说明原因。如果还有没做完的待办，会显示进度、下一项和“继续”按钮，继续时不会重复已经成功的操作。模型不会再说“下一轮会自动继续”。移除了手机上不可靠的 goal 自动轮次\n- **大幅减少输入 token**（#36）：不常用的工具改为用到时才加载。新会话发一句“你好”的输入从约 1.9 万 token 降到约 5400（手机操作模式约 1.7 万 → 4300），DeepSeek 的提示词缓存照常生效\n- 这版没有在真机上测试过\n- 仅支持 arm64-v8a，Android 10 及以上；正式签名，可直接覆盖安装 v0.1.1 及以后版本",
+    "en": "- **In-app updates**: check in Settings → About; checked automatically once a day by default. Shows the release notes with Update / Later / Skip this version; downloads in the app (resumable), verifies SHA-256 and the signature, then installs with the system installer, keeping sessions, settings and plugins\n- **Long tasks no longer stop halfway** (#37): if the model stops while todos are still open, it continues in the same turn; every turn end states its reason, and unfinished work shows progress, the next item and a Continue button that doesn't repeat completed actions\n- **Far fewer input tokens** (#36): rarely used tools load on demand. \"Hi\" in a new chat drops from ~18.8k to ~5.4k input tokens; DeepSeek prompt caching still applies\n- Not yet tested on a real device"
   },
-  "publishedAt": "2026-10-31T08:44:43Z"
+  "publishedAt": "2026-10-31T11:12:20Z"
 }
