@@ -74,7 +74,7 @@ fun InstallSheet(vm: ExtensionsViewModel, onOpenMcp: () -> Unit) {
                 }
                 is InstallFlow.State.Confirm -> ConfirmCard(vm, s.info, error = null)
                 is InstallFlow.State.Installing -> {
-                    Header(s.info?.title ?: s.info?.name ?: s.input.spec, s.info?.version)
+                    Header(s.info?.titleText ?: s.info?.name ?: s.input.spec, s.info?.version)
                     val progress by vm.store.progress.collectAsStateWithLifecycle()
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Spinner(14.dp); Spacer(Modifier.width(8.dp))
@@ -85,8 +85,8 @@ fun InstallSheet(vm: ExtensionsViewModel, onOpenMcp: () -> Unit) {
                     }
                 }
                 is InstallFlow.State.Done -> {
-                    Header(s.info?.title ?: s.info?.name.orEmpty(), s.view.version ?: s.info?.version)
-                    Text(stringResource(R.string.ext_installed_done, s.info?.title ?: s.info?.name.orEmpty()), style = DshType.s14, color = c.labelPrimary)
+                    Header(s.info?.titleText ?: s.info?.name.orEmpty(), s.view.version ?: s.info?.version)
+                    Text(stringResource(R.string.ext_installed_done, s.info?.titleText ?: s.info?.name.orEmpty()), style = DshType.s14, color = c.labelPrimary)
                     Text(stringResource(R.string.ext_installed_restart), style = DshType.xs13, color = c.labelTertiary)
                     s.view.warnings.forEach { Text(it, style = DshType.xxs12, color = c.warnLabel) }
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
@@ -126,8 +126,8 @@ private fun ConfirmCard(vm: ExtensionsViewModel, info: InspectResult, error: Use
     val c = Dsh.colors
     val context = LocalContext.current
     val list by vm.store.list.collectAsStateWithLifecycle()
-    Header(info.title ?: info.name, info.version)
-    info.description?.takeIf { it.isNotBlank() }?.let { Text(it, style = DshType.xs13, color = c.labelSecondary) }
+    Header(info.titleText ?: info.name, info.version)
+    info.descriptionText?.let { Text(it, style = DshType.xs13, color = c.labelSecondary) }
     Column(Modifier.fillMaxWidth().clip(Radius.lg).background(c.bgModule).padding(12.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
         val source = listOfNotNull(sourceLabel(info.kind) ?: info.kind, info.repo ?: info.registry?.removePrefix("https://")?.trimEnd('/')).joinToString(" · ")
         if (source.isNotBlank()) KeyValue(stringResource(R.string.ext_card_source), source)
@@ -148,7 +148,7 @@ private fun ConfirmCard(vm: ExtensionsViewModel, info: InspectResult, error: Use
     val incompatible = error?.code == "incompatible-version" || !info.compatible
     if (incompatible) {
         Text(error?.let { ExtText.error(context, it) }
-            ?: stringResource(R.string.ext_incompatible, info.title ?: info.name, info.requiredRange ?: "?", list?.dshVersion?.ifBlank { null } ?: "?"),
+            ?: stringResource(R.string.ext_incompatible, info.titleText ?: info.name, info.requiredRange ?: "?", list?.dshVersion?.ifBlank { null } ?: "?"),
             style = DshType.xs13, color = c.warnLabel)
     }
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End), verticalAlignment = Alignment.CenterVertically) {
@@ -163,7 +163,7 @@ private fun FailedCard(vm: ExtensionsViewModel, s: InstallFlow.State.Failed, onO
     val c = Dsh.colors
     val context = LocalContext.current
     val log by vm.log.collectAsStateWithLifecycle()
-    Header(s.info?.title ?: s.info?.name ?: s.input.spec.take(80), s.info?.version)
+    Header(s.info?.titleText ?: s.info?.name ?: s.input.spec.take(80), s.info?.version)
     Text(ExtText.error(context, s.error), style = DshType.s14, color = c.labelPrimary)
     s.error.detail?.takeIf { it.isNotBlank() }?.let { CodeCard(it, maxHeight = 160.dp) }
     log?.let { l -> CodeCard(l.text.ifBlank { "—" }, label = l.path ?: "log", maxHeight = 240.dp) }

@@ -6,6 +6,8 @@
 // Sources: the pnpmfile gate (`DSHA_NATIVE <pkg>@<ver> <code> <detail>`), our scan and
 // precheck, dsh's plugin manager (ManagementError codes, pnpm failure kinds, incompatible[]).
 
+import { SourcesError, reasonOf } from './fetch-sources.js'
+
 const ZH = {
   'native-addon': p => `无法安装 ${p.name}：它依赖原生模块 ${p.pkg}（要为电脑编译的二进制程序），手机上的 DSH 运行不了这类插件。`,
   'prebuilt-binary': p => `无法安装 ${p.name}：它的包 ${p.pkg} 里带有电脑专用的二进制文件（${p.file}），手机上无法加载。已撤销安装。`,
@@ -20,6 +22,8 @@ const ZH = {
   'needs-git': () => '这个地址需要 git 才能下载（ssh 地址或私有仓库），手机上没有 git。请改用 GitHub 网页链接或 npm 包名。',
   'needs-build': () => '这个 GitHub 仓库是源代码，要先构建才能用。请让作者发布到 npm，或者在 Releases 里附上 .tgz 包。',
   'github-unreachable': p => `访问 GitHub 失败（${p.reason}）。可以改用 npm 包名，或者下载 .tgz 后从文件安装。`,
+  'index-unreachable': p => `连不上插件索引。试过：${p.tried}。检查网络或代理后重试。`,
+  'index-invalid': p => `插件索引的内容有误（${p.reason}），请稍后重试或联系索引维护者。`,
   'bad-archive': () => '文件里找不到 package.json，看起来不是插件包。',
   'bad-input': p => `看不懂这个输入：${p.input}。请填 npm 包名、npm 或 GitHub 链接、.tgz/.zip 链接或本地文件。`,
   'already-installed': p => `${p.name} 已经装过了。要换版本请用「更新」。`,
@@ -61,6 +65,8 @@ const EN = {
   'needs-git': () => 'This address needs git (ssh or a private repository), which a phone does not have. Use the GitHub web link or the npm package name.',
   'needs-build': () => 'This GitHub repository is source code that must be built first. Ask the author to publish it to npm or attach a .tgz to a release.',
   'github-unreachable': p => `GitHub could not be reached (${p.reason}). Use the npm package name, or download the .tgz and install it from a file.`,
+  'index-unreachable': p => `Couldn't reach the plugin index. Tried: ${p.tried}. Check the network or proxy, then retry.`,
+  'index-invalid': p => `The plugin index is malformed (${p.reason}). Retry later or contact its maintainer.`,
   'bad-archive': () => 'No package.json in this file; it does not look like a plugin package.',
   'bad-input': p => `Cannot read this input: ${p.input}. Give an npm name, an npm or GitHub link, a .tgz/.zip link or a local file.`,
   'already-installed': p => `${p.name} is already installed. Use Update to change its version.`,
@@ -98,6 +104,8 @@ const ACTIONS = {
   'safe-mode': ['resume'],
   'pnpm-failed': ['open-log'],
   'waiting-service': ['disable', 'uninstall'],
+  'index-unreachable': ['retry'],
+  'index-invalid': ['retry'],
 }
 
 /** Chinese names of the web-only services (needs-web-services). */
@@ -111,6 +119,34 @@ export const SERVICE_LABELS = {
 }
 
 export const zh = () => /^zh\b/i.test(process.env.DSH_ANDROID_LOCALE ?? '')
+
+/**
+ * Display text from a plugin manifest / bundle metadata in the wire form of the `android/ext/*`
+ * results (docs/PLUGINS-CONTRACT.md §2 "LocalizedText"): a non-blank string, or `{tag: text}` with
+ * lower-case `-` tags and non-blank string values (`zh_CN` → `zh-cn`); undefined for anything else.
+ * The engine owns this normalization; the app decodes both forms and falls back by locale.
+ */
+export function localizedText(value) {
+  if (typeof value === 'string') return value.trim() === '' ? undefined : value
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined
+  const out = {}
+  for (const [k, v] of Object.entries(value)) {
+    if (typeof v !== 'string' || v.trim() === '' || !/^[A-Za-z]{2,8}([_-][A-Za-z0-9]{1,8})*$/.test(k)) continue
+    out[k.toLowerCase().replace(/_/g, '-')] ??= v
+  }
+  return Object.keys(out).length === 0 ? undefined : out
+}
+
+/** One string from a LocalizedText for the engine locale (engine-made sentences, logs). */
+export function localizedString(value, fallback = '') {
+  const t = localizedText(value)
+  if (t === undefined) return fallback
+  if (typeof t === 'string') return t
+  const lang = String(process.env.DSH_ANDROID_LOCALE ?? 'en').toLowerCase().replace(/_/g, '-')
+  for (let tag = lang; tag !== ''; tag = tag.includes('-') ? tag.slice(0, tag.lastIndexOf('-')) : '') if (t[tag] !== undefined) return t[tag]
+  const base = lang.split('-')[0]
+  return Object.entries(t).find(([k]) => k.split('-')[0] === base)?.[1] ?? t.en ?? Object.values(t)[0]
+}
 
 /** Build a UserError. */
 export function userError(code, params = {}, extra = {}) {
@@ -177,6 +213,25 @@ export function fromManagerResult(result, context = {}) {
   return userError('pnpm-failed', { reason: pnpmReason(output) || firstLine(result?.error?.diagnostic) || String(code ?? 'unknown') }, extra)
 }
 
+/** One fetch-sources reason (timeout | dns | refused | reset | tls | unreachable | http-<n> | network) in words. */
+export function sourceReason(reason) {
+  const z = zh()
+  const http = /^http-(\d+)$/.exec(reason ?? '')
+  if (http) return `HTTP ${http[1]}`
+  const words = {
+    timeout: ['连接超时', 'timed out'], dns: ['域名解析失败', 'DNS lookup failed'], refused: ['拒绝连接', 'connection refused'],
+    reset: ['连接被重置', 'connection reset'], tls: ['证书错误', 'certificate error'], unreachable: ['网络不可达', 'network unreachable'],
+    aborted: ['已取消', 'cancelled'],
+  }[reason]
+  return words ? words[z ? 0 : 1] : (z ? '网络错误' : 'network error')
+}
+
+/** `host（原因）、host（原因）` for SourcesError attempts. */
+export function triedText(attempts) {
+  const z = zh()
+  return attempts.map(a => z ? `${a.host}（${sourceReason(a.reason)}）` : `${a.host} (${sourceReason(a.reason)})`).join(z ? '、' : ', ')
+}
+
 export function networkReason(text) {
   const t = String(text ?? '')
   if (/ETIMEDOUT|timed out|TIMEOUT/i.test(t)) return zh() ? '超时' : 'timed out'
@@ -196,4 +251,23 @@ function rangeOf(inc) {
     if (first) return first
   }
   return '?'
+}
+
+/** A market failure (search / entry) as a UserError the app shows with 重试 and the sources tried. */
+export function marketError(error, url) {
+  const hostOf = u => { try { return new URL(u).host } catch { return String(u) } }
+  const line = String(error?.message ?? error ?? '').split('\n')[0].slice(0, 300)
+  for (let e = error, i = 0; e != null && i < 6; e = e.cause, i++) {
+    if (e instanceof SourcesError) {
+      const attempts = e.attempts.map(a => ({ host: a.host, url: a.url, reason: a.reason ?? 'network', ...a.detail ? { detail: a.detail } : {} }))
+      return userError('index-unreachable', { url, tried: triedText(attempts), attempts }, { detail: line })
+    }
+  }
+  if (error?.code === 'plugin-market/fetch-failed') {
+    const status = /: HTTP (\d{3})$/.exec(error.message ?? '')?.[1]
+    const attempts = [{ host: hostOf(url), url, reason: status ? `http-${status}` : reasonOf(error) }]
+    return userError('index-unreachable', { url, tried: triedText(attempts), attempts }, { detail: line })
+  }
+  if (error?.code === 'plugin-market/invalid-index') return userError('index-invalid', { url, reason: line })
+  return userError('unknown', { reason: line })
 }

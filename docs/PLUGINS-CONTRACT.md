@@ -103,7 +103,7 @@ interface UserError {            // §5
   code: string; message: string  // one sentence, zh for DSH_ANDROID_LOCALE zh*, else en
   params: object                 // the facts in the message (name, pkg, file, range, dsh, registry, host, services, labels, …)
   detail?: string; logPath?: string
-  actions?: ('retry-mirror'|'force-install'|'uninstall'|'disable'|'open-log'|'resume')[]
+  actions?: ('retry-mirror'|'retry'|'force-install'|'uninstall'|'disable'|'open-log'|'resume')[]
 }
 interface ChangeView {
   application: 'applied'|'restart-required'|'failed'|'cancelled'
@@ -113,8 +113,14 @@ interface ChangeView {
   sharedWithEngine?: string[]     // dependencies turned into peers of the engine's copy
   deferred?: true                 // remove: the package goes at the next start
 }
+// Display text from manifests / bundle metadata / indexes. The engine normalizes (errors.js localizedText):
+// a non-blank string, or {tag: text} with lower-case '-' tags (`zh_CN` → `zh-cn`) and non-blank strings.
+// The app decodes both (LocalizedText) and picks exact tag → shorter tag → same language → en → first.
+// The app reads lists element by element: one entry it cannot read is shown as its name with a note
+// (code 'bad-entry'), never as a failed list; an unreadable result is 'bad-result', not an engine failure.
+type LocalizedText = string | { [languageTag: string]: string }
 interface ExtPlugin {
-  name: string; title: string; description?: string; version?: string
+  name: string; title: LocalizedText; description?: LocalizedText; version?: string
   source: { kind: 'npm'|'tarball'|'file'|'github'; spec: string; input?: string; registry?: string; repo?: string }
   license?: string; homepage?: string; publisher?: string
   enabled: boolean                // in dsh.profile.bundles
@@ -152,16 +158,16 @@ errors; a JSON-RPC error means a bad request (missing parameter) or an engine bu
 | `android/ext/remove` | `{name}` → `ChangeView`; a running bundle is deselected now and removed at the next start (`deferred`); the profile patch's rows for its row ids are dropped |
 | `android/ext/updates` | `{refresh?}` → `{updates: {name, current, latest, compatible}[], checkedAt}` (cached 6 h; one abbreviated packument request per npm-installed plugin) |
 | `android/ext/update` | `{name, version?, requestId?, force?}` → `ChangeView` (exact version, same gates; a refused update reinstalls the previous version) |
-| `android/ext/detail` | `{name, language?, version?}` → `{markdown?, origin?}` (installed README.<lang>.md / README.md, else jsDelivr → unpkg → npmmirror) |
+| `android/ext/detail` | `{name, language?, version?}` → `{markdown?, origin?}` (installed README.<lang>.md / README.md, else the first of jsDelivr (cdn / gcore / testingcf) → unpkg → npmmirror that answers) |
 | `android/ext/config/get` | `{entryId}` → `{entryId, rowId, module, schema, limitations, value, overridden, managedByApp}`: `schema` = JSON Schema 2020-12 for a form (no `!!js` branches, non-null types, constant unions as `enum`, `x-cordis.role: 'secret'` for secrets, `$defs` when recursive); `null` without a Config |
 | `android/ext/config/set` | `{entryId, value}` → `{ok: true}` or `{ok: false, errors: {path, message}[]}`; applied live (no restart) through dsh's config editor, persisted in the profile patch |
 | `android/ext/askBeforeCall` | `{key, enabled}` → `{}`; `key` = bundle name or `mcp:<serverName>` |
 | `android/ext/resume` | `{name}` → `ChangeView` |
 | `android/ext/log` | `{name?}` → `{text, path}` (last 64 KiB of the newest pnpm log, mentioning `name` if given) |
 | `android/ext/market/indexes` | `{}` → `{indexes: {url, title?, description?, error?}[]}` |
-| `android/ext/market/setIndexes` | `{urls}` → `{indexes}` (stored in extensions-state.json; default `https://cdn.jsdelivr.net/gh/jackwener/DeepseekHarness-Android@main/plugins/index.json`) |
-| `android/ext/market/search` | `{url, query?, offset?, limit?, refresh?, category?, sort?}` → dsh plugin-market `search` result (index format 1, entries annotated with install state and per-version compatibility) |
-| `android/ext/market/entry` | `{url, name}` → `{entry \| null}` |
+| `android/ext/market/setIndexes` | `{urls}` → `{indexes}` (stored in extensions-state.json; default `https://cdn.jsdelivr.net/gh/jackwener/DSH-Android@main/plugins/index.json`; a stored former address `…/jackwener/DeepseekHarness-Android@main/…` is rewritten to it at boot and on set) |
+| `android/ext/market/search` | `{url, query?, offset?, limit?, refresh?, category?, sort?}` → dsh plugin-market `search` result (index format 1, entries annotated with install state and per-version compatibility), or `{error}` (`index-unreachable`, `index-invalid`, `unknown`). A GitHub-hosted index (jsDelivr `/gh/…`, raw.githubusercontent.com, github.com `raw`/`blob`) is read from the first of its equivalent sources that answers — cdn / fastly / gcore / testingcf.jsdelivr.net, raw.githubusercontent.com — started 2 s apart, 6 s each to send headers, the last working one first next time (`sourcePreferences` in extensions-state.json; `fetch-sources.js`, js patch 20) |
+| `android/ext/market/entry` | `{url, name}` → `{entry \| null}` or `{error}` as for search |
 | `android/ext/skills/list` | `{}` → `{skills: {name, description, source: 'imported'\|'plugin'\|'agents'\|'builtin'\|…, enabled, removable, scripts: string[], path?}[]}` |
 | `android/ext/skills/preview` | `{input}` (absolute .md / .zip / .skill / directory, raw URL, GitHub repo/tree URL) → `{previewId, skills: {name, description, path, files, scripts, valid, problem?, exists}[]}` or `{error}` |
 | `android/ext/skills/import` | `{previewId, names, overwrite?}` → `{imported, skipped: {name, reason: 'invalid'\|'exists'}[]}` |
@@ -199,7 +205,9 @@ and local `.zip`/directories (repacked); local `.tgz`; `git+ssh:`, `git@…` →
 `bad-archive`, `bad-input`, `already-installed`, `installer-broken` (no launcher / pnpm), `activation-failed`,
 `waiting-service`, `crash-suspended`, `safe-mode`, `pnpm-failed`, `not-installed`, `not-removable`,
 `management-required`, `skill-invalid`, `skill-exists`, `mcp-sse-only`, `mcp-runtime` (`runtime`), `mcp-local-path`,
-`mcp-auth` (`status`), `mcp-failed`, `mcp-too-many`, `unknown`. Unknown codes: show `message`.
+`mcp-auth` (`status`), `mcp-failed`, `mcp-too-many`, `index-unreachable` (`url`, `tried` = localized `host（原因）、…`,
+`attempts: {host, url, reason: timeout|dns|refused|reset|tls|unreachable|http-<n>|network, detail?}[]`; action `retry`),
+`index-invalid` (`url`, `reason`; action `retry`), `unknown`. Unknown codes: show `message`.
 
 ## 6. Tools, modes, approvals
 

@@ -781,7 +781,10 @@
     <string name="diag_entry">Copy diagnostics</string>
     <string name="diag_entry_desc">Builds a problem report to paste into a GitHub issue. No API keys, sign-in credentials, conversations or screen content.</string>
     <string name="diag_title">Diagnostics</string>
-    <string name="diag_note">This is everything in the report. API keys, sign-in credentials, conversations and screen content are not included; IP addresses and emails are hidden. It leaves this page only when you tap Copy or Share; nothing is sent automatically.</string>
+    <string name="diag_note">This is everything in the report. API keys, sign-in credentials, conversations and screen content are not included; IP addresses and emails are hidden. It leaves this page only when you tap Copy, Share or Export to file; nothing is sent automatically. The exported file also holds the engine log tail, redacted the same way.</string>
+    <string name="diag_export">Export to file</string>
+    <string name="diag_exported">Saved to %s (with the engine log)</string>
+    <string name="diag_export_failed">Export failed: %s</string>
     <string name="share">Share</string>
     <string name="err_model_unavailable_title">Model not enabled</string>
     <string name="err_model_unavailable">This account has not enabled the model “%1$s”: %2$s. Pick another one in Settings → Model, or enable it in the provider\'s console.</string>

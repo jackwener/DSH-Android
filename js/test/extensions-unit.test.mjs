@@ -1,6 +1,7 @@
 // Unit tests of @dsh-android/plugin-extensions' pure parts: the pnpmfile gate, boot bookkeeping
 // (crash attribution, safe mode, overlay migration, pnpm settings), install-source normalization
-// against a fake GitHub/jsDelivr/registry, archives, MCP classification, error mapping.
+// against a fake GitHub/jsDelivr/registry, archives, MCP classification, error mapping, mirror fetch
+// (fetch-sources: a source that never answers, then one that does) and the index URL migration.
 //   node --test js/test/extensions-unit.test.mjs        (no engine build needed, except where noted)
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
@@ -14,7 +15,9 @@ import { attributeCrash, packagesOnStack, migrateAppLayer, withWorkspaceKeys, pr
 import { readTar, readZip, writeTgz, packageRoot } from '../packages/plugin-extensions/archive.js'
 import { parseGithub, githubRepoOf, checkBuilt } from '../packages/plugin-extensions/sources.js'
 import { classifyText, npxPackage } from '../packages/plugin-extensions/mcp.js'
-import { fromManagerResult, parseGateRefusal, userError } from '../packages/plugin-extensions/errors.js'
+import { fromManagerResult, localizedString, localizedText, marketError, parseGateRefusal, userError } from '../packages/plugin-extensions/errors.js'
+import { SourcesError, fetchFirst, fetchMirrored, npmFileUrls, preferences, sourcesFor, usePreferences } from '../packages/plugin-extensions/fetch-sources.js'
+import { CURATED_INDEX, DEFAULT_INDEXES, migrateIndexes } from '../packages/plugin-extensions/boot.js'
 import { findBinary } from '../packages/plugin-extensions/scan.js'
 import { tarballOf } from './fixtures/fake-registry.mjs'
 
@@ -259,4 +262,156 @@ test('errors: manager results become UserErrors', () => {
   assert.equal(fromManagerResult({ application: 'failed', packageResult: { kind: 'integrity', output: 'ERR_PNPM_TARBALL_INTEGRITY' }, error: { code: 'operation-error' } }).code, 'integrity')
   assert.equal(fromManagerResult({ application: 'failed', packageResult: { kind: 'pnpm-missing', output: '' }, error: { code: 'operation-error' } }).code, 'installer-broken')
   assert.equal(userError('no-such-code', { reason: 'x' }).message, 'The operation failed: x')
+})
+
+// ── index sources: mirrors, fallback, memory, migration ─────────────────────
+
+test('index URLs: the curated index moved to jackwener/DSH-Android; stored lists are migrated', () => {
+  assert.equal(CURATED_INDEX, 'https://cdn.jsdelivr.net/gh/jackwener/DSH-Android@main/plugins/index.json')
+  assert.deepEqual(DEFAULT_INDEXES, [CURATED_INDEX])
+  const old = 'https://cdn.jsdelivr.net/gh/jackwener/DeepseekHarness-Android@main/plugins/index.json'
+  const other = 'https://example.com/index.json'
+  assert.deepEqual(migrateIndexes([other, old]), { urls: [other, CURATED_INDEX], changed: true })
+  assert.deepEqual(migrateIndexes([old, CURATED_INDEX]), { urls: [CURATED_INDEX], changed: true })
+  assert.deepEqual(migrateIndexes([CURATED_INDEX, other]), { urls: [CURATED_INDEX, other], changed: false })
+  assert.deepEqual(migrateIndexes(undefined), { urls: undefined, changed: false })
+})
+
+test('index URLs: a GitHub file has equivalent sources on every jsDelivr CDN and raw.githubusercontent.com', () => {
+  const all = [
+    'https://cdn.jsdelivr.net/gh/o/r@main/plugins/index.json',
+    'https://fastly.jsdelivr.net/gh/o/r@main/plugins/index.json',
+    'https://gcore.jsdelivr.net/gh/o/r@main/plugins/index.json',
+    'https://testingcf.jsdelivr.net/gh/o/r@main/plugins/index.json',
+    'https://raw.githubusercontent.com/o/r/main/plugins/index.json',
+  ]
+  assert.deepEqual(sourcesFor(all[0], {}), { family: 'github', urls: all })
+  // the configured URL is asked first, whichever source it names
+  assert.deepEqual(sourcesFor(all[4], {}).urls, [all[4], ...all.slice(0, 4)])
+  assert.deepEqual(sourcesFor('https://github.com/o/r/blob/main/plugins/index.json', {}).urls.slice(1), all)
+  // anything else is fetched as is
+  assert.deepEqual(sourcesFor('https://example.com/gh/o/r@main/index.json', {}), { family: undefined, urls: ['https://example.com/gh/o/r@main/index.json'] })
+  assert.deepEqual(sourcesFor('https://cdn.jsdelivr.net/gh/o/r@main/x.json?v=1', {}).urls.length, 1)
+  assert.deepEqual(npmFileUrls('@s/p', '1.0.0', './README.md', {}), [
+    'https://cdn.jsdelivr.net/npm/@s/p@1.0.0/README.md', 'https://gcore.jsdelivr.net/npm/@s/p@1.0.0/README.md', 'https://testingcf.jsdelivr.net/npm/@s/p@1.0.0/README.md',
+    'https://unpkg.com/@s/p@1.0.0/README.md', 'https://registry.npmmirror.com/@s/p/1.0.0/files/README.md'])
+})
+
+/** An HTTP server that accepts connections and never answers (a source that times out), and one that serves the index. */
+async function indexServers(body) {
+  const hits = { stuck: 0, ok: 0, missing: 0 }
+  const stuck = createServer(() => { hits.stuck++ })
+  const ok = createServer((req, res) => {
+    if (req.url.endsWith('/plugins/index.json')) { hits.ok++; res.writeHead(200, { 'content-type': 'application/json' }); res.end(body); return }
+    hits.missing++; res.writeHead(404); res.end()
+  })
+  await Promise.all([stuck, ok].map(s => new Promise(r => s.listen(0, '127.0.0.1', r))))
+  const base = s => `http://127.0.0.1:${s.address().port}`
+  return { hits, stuckBase: base(stuck), okBase: base(ok), close: () => { for (const s of [stuck, ok]) { s.closeAllConnections?.(); s.close() } } }
+}
+
+test('fetchFirst: a source that never answers is abandoned after its header timeout; the next one answers and is remembered', async () => {
+  const doc = JSON.stringify({ format: 1, title: 'x', plugins: [] })
+  const srv = await indexServers(doc)
+  usePreferences({}, () => {})
+  let saved
+  usePreferences({}, p => { saved = p })
+  try {
+    const urls = [`${srv.stuckBase}/gh/o/r@main/plugins/index.json`, `${srv.okBase}/gh/o/r@main/plugins/index.json`]
+    const t0 = Date.now()
+    const first = await fetchFirst(urls, { family: 'test', headerTimeoutMs: 300, staggerMs: 5000, init: { signal: AbortSignal.timeout(5000) } })
+    const took = Date.now() - t0
+    assert.equal(first.url, urls[1])
+    assert.equal(await first.response.text(), doc)
+    assert.ok(took >= 250 && took < 2000, `fell over after the header timeout, not the stagger (${took} ms)`)
+    assert.deepEqual(first.attempts.map(a => [a.host, a.reason]), [[new URL(srv.stuckBase).host, 'timeout'], [new URL(srv.okBase).host, 'ok']])
+    assert.equal(srv.hits.stuck, 1)
+    assert.deepEqual(saved, { test: srv.okBase })
+    assert.deepEqual(preferences(), { test: srv.okBase })
+    // remembered: the working source is asked first, the stuck one is not touched
+    const t1 = Date.now()
+    const again = await fetchFirst(urls, { family: 'test', headerTimeoutMs: 300, staggerMs: 5000 })
+    assert.equal(again.url, urls[1]); await again.response.text()
+    assert.ok(Date.now() - t1 < 250)
+    assert.equal(srv.hits.stuck, 1)
+    // staggered: a slow first source does not delay the second beyond staggerMs
+    usePreferences({}, () => {})
+    const t2 = Date.now()
+    const raced = await fetchFirst(urls, { family: 'test', headerTimeoutMs: 4000, staggerMs: 200 })
+    assert.equal(raced.url, urls[1]); await raced.response.text()
+    assert.ok(Date.now() - t2 < 1500, 'the second source started after staggerMs while the first still waited')
+  } finally { usePreferences({}, () => {}); srv.close() }
+})
+
+test('fetchFirst: every source failing names each one; marketError turns it into index-unreachable with 重试', async () => {
+  const srv = await indexServers('{}')
+  try {
+    // a port nothing listens on: connection refused
+    const closed = createServer()
+    await new Promise(r => closed.listen(0, '127.0.0.1', r))
+    const closedPort = closed.address().port
+    await new Promise(r => closed.close(r))
+    const urls = [`${srv.stuckBase}/a/plugins/index.json`, `${srv.okBase}/b/missing.json`, `http://127.0.0.1:${closedPort}/c.json`]
+    const error = await fetchFirst(urls, { headerTimeoutMs: 300, staggerMs: 100 }).then(() => undefined, e => e)
+    assert.ok(error instanceof SourcesError)
+    assert.deepEqual(error.attempts.map(a => a.reason).sort(), ['http-404', 'refused', 'timeout'])
+    assert.match(error.message, /no source answered: .*timeout.*/)
+    // as dsh-plugin-market reports it (RemoteError with the cause), in both languages
+    const remote = Object.assign(new Error(`Could not fetch ${urls[0]}: ${error.message}`, { cause: error }), { code: 'plugin-market/fetch-failed' })
+    const saved = process.env.DSH_ANDROID_LOCALE
+    try {
+      process.env.DSH_ANDROID_LOCALE = 'zh-CN'
+      const zh = marketError(remote, urls[0])
+      assert.equal(zh.code, 'index-unreachable')
+      assert.deepEqual(zh.actions, ['retry'])
+      assert.equal(zh.params.attempts.length, 3)
+      assert.match(zh.message, /^连不上插件索引。试过：127\.0\.0\.1:\d+（连接超时）、127\.0\.0\.1:\d+（HTTP 404）、127\.0\.0\.1:\d+（拒绝连接）。检查网络或代理后重试。$/)
+      process.env.DSH_ANDROID_LOCALE = 'en'
+      assert.match(marketError(remote, urls[0]).message, /^Couldn't reach the plugin index\. Tried: .*\(timed out\), .*\(HTTP 404\), .*\(connection refused\)\. Check the network or proxy, then retry\.$/)
+      // a plain fetch failure without our cause (another fetch path) still names its host and reason
+      const bare = Object.assign(new Error('Could not fetch https://x.example/i.json: fetch failed: Connect Timeout Error'), { code: 'plugin-market/fetch-failed', cause: new TypeError('fetch failed', { cause: Object.assign(new Error('Connect Timeout Error'), { code: 'UND_ERR_CONNECT_TIMEOUT' }) }) })
+      assert.equal(marketError(bare, 'https://x.example/i.json').params.tried, 'x.example (timed out)')
+      assert.equal(marketError(Object.assign(new Error('u: $.format: must be 1'), { code: 'plugin-market/invalid-index' }), 'u').code, 'index-invalid')
+    } finally { if (saved === undefined) delete process.env.DSH_ANDROID_LOCALE; else process.env.DSH_ANDROID_LOCALE = saved }
+  } finally { srv.close() }
+})
+
+test('fetchMirrored: a GitHub-hosted index falls over from a dead jsDelivr to the raw host (env-overridden hosts)', async () => {
+  const doc = JSON.stringify({ format: 1, title: 'curated', plugins: [] })
+  const srv = await indexServers(doc)
+  const env = { DSH_ANDROID_JSDELIVR: `${srv.stuckBase}/jsd`, DSH_ANDROID_GITHUB_RAW: `${srv.okBase}/raw` }
+  usePreferences({}, () => {})
+  try {
+    const url = `${env.DSH_ANDROID_JSDELIVR}/gh/jackwener/DSH-Android@main/plugins/index.json`
+    assert.deepEqual(sourcesFor(url, env).urls, [url, `${env.DSH_ANDROID_GITHUB_RAW}/jackwener/DSH-Android/main/plugins/index.json`])
+    // the market's own init: redirect: 'error' and its overall signal pass through
+    const r = await fetchMirrored(url, { env, headerTimeoutMs: 300, staggerMs: 5000, init: { redirect: 'error', headers: { accept: 'application/json' }, signal: AbortSignal.timeout(5000) } })
+    assert.equal(r.url, `${env.DSH_ANDROID_GITHUB_RAW}/jackwener/DSH-Android/main/plugins/index.json`)
+    assert.equal(await r.response.text(), doc)
+    assert.deepEqual(preferences(), { github: srv.okBase })
+    // the caller's abort wins over pending sources
+    usePreferences({}, () => {})
+    const ac = new AbortController()
+    const pending = fetchMirrored(url, { env, headerTimeoutMs: 5000, staggerMs: 5000, init: { signal: ac.signal } })
+    setTimeout(() => ac.abort(new Error('disposed')), 50)
+    await assert.rejects(pending, /disposed/)
+  } finally { usePreferences({}, () => {}); srv.close() }
+})
+
+test('manifest text: strings and locale maps are normalized to LocalizedText for android/ext/list', () => {
+  // @fffangchenghao/dsh-web-search 0.24.0's manifest title (broke v0.3.1's plugin list)
+  assert.deepEqual(localizedText({ en: 'Web Search (Bing)', 'zh-cn': '网页搜索（Bing）' }), { en: 'Web Search (Bing)', 'zh-cn': '网页搜索（Bing）' })
+  assert.deepEqual(localizedText({ EN: 'a', zh_CN: 'b', 'zh-CN': 'dup', bad: 3, empty: ' ', 'not a tag': 'x' }), { en: 'a', 'zh-cn': 'b' })
+  assert.equal(localizedText('plain'), 'plain')
+  for (const v of ['', '  ', 3, null, undefined, ['x'], {}, { en: 1 }]) assert.equal(localizedText(v), undefined)
+  const saved = process.env.DSH_ANDROID_LOCALE
+  try {
+    process.env.DSH_ANDROID_LOCALE = 'zh-Hans-CN'
+    assert.equal(localizedString({ en: 'E', zh: '中' }), '中')
+    assert.equal(localizedString({ en: 'E', 'zh-cn': '简' }), '简')
+    process.env.DSH_ANDROID_LOCALE = 'fr'
+    assert.equal(localizedString({ ja: 'J', en: 'E' }), 'E')
+    assert.equal(localizedString({ ja: 'J' }), 'J')
+    assert.equal(localizedString(42, 'fallback'), 'fallback')
+  } finally { if (saved === undefined) delete process.env.DSH_ANDROID_LOCALE; else process.env.DSH_ANDROID_LOCALE = saved }
 })

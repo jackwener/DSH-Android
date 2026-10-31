@@ -20,6 +20,8 @@ object ExtText {
         "needs-git" -> R.string.err_needs_git
         "needs-build" -> R.string.err_needs_build
         "github-unreachable" -> R.string.err_github_unreachable
+        "index-unreachable" -> R.string.err_index_unreachable
+        "index-invalid" -> R.string.err_index_invalid
         "bad-archive" -> R.string.err_bad_archive
         "already-installed" -> R.string.err_already_installed
         "installer-broken" -> R.string.err_installer_broken
@@ -36,6 +38,8 @@ object ExtText {
         "mcp-json" -> R.string.ext_mcp_json_redirect
         ExtCodes.UNSUPPORTED_ENGINE -> R.string.err_unsupported_engine
         ExtCodes.ENGINE_UNAVAILABLE -> R.string.err_engine_unavailable
+        ExtCodes.BAD_RESULT -> R.string.err_bad_result
+        ExtCodes.BAD_ENTRY -> R.string.err_bad_entry
         else -> null
     }
 
@@ -47,6 +51,7 @@ object ExtText {
         val appOwned = e.code == "bad-input" || e.code == "mcp-json" || e.code == ExtCodes.UNSUPPORTED_ENGINE
         if (!appOwned && e.message.isNotBlank()) return e.message
         if (e.code == ExtCodes.ENGINE_UNAVAILABLE && e.message.isNotBlank()) return context.getString(R.string.err_generic, e.message)
+        if ((e.code == ExtCodes.BAD_RESULT || e.code == ExtCodes.BAD_ENTRY) && !e.detail.isNullOrBlank()) return context.getString(codeRes(e.code)!!) + "\n" + e.detail
         codeRes(e.code)?.let { return context.getString(it) }
         return context.getString(R.string.err_generic, e.message.ifBlank { e.code })
     }

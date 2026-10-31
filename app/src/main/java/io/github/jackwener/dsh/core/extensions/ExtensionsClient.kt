@@ -68,6 +68,10 @@ object ExtCodes {
     const val UNSUPPORTED_ENGINE = "unsupported-engine"
     const val ENGINE_UNAVAILABLE = "engine-unavailable"
     const val UNKNOWN = "error"
+    /** The engine answered, but the app could not read the result (a shape it does not know). Not an engine failure. */
+    const val BAD_RESULT = "bad-result"
+    /** One plugin's entry in an otherwise readable list could not be read. */
+    const val BAD_ENTRY = "bad-entry"
 }
 
 /** Typed `android/ext/…` calls. Stateless; [ExtensionsStore] owns caching and restarts. */
@@ -87,7 +91,7 @@ class ExtensionsClient(private val rpc: ExtRpc) {
         return try {
             RpcJson.decodeFromJsonElement(de, result)
         } catch (e: Exception) {
-            throw ExtException(UserError(ExtCodes.UNKNOWN, "unexpected $method result: ${e.message}"), e)
+            throw ExtException(UserError(ExtCodes.BAD_RESULT, detail = "unexpected $method result: ${e.message}"), e)
         }
     }
 
@@ -116,18 +120,19 @@ class ExtensionsClient(private val rpc: ExtRpc) {
     suspend fun setMarketIndexes(urls: List<String>) {
         call(ExtMethods.MARKET_SET_INDEXES, JsonElement.serializer(), obj { putJsonArray("urls") { urls.forEach { add(JsonPrimitive(it)) } } })
     }
+    /** A failed read throws [ExtException] with the engine's UserError (`index-unreachable` names the sources tried). */
     suspend fun marketSearch(url: String, text: String?, offset: Int = 0, limit: Int = 30, category: String? = null, refresh: Boolean = false): MarketSearchResult =
         // The engine passes these on as dsh's MarketQuery (flat on the params).
-        call(ExtMethods.MARKET_SEARCH, MarketSearchResult.serializer(), obj {
+        decoded(ExtMethods.MARKET_SEARCH, MarketSearchResult.serializer(), call(ExtMethods.MARKET_SEARCH, JsonElement.serializer(), obj {
             put("url", url)
             put("text", text?.trim().orEmpty())
             category?.let { put("category", it) }
             putJsonObject("sort") { put("kind", if (text.isNullOrBlank()) "index" else "relevance") }
             put("offset", offset); put("limit", limit)
             if (refresh) put("refresh", true)
-        })
+        }).let(::checked))
     suspend fun marketEntry(url: String, name: String): MarketEntry? =
-        call(ExtMethods.MARKET_ENTRY, JsonElement.serializer(), obj { put("url", url); put("name", name) }).let { el ->
+        checked(call(ExtMethods.MARKET_ENTRY, JsonElement.serializer(), obj { put("url", url); put("name", name) })).let { el ->
             // `{entry: …|null}`, or the entry itself.
             val e = if (el is JsonObject && "entry" in el) el["entry"] else el
             (e as? JsonObject)?.takeIf { "name" in it }?.let { RpcJson.decodeFromJsonElement(MarketEntry.serializer(), it) }
@@ -149,6 +154,12 @@ class ExtensionsClient(private val rpc: ExtRpc) {
     suspend fun mcpStatus(): McpStatusResult = call(ExtMethods.MCP_STATUS, McpStatusResult.serializer())
     suspend fun mcpInstall(pkg: String): McpInstallResult = call(ExtMethods.MCP_INSTALL, McpInstallResult.serializer(), obj { put("package", pkg) })
     suspend fun mcpRemove(pkg: String) { checked(call(ExtMethods.MCP_REMOVE, JsonElement.serializer(), obj { put("package", pkg) })) }
+
+    private fun <T> decoded(method: String, de: DeserializationStrategy<T>, el: JsonElement): T = try {
+        RpcJson.decodeFromJsonElement(de, el)
+    } catch (e: Exception) {
+        throw ExtException(UserError(ExtCodes.BAD_RESULT, detail = "unexpected $method result: ${e.message}"), e)
+    }
 
     companion object {
         /** Methods that answer `{error: UserError}` instead of failing the request. */

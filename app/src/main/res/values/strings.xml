@@ -781,7 +781,10 @@
     <string name="diag_entry">复制诊断信息</string>
     <string name="diag_entry_desc">生成一份问题报告，反馈时贴到 GitHub Issue。不含 API Key、登录凭据、对话和屏幕内容。</string>
     <string name="diag_title">诊断信息</string>
-    <string name="diag_note">下面就是全部内容。API Key、登录凭据、对话和屏幕内容都不在里面，IP 地址和邮箱也已隐藏。只有点「复制」或「分享」才会带出去，不会自动发送。</string>
+    <string name="diag_note">下面就是全部内容。API Key、登录凭据、对话和屏幕内容都不在里面，IP 地址和邮箱也已隐藏。只有点「复制」「分享」或「导出到文件」才会带出去，不会自动发送；导出的文件另附引擎日志末尾（同样隐藏了敏感信息）。</string>
+    <string name="diag_export">导出到文件</string>
+    <string name="diag_exported">已保存到 %s（含引擎日志）</string>
+    <string name="diag_export_failed">导出失败：%s</string>
     <string name="share">分享</string>
     <string name="err_model_unavailable_title">模型未开通</string>
     <string name="err_model_unavailable">这个账号没有开通模型「%1$s」：%2$s。去 设置 → 模型 换一个，或到服务商后台开通。</string>

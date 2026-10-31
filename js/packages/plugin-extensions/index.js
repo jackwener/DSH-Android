@@ -17,8 +17,9 @@
 import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { DEFAULT_INDEXES, bundlesOf, isThirdParty, registryPlanFromEnv, paths as pathsOf, preparePnpmProject, readManifest, readState, removeTree, writeState } from './boot.js'
-import { fromManagerResult, labelsOf, userError } from './errors.js'
+import { DEFAULT_INDEXES, bundlesOf, isThirdParty, migrateIndexes, registryPlanFromEnv, paths as pathsOf, preparePnpmProject, readManifest, readState, removeTree, writeState } from './boot.js'
+import { fromManagerResult, labelsOf, localizedString, localizedText, marketError, userError } from './errors.js'
+import { fetchFirst, fetchMirrored, fetchText, npmFileUrls, usePreferences } from './fetch-sources.js'
 import { skillScripts } from './skills.js'
 
 export const name = 'android-extensions'
@@ -81,8 +82,21 @@ export async function overridesOfPatch(text) {
   return [...new Set(doc.filter(e => e && e.insert === undefined && typeof e.id === 'string' && !inserted.has(e.id)).map(e => e.id))]
 }
 
+/** `{description}` from the first usable LocalizedText candidate, else `{}`. */
+const descriptionOf = (...candidates) => { const d = candidates.map(localizedText).find(t => t !== undefined); return d === undefined ? {} : { description: d } }
+
 /** First line of an error for one-line status. */
 const firstLine = e => String(e?.message ?? e ?? '').split('\n')[0].slice(0, 300)
+
+/**
+ * Index documents through fetch-sources (dsh-plugin-market calls this through js patch 20): a
+ * GitHub-hosted index is read from the first of its equivalent CDNs that answers. The market's own
+ * signal (fetchTimeoutMs, disposal) bounds the whole read.
+ */
+export async function fetchIndexResponse(url, init) {
+  return (await fetchMirrored(url, { init, headerTimeoutMs: 6000, staggerMs: 2000 })).response
+}
+
 
 export function apply(ctx) {
   const p = pathsOf()
@@ -105,13 +119,23 @@ export function apply(ctx) {
   const market = () => marketReady ??= (async () => {
     await pm()
     const mod = await import('@deepseek-ai/dsh-plugin-market')
-    marketFiber = ctx.plugin(mod.default ?? mod.PluginMarket, { indexes: marketIndexes() })
+    const PluginMarket = mod.default ?? mod.PluginMarket
+    PluginMarket.fetchResponse = fetchIndexResponse
+    // Up to five sources, started 2 s apart, 6 s each to answer: well inside 30 s.
+    marketFiber = ctx.plugin(PluginMarket, { indexes: marketIndexes(), fetchTimeoutMs: 30000 })
     await marketFiber
     return ctx.get('pluginMarket')
   })().catch(error => { marketReady = undefined; throw error })
   const dshVersion = () => { try { return JSON.parse(readFileSync(join(profile.installAnchor), 'utf8')).version } catch { return '' } }
   let state = readState(p)
   const save = () => writeState(state, p)
+  // The curated index moved with the repository (DeepseekHarness-Android → DSH-Android).
+  {
+    const migrated = migrateIndexes(state.marketIndexes)
+    if (migrated.changed) { state.marketIndexes = migrated.urls; try { save() } catch {} }
+  }
+  // The mirror that answered last (GitHub files, npm package files), kept across restarts.
+  usePreferences(state.sourcePreferences, prefs => { state.sourcePreferences = prefs; try { save() } catch {} })
   const cancels = new Map()
   let chain = Promise.resolve()
   /** One extension operation at a time (pnpm and the profile files are shared). */
@@ -260,8 +284,9 @@ export function apply(ctx) {
       try { pkg = JSON.parse(readFileSync(join(pkgDir, 'package.json'), 'utf8')) } catch {}
       plugins.push({
         name: nm,
-        title: meta.title ?? meta.displayName ?? pkg.displayName ?? nm,
-        ...(meta.description ?? b.description ?? pkg.description) ? { description: meta.description ?? b.description ?? pkg.description } : {},
+        // Manifest text may be a string or a locale map ({en, "zh-CN"}): normalized to LocalizedText here, once.
+        title: [meta.title, meta.displayName, pkg.displayName].map(localizedText).find(t => t !== undefined) ?? nm,
+        ...descriptionOf(meta.description, b.description, pkg.description),
         ...(b.version ?? pkg.version) ? { version: b.version ?? pkg.version } : {},
         source: { kind: from?.kind ?? (b.source && /^(file:|link:)/.test(b.source) ? 'file' : /^https?:/.test(b.source ?? '') ? 'tarball' : 'npm'), spec: from?.spec ?? b.source ?? nm, ...from?.input ? { input: from.input } : {}, ...from?.registry ? { registry: from.registry } : {}, ...from?.repo ? { repo: from.repo } : {} },
         ...pkg.license ? { license: typeof pkg.license === 'string' ? pkg.license : pkg.license.type } : {},
@@ -461,14 +486,14 @@ export function apply(ctx) {
         const registry = inspection.registries?.at(-1) ?? plan()[0]
         return { ...base, error: userError(code, { name: r.source.display, input: r.source.input, registry: new URL(registry).host, host: new URL(registry).host, reason: firstLine(inspection.reason) }, { detail: inspection.reason }) }
       }
-      const out = { ...base, name: inspection.name ?? r.source.display, version: inspection.version, description: inspection.description, bundle: inspection.bundle, registry: inspection.registry }
+      const out = { ...base, name: inspection.name ?? r.source.display, version: inspection.version, ...descriptionOf(inspection.description), ...localizedText(inspection.title) ? { title: localizedText(inspection.title) } : {}, bundle: inspection.bundle, registry: inspection.registry }
       if (r.source.spec.startsWith('file:') && /\.(tgz|tar\.gz|tar)$/.test(r.source.spec)) {
         try {
           const { readTar, packageRoot, subtree } = await import('./archive.js')
           const entries = readTar(readFileSync(r.source.spec.slice(5)))
           const pkgEntries = subtree(entries, packageRoot(entries) ?? '')
           const m = JSON.parse(pkgEntries.find(e => e.path === 'package.json').data.toString('utf8'))
-          Object.assign(out, { name: m.name, version: m.version, ...m.description ? { description: m.description } : {}, bundle: m.dsh?.bundle !== undefined, ...m.license ? { license: typeof m.license === 'string' ? m.license : m.license.type } : {} })
+          Object.assign(out, { name: m.name, version: m.version, ...descriptionOf(m.description), ...localizedText(m.displayName) ? { title: localizedText(m.displayName) } : {}, bundle: m.dsh?.bundle !== undefined, ...m.license ? { license: typeof m.license === 'string' ? m.license : m.license.type } : {} })
           const ids = []
           for (const rel of [m.dsh?.bundle?.patch].flat().filter(x => typeof x === 'string')) {
             const e = pkgEntries.find(x => x.path === rel.replace(/^\.\//, ''))
@@ -503,12 +528,8 @@ export function apply(ctx) {
             const patches = [v.dsh?.bundle?.patch].flat().filter(x => typeof x === 'string')
             const ids = []
             for (const rel of patches) {
-              for (const cdn of [`https://cdn.jsdelivr.net/npm/${inspection.name}@${v.version}/`, `https://unpkg.com/${inspection.name}@${v.version}/`, `https://registry.npmmirror.com/${inspection.name}/${v.version}/files/`]) {
-                try {
-                  const res = await fetch(cdn + rel.replace(/^\.\//, ''), { signal: AbortSignal.timeout(6000) })
-                  if (res.ok) { ids.push(...await overridesOfPatch(await res.text())); break }
-                } catch {}
-              }
+              const text = await fetchText(npmFileUrls(inspection.name, v.version, rel), { family: 'npm-file', headerTimeoutMs: 5000, staggerMs: 1500, init: { signal: AbortSignal.timeout(15000) } }).catch(() => undefined)
+              if (text !== undefined) ids.push(...await overridesOfPatch(text))
             }
             out.overrides = [...new Set(ids)].map(id => ({ rowId: id, label: rowLabel(id) }))
           }
@@ -624,15 +645,10 @@ export function apply(ctx) {
       for (const f of candidates) {
         try { return { markdown: readFileSync(join(dir, f), 'utf8'), origin: `file:${join(dir, f)}` } } catch {}
       }
-      let version = params.version
-      for (const cdn of ['https://cdn.jsdelivr.net/npm/', 'https://unpkg.com/', 'https://registry.npmmirror.com/']) {
-        try {
-          const url = cdn.includes('npmmirror') ? `${cdn}${nm}/${version ?? 'latest'}/files/README.md` : `${cdn}${nm}${version ? '@' + version : ''}/README.md`
-          const res = await fetch(url, { signal: AbortSignal.timeout(8000) })
-          if (res.ok) return { markdown: await res.text(), origin: url }
-        } catch {}
-      }
-      return {}
+      try {
+        const { response, url } = await fetchFirst(npmFileUrls(nm, params.version, 'README.md'), { family: 'npm-file', headerTimeoutMs: 6000, staggerMs: 1500, init: { signal: AbortSignal.timeout(20000) } })
+        return { markdown: await response.text(), origin: url }
+      } catch { return {} }
     },
     'android/ext/config/get': async params => {
       const id = need(params, 'entryId')
@@ -708,7 +724,7 @@ export function apply(ctx) {
     'android/ext/market/indexes': async () => ({ indexes: (await market()).listIndexes() }),
     // Index sources live in extensions-state.json (the market is mounted by this row, not a profile row).
     'android/ext/market/setIndexes': async params => {
-      const urls = Array.isArray(params.urls) ? [...new Set(params.urls.map(String))] : []
+      const urls = Array.isArray(params.urls) ? migrateIndexes([...new Set(params.urls.map(String))]).urls : []
       for (const u of urls) if (!/^https?:\/\/\S+$/.test(u)) return { error: userError('bad-input', { input: u }) }
       state.marketIndexes = urls
       save()
@@ -716,8 +732,17 @@ export function apply(ctx) {
       marketReady = undefined
       return { indexes: (await market()).listIndexes() }
     },
-    'android/ext/market/search': async params => (await market()).search(need(params, 'url'), { text: params.query ?? params.text ?? '', offset: params.offset ?? 0, limit: params.limit ?? 30, ...params.refresh ? { refresh: true } : {}, ...params.category ? { category: params.category } : {}, ...params.sort ? { sort: params.sort } : {} }),
-    'android/ext/market/entry': async params => ({ entry: await (await market()).entry(need(params, 'url'), need(params, 'name')) ?? null }),
+    // A failed read answers `{error: UserError}` (index-unreachable names the sources tried).
+    'android/ext/market/search': async params => {
+      const url = need(params, 'url')
+      try {
+        return await (await market()).search(url, { text: params.query ?? params.text ?? '', offset: params.offset ?? 0, limit: params.limit ?? 30, ...params.refresh ? { refresh: true } : {}, ...params.category ? { category: params.category } : {}, ...params.sort ? { sort: params.sort } : {} })
+      } catch (error) { return { error: marketError(error, url) } }
+    },
+    'android/ext/market/entry': async params => {
+      const url = need(params, 'url')
+      try { return { entry: await (await market()).entry(url, need(params, 'name')) ?? null } } catch (error) { return { error: marketError(error, url) } }
+    },
     // skills
     'android/ext/skills/list': async () => {
       const registry = ctx.get('skills')
@@ -728,7 +753,7 @@ export function apply(ctx) {
         const imported = path.startsWith(p.skills + '/')
         let scripts = []
         try { if (imported) scripts = skillScripts(join(p.skills, s.name)) } catch {}
-        return { name: s.name, description: s.description, scripts, source: imported ? 'imported' : path.includes('/node_modules/') ? 'plugin' : path.includes('/.agents/skills/') ? 'agents' : s.source ?? s.provider ?? 'builtin', enabled: true, removable: imported, ...path ? { path } : {} }
+        return { name: s.name, description: localizedString(s.description), scripts, source: imported ? 'imported' : path.includes('/node_modules/') ? 'plugin' : path.includes('/.agents/skills/') ? 'agents' : s.source ?? s.provider ?? 'builtin', enabled: true, removable: imported, ...path ? { path } : {} }
       })
       return { skills: [...items, ...(await skills()).disabled()] }
     },

@@ -17,6 +17,15 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import io.github.jackwener.dsh.core.diagnostics.DiagnosticsExport
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -35,8 +44,9 @@ import io.github.jackwener.dsh.core.designsystem.Radius
 import io.github.jackwener.dsh.core.designsystem.copyText
 
 /**
- * 复制诊断信息: the whole report is shown first; only 复制 / 分享 take it anywhere (share goes
- * through the system chooser). Nothing is sent automatically.
+ * 复制诊断信息: the whole report is shown first; only 复制 / 分享 / 导出到文件 take it anywhere (share
+ * goes through the system chooser; the export adds the redacted engine log tail, [DiagnosticsExport]).
+ * Nothing is sent automatically.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -44,6 +54,8 @@ fun DiagnosticsSheet(text: String, onDismiss: () -> Unit) {
     val c = Dsh.colors
     val context = LocalContext.current
     val sheet = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val scope = rememberCoroutineScope()
+    var exported by remember { mutableStateOf<String?>(null) }
     ModalBottomSheet(onDismiss, sheetState = sheet, containerColor = c.bgLayer2,
         shape = Radius.panel.copy(bottomStart = androidx.compose.foundation.shape.CornerSize(0.dp), bottomEnd = androidx.compose.foundation.shape.CornerSize(0.dp)),
         scrimColor = c.scrim, tonalElevation = 0.dp) {
@@ -55,7 +67,16 @@ fun DiagnosticsSheet(text: String, onDismiss: () -> Unit) {
                 Text(text, Modifier.verticalScroll(rememberScrollState()).horizontalScroll(rememberScrollState()).padding(12.dp),
                     style = DshType.mono11, color = c.labelSecondary)
             }
+            exported?.let { Text(it, style = DshType.xxs12, color = c.labelSecondary) }
             Row(Modifier.fillMaxWidth().padding(bottom = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End)) {
+                DButton(stringResource(R.string.diag_export), {
+                    scope.launch {
+                        exported = withContext(Dispatchers.IO) {
+                            runCatching { context.getString(R.string.diag_exported, DiagnosticsExport.export(context, text)) }
+                                .getOrElse { context.getString(R.string.diag_export_failed, it.message ?: it.javaClass.simpleName) }
+                        }
+                    }
+                }, variant = BtnVariant.Outline, size = BtnSize.Sm)
                 DButton(stringResource(R.string.share), {
                     val send = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, text)
                     runCatching { context.startActivity(Intent.createChooser(send, null).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }

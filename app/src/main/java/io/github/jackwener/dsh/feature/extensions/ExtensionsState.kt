@@ -101,7 +101,8 @@ class MarketState(private val client: ExtensionsClient, private val scope: Corou
     data class State(
         val indexes: List<MarketIndexSummary> = emptyList(),
         val results: Map<String, MarketSearchResult> = emptyMap(),
-        val errors: Map<String, String> = emptyMap(),
+        /** Per index URL ("" = the index list itself). */
+        val errors: Map<String, UserError> = emptyMap(),
         val loading: Boolean = false,
         val query: String = "",
     ) {
@@ -121,7 +122,7 @@ class MarketState(private val client: ExtensionsClient, private val scope: Corou
         job = scope.launch {
             _state.update { it.copy(loading = true) }
             val indexes = try { client.marketIndexes() } catch (e: ExtException) {
-                _state.update { it.copy(loading = false, errors = mapOf("" to e.error.message.ifEmpty { e.error.code })) }
+                _state.update { it.copy(loading = false, errors = mapOf("" to e.error)) }
                 return@launch
             }
             _state.update { it.copy(indexes = indexes) }
@@ -139,17 +140,17 @@ class MarketState(private val client: ExtensionsClient, private val scope: Corou
     private suspend fun search(text: String, refresh: Boolean) {
         _state.update { it.copy(loading = true) }
         val results = LinkedHashMap<String, MarketSearchResult>()
-        val errors = LinkedHashMap<String, String>()
+        val errors = LinkedHashMap<String, UserError>()
         for (ix in _state.value.indexes) {
             try { results[ix.url] = client.marketSearch(ix.url, text, refresh = refresh) }
-            catch (e: ExtException) { errors[ix.url] = e.error.message.ifEmpty { e.error.code } }
+            catch (e: ExtException) { errors[ix.url] = e.error }
         }
         _state.update { it.copy(results = results, errors = errors, loading = false) }
     }
 
     /** 管理索引: add / remove a third-party index (the curated one can be removed too, and re-added). */
     suspend fun setIndexes(urls: List<String>): UserError? = try {
-        client.setMarketIndexes(urls.map { it.trim() }.filter { it.isNotEmpty() }.distinct())
+        client.setMarketIndexes(MarketIndex.migrateIndexes(urls.map { it.trim() }.filter { it.isNotEmpty() }))
         load(refresh = false); null
     } catch (e: ExtException) { e.error }
 

@@ -18,8 +18,20 @@ import java.net.URI
  * violation with its JSON path, like dsh's validator.
  */
 object MarketIndex {
-    /** DSH-Android's curated index (§9.5), served from this repository through jsDelivr. */
-    const val CURATED_URL = "https://cdn.jsdelivr.net/gh/jackwener/DeepseekHarness-Android@main/plugins/index.json"
+    /**
+     * DSH-Android's curated index (§9.5), served from this repository through jsDelivr. The engine
+     * fetches it (and every GitHub-hosted index) from the first of its equivalent CDNs that answers
+     * (js/packages/plugin-extensions/fetch-sources.js); the app never fetches an index itself.
+     */
+    const val CURATED_URL = "https://cdn.jsdelivr.net/gh/jackwener/DSH-Android@main/plugins/index.json"
+
+    /** Former addresses of [CURATED_URL] (the repository was jackwener/DeepseekHarness-Android); the engine migrates stored lists. */
+    val LEGACY_CURATED_URLS = listOf("https://cdn.jsdelivr.net/gh/jackwener/DeepseekHarness-Android@main/plugins/index.json")
+
+    fun isCurated(url: String): Boolean = url == CURATED_URL || url in LEGACY_CURATED_URLS
+
+    /** [urls] with former curated addresses replaced by [CURATED_URL], order kept, duplicates dropped (same rule as the engine's migrateIndexes). */
+    fun migrateIndexes(urls: List<String>): List<String> = urls.map { if (it in LEGACY_CURATED_URLS) CURATED_URL else it }.distinct()
 
     data class Document(val title: LocalizedText, val description: LocalizedText?, val metadata: MarketIndexMetadata, val plugins: List<MarketEntry>)
 

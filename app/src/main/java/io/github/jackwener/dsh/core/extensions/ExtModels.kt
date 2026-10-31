@@ -21,19 +21,36 @@ import kotlinx.serialization.json.contentOrNull
  * default, so an older or newer engine that omits or adds members still decodes.
  */
 
-/** dsh's LocalizedText: a plain string or `{en: …, zh: …}`. */
+/**
+ * Display text a plugin, its manifest, a config schema or a market index provides: a plain string or
+ * a locale map `{en: …, zh: …, "zh-CN": …}` (dsh's LocalizedText; third-party packages use any tag
+ * case). Every such field of the `android/ext/…` results and the index decodes through this one
+ * type. Keys are kept lower-case; blank and non-string values are dropped.
+ */
 @Serializable(with = LocalizedTextSerializer::class)
 data class LocalizedText(val values: Map<String, String>) {
-    /** The text for [language] (`zh-CN` → `zh-cn`, then `zh`), else English, else any. */
+    /**
+     * The text for [language] (a BCP 47 tag, any case, `_` or `-`): the exact tag, then the tag
+     * without its last subtags (`zh-hans-cn` → `zh-hans` → `zh`), then any tag of the same language
+     * (`zh` → `zh-cn`), then English, then the first; "" when empty.
+     */
     fun get(language: String): String {
         if (values.isEmpty()) return ""
-        val lang = language.lowercase()
-        values[lang]?.let { return it }
-        val base = lang.substringBefore('-')
-        values[base]?.let { return it }
-        values.entries.firstOrNull { it.key.substringBefore('-') == base }?.let { return it.value }
-        return values["en"] ?: values.values.first()
+        var lang = language.lowercase().replace('_', '-')
+        while (lang.isNotEmpty()) {
+            values[lang]?.let { return it }
+            lang = lang.substringBeforeLast('-', "")
+        }
+        val base = language.lowercase().replace('_', '-').substringBefore('-')
+        // A Chinese UI prefers the mainland variant over another script's (zh → zh-cn / zh-hans before zh-tw).
+        val sameLanguage = values.entries.filter { it.key.substringBefore('-') == base }
+            .sortedBy { if (it.key == "zh-cn" || it.key == "zh-hans" || it.key == "zh-sg") 0 else 1 }
+        sameLanguage.firstOrNull()?.let { return it.value }
+        return values["en"] ?: values.entries.firstOrNull { it.key.startsWith("en-") }?.value ?: values.values.first()
     }
+
+    /** The text for the device locale. */
+    fun get(): String = get(java.util.Locale.getDefault().toLanguageTag())
 
     /** Every language's text, for search. */
     val all: Collection<String> get() = values.values
@@ -44,12 +61,17 @@ data class LocalizedText(val values: Map<String, String>) {
 }
 
 object LocalizedTextSerializer : KSerializer<LocalizedText> {
+    /** `{tag: text}` → lower-case tags (`zh_CN` → `zh-cn`), string values only, blank ones dropped. */
+    fun fromMap(o: JsonObject): LocalizedText = LocalizedText(o.entries.mapNotNull { (k, v) ->
+        (v as? JsonPrimitive)?.takeIf { it.isString }?.content?.takeIf { it.isNotBlank() }?.let { k.lowercase().replace('_', '-') to it }
+    }.toMap())
+
     override val descriptor: SerialDescriptor = JsonElement.serializer().descriptor
     override fun deserialize(decoder: Decoder): LocalizedText {
         val el = (decoder as JsonDecoder).decodeJsonElement()
         return when (el) {
-            is JsonPrimitive -> LocalizedText(mapOf("en" to (el.contentOrNull ?: "")))
-            is JsonObject -> LocalizedText(el.mapNotNull { (k, v) -> (v as? JsonPrimitive)?.contentOrNull?.let { k.lowercase() to it } }.toMap())
+            is JsonPrimitive -> LocalizedText(el.takeIf { it.isString }?.content?.takeIf { it.isNotBlank() }?.let { mapOf("en" to it) } ?: emptyMap())
+            is JsonObject -> fromMap(el)
             else -> LocalizedText(emptyMap())
         }
     }
@@ -60,6 +82,13 @@ object LocalizedTextSerializer : KSerializer<LocalizedText> {
     }
 }
 
+/** A text field the app shows as one string: accepts the [LocalizedText] forms and keeps the device locale's text. */
+object LocalizedStringSerializer : KSerializer<String> {
+    override val descriptor: SerialDescriptor = JsonElement.serializer().descriptor
+    override fun deserialize(decoder: Decoder): String = LocalizedTextSerializer.deserialize(decoder).get()
+    override fun serialize(encoder: Encoder, value: String) = (encoder as JsonEncoder).encodeJsonElement(JsonPrimitive(value))
+}
+
 /** A failure explained in plain words (§15): [code] picks the copy, [message] is already localized by the engine. */
 @Serializable
 data class UserError(
@@ -67,11 +96,13 @@ data class UserError(
     val message: String = "",
     val detail: String? = null,
     val logPath: String? = null,
-    /** 'retry-mirror' | 'force-install' | 'uninstall' | 'disable' | 'open-log'. */
+    /** 'retry-mirror' | 'retry' | 'force-install' | 'uninstall' | 'disable' | 'open-log'. */
     val actions: List<String> = emptyList(),
 ) {
     companion object {
         const val RETRY_MIRROR = "retry-mirror"
+        /** Read again (an index the engine could not fetch from any of its sources). */
+        const val RETRY = "retry"
         const val FORCE_INSTALL = "force-install"
         const val UNINSTALL = "uninstall"
         const val DISABLE = "disable"
@@ -128,8 +159,9 @@ object ExtStatus {
 @Serializable
 data class ExtPlugin(
     val name: String,
-    val title: String = "",
-    val description: String? = null,
+    /** The manifest's display name: a string or a locale map ([LocalizedText]). */
+    val title: LocalizedText? = null,
+    val description: LocalizedText? = null,
     val iconDataUrl: String? = null,
     val version: String? = null,
     val source: ExtSource? = null,
@@ -151,12 +183,47 @@ data class ExtPlugin(
     val update: ExtUpdate? = null,
     val askBeforeCall: Boolean = false,
     val suspended: ExtSuspension? = null,
+    /** Set by the app when the engine's entry for this plugin could not be read ([TolerantList]). */
+    val malformed: Boolean = false,
 ) {
-    val displayTitle: String get() = title.ifBlank { name }
+    val displayTitle: String get() = title?.get()?.takeIf { it.isNotBlank() } ?: name
+    val descriptionText: String? get() = description?.get()?.takeIf { it.isNotBlank() }
+
+    companion object {
+        /** What the list shows for an entry that did not decode: its name (when readable) and a note. */
+        fun malformed(el: JsonElement, error: Throwable): ExtPlugin? {
+            val name = ((el as? JsonObject)?.get("name") as? JsonPrimitive)?.takeIf { it.isString }?.content?.takeIf { it.isNotBlank() } ?: return null
+            return ExtPlugin(name = name, status = ExtStatus.FAILED, malformed = true,
+                statusDetail = UserError(ExtCodes.BAD_ENTRY, detail = error.message?.lineSequence()?.firstOrNull()?.take(300)))
+        }
+    }
 }
+
+/**
+ * A list read element by element: an element that does not decode becomes [onError]'s replacement
+ * (or is skipped when it returns null), so one third-party entry cannot break the whole result.
+ */
+class TolerantList<T>(private val element: KSerializer<T>, private val onError: (JsonElement, Throwable) -> T?) : KSerializer<List<T>> {
+    override val descriptor: SerialDescriptor = JsonElement.serializer().descriptor
+    override fun deserialize(decoder: Decoder): List<T> {
+        val json = decoder as JsonDecoder
+        val arr = json.decodeJsonElement() as? kotlinx.serialization.json.JsonArray ?: return emptyList()
+        return arr.mapNotNull { el ->
+            try { json.json.decodeFromJsonElement(element, el) } catch (e: kotlinx.serialization.SerializationException) { onError(el, e) } catch (e: IllegalArgumentException) { onError(el, e) }
+        }
+    }
+    override fun serialize(encoder: Encoder, value: List<T>) {
+        val json = encoder as JsonEncoder
+        json.encodeJsonElement(kotlinx.serialization.json.JsonArray(value.map { json.json.encodeToJsonElement(element, it) }))
+    }
+}
+
+object ExtPluginListSerializer : KSerializer<List<ExtPlugin>> by TolerantList(ExtPlugin.serializer(), ExtPlugin::malformed)
+object MarketEntryListSerializer : KSerializer<List<MarketEntry>> by TolerantList(MarketEntry.serializer(), { _, _ -> null })
 
 @Serializable
 data class ExtList(
+    @Serializable(with = ExtPluginListSerializer::class)
     val plugins: List<ExtPlugin> = emptyList(),
     val safeMode: Boolean = false,
     val restartPending: Boolean = false,
@@ -191,10 +258,10 @@ data class InspectResult(
     val spec: String = "",
     val name: String = "",
     val version: String? = null,
-    val title: String? = null,
+    val title: LocalizedText? = null,
     /** What the user typed, normalized for display (`owner/repo`, the file name …). */
     val display: String? = null,
-    val description: String? = null,
+    val description: LocalizedText? = null,
     val bundle: Boolean = true,
     val compatible: Boolean = true,
     /** Unmet requirements, e.g. `{"engines.dsh": ">=0.2.2"}` (shape kept loose). */
@@ -214,6 +281,9 @@ data class InspectResult(
     /** A reason the package cannot be installed at all (not-bundle, needs-git …), found before the card. */
     val error: UserError? = null,
 ) {
+    val titleText: String? get() = title?.get()?.takeIf { it.isNotBlank() }
+    val descriptionText: String? get() = description?.get()?.takeIf { it.isNotBlank() }
+
     /** The `engines.dsh` range the version asks for, when the engine reported one. */
     val requiredRange: String? get() = when (val i = incompatible) {
         null, is JsonNull -> null
@@ -365,6 +435,8 @@ data class MarketSearchResult(
     val description: LocalizedText? = null,
     val metadata: MarketIndexMetadata = MarketIndexMetadata(),
     val fetchedAt: Long = 0,
+    /** A third-party index entry that does not decode is left out (the engine validated the index already). */
+    @Serializable(with = MarketEntryListSerializer::class)
     val entries: List<MarketEntry> = emptyList(),
     val total: Int = 0,
     val nextOffset: Int? = null,
@@ -386,7 +458,7 @@ object SkillOrigin {
 @Serializable
 data class SkillInfo(
     val name: String,
-    val description: String = "",
+    @Serializable(with = LocalizedStringSerializer::class) val description: String = "",
     /** The engine calls it `source`. */
     @kotlinx.serialization.json.JsonNames("source") val origin: String = SkillOrigin.BUILTIN,
     /** Imported here: may be switched off or deleted. */
@@ -406,7 +478,7 @@ data class SkillInfo(
 @Serializable
 data class SkillCandidate(
     val name: String,
-    val description: String = "",
+    @Serializable(with = LocalizedStringSerializer::class) val description: String = "",
     val path: String = "",
     val valid: Boolean = true,
     /** Why it is not valid: `frontmatter`, `name`, or the missing field names. */
@@ -430,7 +502,7 @@ data class SkillImportResult(
 
 // ---- MCP ------------------------------------------------------------------------------------------
 
-@Serializable data class McpTool(val name: String, val description: String? = null)
+@Serializable data class McpTool(val name: String, @Serializable(with = LocalizedStringSerializer::class) val description: String? = null)
 @Serializable data class McpTestResult(val ok: Boolean = false, val tools: List<McpTool> = emptyList(), val error: UserError? = null)
 
 /** One `dsh-mcp-client` row as running now. */

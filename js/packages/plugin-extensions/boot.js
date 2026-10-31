@@ -87,7 +87,20 @@ export function writeBundles(manifest, bundles, p = paths()) {
 export const isThirdParty = name => !BUILTIN_BUNDLES.includes(name)
 
 /** The curated DSH-Android plugin index (format 1, dsh's plugin market). */
-export const DEFAULT_INDEXES = Object.freeze(['https://cdn.jsdelivr.net/gh/jackwener/DeepseekHarness-Android@main/plugins/index.json'])
+export const CURATED_INDEX = 'https://cdn.jsdelivr.net/gh/jackwener/DSH-Android@main/plugins/index.json'
+export const DEFAULT_INDEXES = Object.freeze([CURATED_INDEX])
+/** Former addresses of the curated index (the repository was jackwener/DeepseekHarness-Android). */
+export const LEGACY_CURATED_INDEXES = Object.freeze(['https://cdn.jsdelivr.net/gh/jackwener/DeepseekHarness-Android@main/plugins/index.json'])
+
+/**
+ * A stored index list with former curated addresses replaced by the current one (order kept,
+ * duplicates dropped). `changed` tells the caller to persist the result.
+ */
+export function migrateIndexes(urls) {
+  if (!Array.isArray(urls)) return { urls, changed: false }
+  const out = [...new Set(urls.map(u => LEGACY_CURATED_INDEXES.includes(u) ? CURATED_INDEX : u))]
+  return { urls: out, changed: out.length !== urls.length || out.some((u, i) => u !== urls[i]) }
+}
 export const NPMJS = 'https://registry.npmjs.org/'
 export const NPMMIRROR = 'https://registry.npmmirror.com/'
 

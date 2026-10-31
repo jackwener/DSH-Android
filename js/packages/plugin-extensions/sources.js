@@ -17,6 +17,7 @@ import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { basename, join, relative } from 'node:path'
 import { ArchiveError, commonTop, packageRoot, readArchive, subtree, writeTgz } from './archive.js'
+import { SourcesError, fetchFirst, githubFileUrls } from './fetch-sources.js'
 
 export class SourceError extends Error {
   constructor(code, params = {}) { super(`${code}: ${JSON.stringify(params)}`); this.code = code; this.params = params }
@@ -213,11 +214,18 @@ async function resolveGithub(gh, options) {
     }
   }
   const at = ref ?? 'HEAD'
-  const dirPart = gh.dir ? `/${gh.dir}` : ''
-  // The package.json the repository holds (raw, then jsDelivr).
+  // The package.json the repository holds (raw.githubusercontent.com, then the jsDelivr CDNs; the
+  // source that answered last time first).
   let manifest
-  for (const url of [`${ep.raw}/${gh.owner}/${gh.repo}/${at}${dirPart}/package.json`, `${ep.jsdelivr}/gh/${gh.owner}/${gh.repo}@${at}${dirPart}/package.json`]) {
-    try { manifest = await fetchJson(url, { fetchImpl, timeoutMs: 10000 }); break } catch (error) { reasons.push(String(error?.message ?? error)) }
+  {
+    const urls = githubFileUrls({ owner: gh.owner, repo: gh.repo, ref: at, path: `${gh.dir ? gh.dir + '/' : ''}package.json` }, { ...process.env, ...options.env })
+    try {
+      const { response } = await fetchFirst([urls.at(-1), ...urls.slice(0, -1)], { family: 'github', fetchImpl, init: { signal: AbortSignal.timeout(20000), redirect: 'follow', headers: { 'user-agent': 'DSH-Android', accept: 'application/json' } } })
+      manifest = JSON.parse(await response.text())
+    } catch (error) {
+      if (error instanceof SourcesError) reasons.push(...error.attempts.map(a => a.detail ?? a.reason))
+      else reasons.push(String(error?.message ?? error))
+    }
   }
   // 1. the registry's copy of the same repository (built, integrity-checked, updatable)
   const candidates = [...new Set([manifest?.name, gh.dir ? basename(gh.dir).toLowerCase() : undefined, gh.repo.toLowerCase()].filter(n => typeof n === 'string' && NPM_NAME.test(n)))]

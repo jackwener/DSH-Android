@@ -9,6 +9,7 @@
     <string name="ext_tab_mcp">MCP servers</string>
     <string name="ext_updates_badge">%d updates</string>
     <string name="ext_engine_starting">Starting the engine…</string>
+    <string name="ext_list_failed">Couldn\'t read the plugin list</string>
     <string name="ext_engine_failed">The engine didn\'t start</string>
     <string name="ext_engine_retry">Try again</string>
     <string name="ext_safe_mode_start">Start in safe mode</string>
@@ -33,6 +34,7 @@
     <string name="ext_update_available_tag">Update</string>
     <string name="ext_market_empty">No matching plugins.</string>
     <string name="ext_market_error">Couldn\'t read the index: %s</string>
+    <string name="ext_market_error_list">Couldn\'t read the index list</string>
     <string name="ext_market_incompatible">Needs a newer app</string>
     <string name="ext_status_active">Running</string>
     <string name="ext_count_tools">%d tools</string>
@@ -140,6 +142,11 @@
     <string name="err_needs_git">This address needs git (an ssh URL or a private repo), and phones don\'t have git. Use the GitHub web link or the npm package name instead.</string>
     <string name="err_needs_build">This GitHub repo is source code that has to be built first. Ask the author to publish it to npm or attach a .tgz to a release.</string>
     <string name="err_github_unreachable">Couldn\'t reach GitHub. Use the npm package name, or download the .tgz and install it from a file.</string>
+    <string name="err_bad_result">The engine is running, but the app couldn\'t read its answer (most likely a plugin with unusual metadata). Retry, or export diagnostics from About → Self-check to report it.</string>
+    <string name="err_bad_entry">The app couldn\'t read this plugin\'s metadata and can only show its name. You can uninstall it, or send us the diagnostics.</string>
+    <string name="err_bad_entry_short">Unreadable plugin metadata</string>
+    <string name="err_index_unreachable">None of the plugin index\'s sources could be reached. Check the network or proxy, then retry.</string>
+    <string name="err_index_invalid">The plugin index is malformed. Retry later or contact its maintainer.</string>
     <string name="err_bad_archive">There\'s no package.json in the file, so it doesn\'t look like a plugin package.</string>
     <string name="err_already_installed">It\'s already installed. Use Update to change the version.</string>
     <string name="err_installer_broken">Install components are missing (node launcher or pnpm). Reinstall the app.</string>

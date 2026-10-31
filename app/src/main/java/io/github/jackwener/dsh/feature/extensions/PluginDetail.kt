@@ -82,7 +82,7 @@ fun PluginDetailPage(vm: ExtensionsViewModel, name: String, onBack: () -> Unit) 
     SettingsCard {
         SettingsRow(p.displayTitle, statusLine(p), divider = false, leading = { PluginIcon(p.iconDataUrl, statusDot(p)) },
             trailing = { if (name in busy) Spinner(14.dp) else if (p.status != ExtStatus.SUSPENDED) DSwitch(p.enabled, { vm.setEnabled(name, it) }) })
-        p.description?.takeIf { it.isNotBlank() }?.let { Text(it, Modifier.padding(start = 16.dp, end = 16.dp, bottom = 12.dp), style = DshType.xs13, color = c.labelSecondary) }
+        p.descriptionText?.let { Text(it, Modifier.padding(start = 16.dp, end = 16.dp, bottom = 12.dp), style = DshType.xs13, color = c.labelSecondary) }
         p.suspended?.let { s ->
             SettingsRow(if (s.reason == "crash") stringResource(R.string.ext_suspended_crash, Fmt.relative(context, s.at)) else stringResource(R.string.ext_suspended_safe),
                 s.message, leading = { StateDot(DotKind.Warn) },

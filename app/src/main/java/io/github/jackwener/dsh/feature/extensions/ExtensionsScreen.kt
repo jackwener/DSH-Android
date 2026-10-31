@@ -163,7 +163,8 @@ private fun EngineGate(vm: ExtensionsViewModel) {
             Spinner(14.dp); Spacer(Modifier.width(8.dp))
             Text(stringResource(R.string.ext_engine_starting), style = DshType.xs13, color = c.labelTertiary)
         }
-        engine is EngineState.Failed || (error != null && error?.code != ExtCodes.UNSUPPORTED_ENGINE) -> SettingsCard(Modifier.padding(top = 12.dp)) {
+        // Only a dead / unreachable engine is 引擎没能启动; an answer the app could not read is not (the engine runs).
+        engine is EngineState.Failed || error?.code == ExtCodes.ENGINE_UNAVAILABLE -> SettingsCard(Modifier.padding(top = 12.dp)) {
             SettingsRow(stringResource(R.string.ext_engine_failed),
                 (engine as? EngineState.Failed)?.message?.lineSequence()?.firstOrNull()?.take(200) ?: error?.let { ExtText.error(context, it) },
                 divider = false, leading = { StateDot(DotKind.Error) })
@@ -175,6 +176,10 @@ private fun EngineGate(vm: ExtensionsViewModel) {
             }
         }
         error?.code == ExtCodes.UNSUPPORTED_ENGINE -> Notice(stringResource(R.string.err_unsupported_engine), Tone.Warn)
+        error != null -> SettingsCard(Modifier.padding(top = 12.dp)) {
+            SettingsRow(stringResource(R.string.ext_list_failed), error?.let { ExtText.error(context, it) }, divider = false, leading = { StateDot(DotKind.Warn) },
+                trailing = { DButton(stringResource(R.string.retry), { vm.retry() }, variant = BtnVariant.Outline, size = BtnSize.Sm, enabled = !loading) })
+        }
     }
 }
 
@@ -240,7 +245,7 @@ private fun PluginsTab(vm: ExtensionsViewModel, onPage: (String?) -> Unit) {
             leading = { DIcon(R.drawable.dsw_download_outline, size = 16.dp, tint = c.business) })
     }
 
-    val plugins = list?.plugins.orEmpty().filter { query.isBlank() || direct != null || MarketIndex.matches(query, listOf(it.name, it.title, it.description)) }
+    val plugins = list?.plugins.orEmpty().filter { query.isBlank() || direct != null || MarketIndex.matches(query, listOf(it.name) + it.title?.all.orEmpty() + it.description?.all.orEmpty()) }
     val updates = list?.updates.orEmpty()
     if (updates.isNotEmpty() && query.isBlank()) SettingsCard(Modifier.padding(top = 12.dp)) {
         SettingsRow(stringResource(R.string.ext_updates_title, updates.size), updates.joinToString(", ") { "${it.displayTitle} ${it.update?.version}" },
@@ -266,7 +271,12 @@ private fun PluginsTab(vm: ExtensionsViewModel, onPage: (String?) -> Unit) {
     }
     val entries = market.entries
     SettingsCard {
-        market.errors.forEach { (url, msg) -> SettingsRow(stringResource(R.string.ext_market_error, msg), url.ifEmpty { null }, divider = false, leading = { StateDot(DotKind.Warn) }) }
+        // The engine's sentence names the cause and every source it tried (index-unreachable); 重试 reads again.
+        market.errors.forEach { (url, err) ->
+            val name = if (MarketIndex.isCurated(url)) stringResource(R.string.ext_indexes_curated) else market.indexes.firstOrNull { it.url == url }?.title?.get(lang) ?: url
+            SettingsRow(if (url.isEmpty()) stringResource(R.string.ext_market_error_list) else stringResource(R.string.ext_market_error, name), ExtText.error(context, err), divider = false, leading = { StateDot(DotKind.Warn) },
+                trailing = { DButton(stringResource(R.string.retry), { vm.market.load(refresh = true) }, variant = BtnVariant.Outline, size = BtnSize.Sm, enabled = !market.loading) })
+        }
         if (entries.isEmpty() && !market.loading && market.errors.isEmpty()) EmptyNote(stringResource(R.string.ext_market_empty))
         entries.forEachIndexed { i, (url, e) ->
             MarketRow(e, lang, installed = e.name in installedNames || e.installed, divider = i > 0 || market.errors.isNotEmpty(),
@@ -311,6 +321,7 @@ internal fun statusDot(p: ExtPlugin) = when (p.status) {
 @Composable
 internal fun statusLine(p: ExtPlugin): String {
     val parts = mutableListOf<String>()
+    if (p.malformed) return stringResource(R.string.err_bad_entry_short)
     sourceLabel(p.source?.kind)?.let { parts += it }
     parts += when (p.status) {
         ExtStatus.ACTIVE -> listOfNotNull(stringResource(R.string.ext_status_active),
@@ -428,7 +439,7 @@ private fun IndexesPage(vm: ExtensionsViewModel) {
     Text(stringResource(R.string.ext_indexes_desc), Modifier.padding(start = 4.dp, top = 8.dp, bottom = 8.dp), style = DshType.xs13, color = c.labelTertiary)
     SettingsCard {
         market.indexes.forEachIndexed { i, ix ->
-            val name = if (ix.url == MarketIndex.CURATED_URL) stringResource(R.string.ext_indexes_curated) else ix.title?.get(lang) ?: ix.url
+            val name = if (MarketIndex.isCurated(ix.url)) stringResource(R.string.ext_indexes_curated) else ix.title?.get(lang) ?: ix.url
             SettingsRow(name, listOfNotNull(ix.url, ix.error).joinToString("\n"), divider = i > 0,
                 leading = { StateDot(if (ix.error != null) DotKind.Warn else DotKind.Done) },
                 trailing = { DButton(stringResource(R.string.ext_indexes_remove), { save(urls - ix.url) }, variant = BtnVariant.Ghost, size = BtnSize.Sm) })
@@ -441,7 +452,7 @@ private fun IndexesPage(vm: ExtensionsViewModel) {
             }
         }
     }
-    if (MarketIndex.CURATED_URL !in urls && !market.loading) Box(Modifier.padding(top = 12.dp)) {
+    if (urls.none(MarketIndex::isCurated) && !market.loading) Box(Modifier.padding(top = 12.dp)) {
         DButton(stringResource(R.string.ext_indexes_restore), { save(listOf(MarketIndex.CURATED_URL) + urls) }, variant = BtnVariant.Outline, size = BtnSize.Sm)
     }
     error?.let { Text(ExtText.error(context, it), Modifier.padding(start = 4.dp, top = 8.dp), style = DshType.xxs12, color = c.error) }

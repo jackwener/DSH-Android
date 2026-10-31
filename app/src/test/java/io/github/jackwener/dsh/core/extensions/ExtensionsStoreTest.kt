@@ -169,7 +169,7 @@ class ExtensionsStoreTest {
     @Test fun `activation report covers changed plugins, failures, and switching off`() {
         val before = ExtList(listOf(ExtPlugin("a", status = "restart-pending", enabled = true), ExtPlugin("b", status = "active", enabled = true), ExtPlugin("c", status = "active", enabled = true)))
         val after = ExtList(listOf(
-            ExtPlugin("a", title = "A", status = "active", enabled = true, tools = listOf("t1")),
+            ExtPlugin("a", title = LocalizedText.of("A"), status = "active", enabled = true, tools = listOf("t1")),
             ExtPlugin("b", status = "active", enabled = true),
             ExtPlugin("c", status = "disabled", enabled = false),
             ExtPlugin("d", status = "failed", enabled = true, statusDetail = UserError("activation-failed", "d 已安装，但启动时出错：boom")),

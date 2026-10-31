@@ -50,8 +50,19 @@ object EngineRuntimeEnv {
     /** [apply] exported a proxy; read by [nodeArgv] in the same (engine) process. */
     @Volatile private var proxyApplied = false
 
-    /** Options appended to the app's NODE_OPTIONS. */
-    private val RUNTIME_NODE_OPTIONS = emptyList<String>()
+    /**
+     * Options appended to the app's NODE_OPTIONS (engine argv and every child node, e.g. pnpm).
+     *
+     * Happy-eyeballs attempt timeout: with several addresses for a host, Node's `net.connect`
+     * gives each but the last 250 ms (the default) and then *closes* it and moves on; it does not
+     * keep earlier attempts racing like curl does. On a high-latency or lossy path (mainland China →
+     * Fastly: cdn.jsdelivr.net has 4 IPv4 addresses) a 250 ms SYN/SYN-ACK round trip is common, so
+     * the first three addresses are dropped just before they would connect and the whole 10 s
+     * connect timeout rides on the last one ("Connect Timeout Error (attempted addresses: …4…,
+     * timeout 10000ms)") while curl connects in a second. 1.5 s covers a slow round trip and one
+     * lost SYN and still leaves the last address most of undici's 10 s.
+     */
+    internal val RUNTIME_NODE_OPTIONS = listOf("--network-family-autoselection-attempt-timeout=1500")
 
     fun apply(context: Context, env: Bundle) {
         val vars = LinkedHashMap<String, String>()
