@@ -26,7 +26,11 @@
 //      No API key needed.
 //   8. phase G: session modes (plugin-mode): a 只聊天 conversation sent through android/session/mode
 //      offers only web tools (no bash, files, device tools, skill) and cannot run bash even when asked;
-//      a default conversation in the same engine keeps every tool; the selection is recorded in the log.
+//      a default conversation in the same engine offers the core tools plus the on-demand catalog; the selection is recorded in the log.
+//   9. phase H: deferred tools (issue #36) through a capture proxy in front of api.deepseek.com: the model
+//      loads a deferred device tool with load_tools and calls it; on the wire the earlier tools keep their
+//      order, the new one follows as a DeepSeek tool_addition, the system prompt is unchanged and the prefix
+//      cache is reused; the tool stays loaded in later turns and across an engine restart + session/resume.
 //
 // Usage: node js/test/host-e2e.mjs [engine.zip] [native-dir]
 // The API key is read from the file named by $DSH_E2E_KEY_FILE (default ~/.config/dsh/deepseek_api_key; never printed).
@@ -47,8 +51,8 @@ const root = join(AGENT, 'toolchains/tmp', `host-e2e-${Date.now()}`)
 const engineDir = process.env.E2E_ENGINE_DIR ? resolve(process.env.E2E_ENGINE_DIR) : join(root, 'engine')
 const logFile = join(root, 'e2e.log')
 const MODEL = process.env.E2E_MODEL ?? 'deepseek-flash'
-// E2E_PHASES=A,B,C,D,E,F,G selects phases (default all); E2E_ENGINE_DIR reuses an extracted tree.
-const PHASES = new Set((process.env.E2E_PHASES ?? 'A,B,C,D,E,F,G,X').split(','))
+// E2E_PHASES=A,B,C,D,E,F,G,H selects phases (default all); E2E_ENGINE_DIR reuses an extracted tree.
+const PHASES = new Set((process.env.E2E_PHASES ?? 'A,B,C,D,E,F,G,H,X').split(','))
 
 mkdirSync(root, { recursive: true })
 const t0 = Date.now()
@@ -684,6 +688,14 @@ if (PHASES.has('F')) {
       }
       res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' })
       const chunk = o => res.write(`data: ${JSON.stringify({ id: 'c1', object: 'chat.completion.chunk', created: 1, model: 'fake-chat', ...o })}\n\n`)
+      // Deferred tools on a route without mid-conversation tool changes: the first answer loads a tool.
+      const msgs = JSON.stringify(json?.messages ?? [])
+      if (msgs.includes('LOADCHECK') && !(json?.messages ?? []).some(m => m.role === 'tool')) {
+        chunk({ choices: [{ index: 0, delta: { role: 'assistant', tool_calls: [{ index: 0, id: 'call_load_1', type: 'function', function: { name: 'load_tools', arguments: '{"names":["working_directory"]}' } }] }, finish_reason: null }] })
+        chunk({ choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }] })
+        res.end('data: [DONE]\n\n')
+        return
+      }
       chunk({ choices: [{ index: 0, delta: { role: 'assistant', content: reply.slice(0, 6) }, finish_reason: null }] })
       chunk({ choices: [{ index: 0, delta: { content: reply.slice(6) }, finish_reason: null }] })
       chunk({ choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] })
@@ -740,6 +752,16 @@ if (PHASES.has('F')) {
     check('F: the session id is stable across the turns of one session', sameSession.length >= 2 && new Set(sameSession).size === 1, JSON.stringify(sameSession))
     check('F: another session gets another id', otherSession.length >= 1 && otherSession.every(id => !sameSession.includes(id)), JSON.stringify(otherSession))
     check('F: static and env-resolved headers sent; User-Agent starts with DSH-Android/', ok.every(r => r.headers['x-team'] === 'e2e' && r.headers['x-gateway-token'] === 'gw-secret-e2e' && /^DSH-Android\/e2e deepseek-harness\//.test(r.headers['user-agent'] ?? '')), ok[0]?.headers['user-agent'])
+    // Deferred tools (issue #36) on a route without tool_addition: the load resends the tool list with the tool added.
+    const lc = `f4-${Date.now()}`
+    await sdk.request('session/prompt', { sessionId: lc, contentBlocks: [{ type: 'text', text: 'LOADCHECK' }] })
+    await withTimeout(sdk.request('session/wait', { sessionId: lc }), 60_000, 'prompt F loadcheck')
+    const lcReqs = requests.filter(r => r.url === '/v1/chat/completions' && JSON.stringify(r.body?.messages ?? []).includes('LOADCHECK'))
+    const fnames = r => (r?.body?.tools ?? []).map(x => x.function?.name)
+    const sys = r => JSON.stringify((r?.body?.messages ?? []).filter(m => m.role === 'system'))
+    check('F: load_tools on a plain OpenAI-compatible route: the next request offers the loaded tool, same system prompt',
+      lcReqs.length >= 2 && fnames(lcReqs[0]).includes('load_tools') && !fnames(lcReqs[0]).includes('working_directory') && fnames(lcReqs[1]).includes('working_directory') && sys(lcReqs[0]) === sys(lcReqs[1]),
+      `requests=${lcReqs.length} added=${fnames(lcReqs[1]).filter(n => !fnames(lcReqs[0]).includes(n))}`)
     // A model the account may not use: MODEL_NOT_AVAILABLE, not AUTH.
     await withTimeout(sdk.request('initialize', { cwd: home, provider: 'fake', model: 'locked-chat', approvalRequests: true, capabilities: { userQuestions: true } }), 60_000, 'initialize F locked')
     const locked = `f3-${Date.now()}`
@@ -830,7 +852,9 @@ if (!PHASES.has('G')) {
     await sdk.request('session/prompt', { sessionId: plain, contentBlocks: [{ type: 'text', text: 'Reply with the single word: ok' }] })
     await withTimeout(sdk.request('session/wait', { sessionId: plain }), 240_000, 'default prompt')
     const all = headerTools(plain)
-    check('G: default mode keeps every tool (bash, read, skill, device tools)', ['bash', 'read', 'write', 'file_list', 'screen_capture'].every(n => all.has(n)), [...all].sort().join(',').slice(0, 300))
+    check('G: default mode offers the core tools and the loader (bash, read, write, load_tools)', ['bash', 'read', 'write', 'load_tools'].every(n => all.has(n)), [...all].sort().join(',').slice(0, 300))
+    const plainPrompt = JSON.stringify(of(plain).filter(e => e.type === 'system/message').map(e => e.data))
+    check('G: default mode lists the device tools in the on-demand catalog', /# Tools loaded on demand/.test(plainPrompt) && plainPrompt.includes('file_list') && plainPrompt.includes('screen_capture') && !all.has('file_list'))
     await sdk.request('shutdown', {}).catch(() => {})
   } catch (error) {
     check('G: run completed', false, error.stack ?? error.message)
@@ -838,6 +862,131 @@ if (!PHASES.has('G')) {
   await withTimeout(eng.exited, 15_000, 'exit G').catch(() => eng.child.kill('SIGKILL'))
   check('G: no fatal error on stderr', !/fatal uncaught|StartupError|unhandled/i.test(eng.stderr()))
   check('G: no mode application warning', !/\[android-mode\] warn/.test(eng.stderr()), (eng.stderr().match(/\[android-mode\] warn.*/) ?? [''])[0].slice(0, 300))
+}
+
+// ── phase H: deferred tools (issue #36) on the wire ─────────────────────────
+// A capture proxy between the engine and api.deepseek.com (DEEPSEEK_BASE_URL) records every
+// Messages request: a new conversation offers no device tools; the model loads volume_set with
+// load_tools and calls it; the follow-up request keeps the earlier tools in order and adds the new
+// one after them (DeepSeek's tool_addition, so the cached prefix is reused); a later turn calls the
+// loaded tool without loading it again, also after an engine restart and session/resume.
+if (!PHASES.has('H')) {
+  // skipped
+} else if (!existsSync(keyFile)) {
+  check('H: DeepSeek API key available', false, keyFile)
+} else {
+  log('phase H: deferred tools + DeepSeek', MODEL)
+  const dshHome = join(root, 'h-dsh-home'); const home = join(root, 'h-home')
+  mkdirSync(home, { recursive: true })
+  const wire = []
+  const proxy = createServer((req, res) => {
+    const chunks = []
+    req.on('data', c => chunks.push(c))
+    req.on('end', async () => {
+      const raw = Buffer.concat(chunks)
+      const path = req.url.replace(/^\/anthropic/, '')
+      const entry = { path, body: undefined, usage: {} }
+      if (req.method === 'POST' && /\/messages$/.test(path)) { try { entry.body = JSON.parse(raw.toString('utf8')) } catch {} wire.push(entry) }
+      const headers = { ...req.headers }; delete headers.host; delete headers['content-length']; delete headers['accept-encoding']
+      try {
+        const up = await fetch(`https://api.deepseek.com/anthropic${path}`, { method: req.method, headers, body: raw.length > 0 ? raw : undefined })
+        res.writeHead(up.status, { 'content-type': up.headers.get('content-type') ?? 'application/octet-stream' })
+        let text = ''
+        for await (const chunk of up.body) { res.write(chunk); text += Buffer.from(chunk).toString('utf8') }
+        res.end()
+        for (const m of text.matchAll(/^data: (.*)$/gm)) { try { const d = JSON.parse(m[1]); Object.assign(entry.usage, d.message?.usage ?? {}, d.usage ?? {}) } catch {} }
+      } catch (error) { res.writeHead(502); res.end(String(error)) }
+    })
+  })
+  await new Promise(r => proxy.listen(0, '127.0.0.1', r))
+  const env = baseEnv(dshHome, home)
+  env.DEEPSEEK_API_KEY = readFileSync(keyFile, 'utf8').trim()
+  env.DEEPSEEK_BASE_URL = `http://127.0.0.1:${proxy.address().port}/anthropic`
+  const tools = [
+    { name: 'volume_set', group: 'system', risk: 'write', needsUnlock: false, description: 'Set the media volume to a level from 0 to 15.',
+      inputSchema: { type: 'object', properties: { level: { type: 'integer', description: '0-15' } }, required: ['level'] } },
+    { name: 'flashlight', group: 'system', risk: 'write', needsUnlock: false, description: 'Turn the flashlight on or off.',
+      inputSchema: { type: 'object', properties: { on: { type: 'boolean' } }, required: ['on'] } },
+    { name: 'file_list', group: 'files', risk: 'read', needsUnlock: false, description: 'List a directory in shared storage (relative to /sdcard).',
+      inputSchema: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] } },
+    { name: 'screen_read', group: 'screen', risk: 'read', needsUnlock: true, description: 'Read the element tree of the current screen.', inputSchema: { type: 'object', properties: {} } },
+  ]
+  const invokes = []
+  const boot = async tag => {
+    const eng = startEngine(env, true)
+    rpcPeer(eng.child.stdio[3], eng.child.stdio[3], `bridge-h${tag}`, async (method, params) => {
+      if (method === 'capability/list') return { tools }
+      if (method === 'capability/invoke') { invokes.push(params); return { ok: true, content: [{ type: 'text', text: `${params.tool} done: ${JSON.stringify(params.args)}` }] } }
+      if (method === 'experience/turn') return {}
+      throw new Error(`unexpected ${method}`)
+    })
+    const events = []
+    const sdk = rpcPeer(eng.child.stdout, eng.child.stdin, `sdk-h${tag}`, method => {
+      if (method === 'approval/request') return { outcome: 'allowed-once' }
+      throw new Error(`unexpected server request ${method}`)
+    }, (method, params) => {
+      if (method !== 'session.event') return
+      events.push(params)
+      const e = params.event
+      if (['tool/call', 'tool/result', 'turn/end', 'developer/message'].includes(e?.type)) detail(`[event H${tag}] ${e.type} ${JSON.stringify(e.data).slice(0, 400)}`)
+    })
+    await withTimeout(sdk.request('initialize', { cwd: home, provider: 'deepseek-official', model: MODEL, approvalRequests: true, capabilities: { userQuestions: true } }), 60_000, `initialize H${tag}`)
+    await waitFor(() => /device tools: 4 registered/.test(eng.stderr()), 15_000, 'device tools').catch(() => {})
+    return { eng, sdk, events }
+  }
+  const sid = `h-${Date.now()}`
+  const prompt = async (sdk, text) => {
+    await sdk.request('android/session/permission', { sessionId: sid, preset: 'danger-full-access' })
+    await sdk.request('android/session/mode', { sessionId: sid, mode: { id: 'default', name: '默认', skills: true } })
+    await sdk.request('session/prompt', { sessionId: sid, contentBlocks: [{ type: 'text', text }] })
+    await withTimeout(sdk.request('session/wait', { sessionId: sid }), 240_000, `prompt H ${text.slice(0, 20)}`)
+  }
+  const names = body => (body?.tools ?? []).map(t => t.name)
+  const calls = (events, name) => events.filter(e => e.sessionId === sid && e.event?.type === 'tool/call' && e.event.data?.name === name)
+  let g1
+  try {
+    g1 = await boot('1')
+    await prompt(g1.sdk, 'Set the media volume to 7. Then reply with one short sentence.')
+    const first = wire.find(w => Array.isArray(w.body?.messages))
+    check('H: the first request offers load_tools but no device tool', names(first?.body).includes('load_tools') && !tools.some(d => names(first?.body).includes(d.name)), names(first?.body).join(','))
+    check('H: the first request lists the device tools in the catalog', String(first?.body?.system).includes('# Tools loaded on demand') && String(first?.body?.system).includes('volume_set'))
+    check('H: the model loaded the deferred tool', calls(g1.events, 'load_tools').length > 0, JSON.stringify(calls(g1.events, 'load_tools')[0]?.event?.data ?? null).slice(0, 200))
+    const vol = invokes.find(i => i.tool === 'volume_set' && i.sessionId === sid)
+    check('H: the loaded tool was called and reached the app', vol?.args?.level === 7, JSON.stringify(vol?.args ?? null))
+    const after = wire.slice(wire.indexOf(first) + 1).find(w => names(w.body).includes('volume_set'))
+    const before = names(first?.body)
+    check('H: the follow-up request keeps the earlier tools in order and appends the loaded one', after !== undefined && JSON.stringify(names(after.body).slice(0, before.length)) === JSON.stringify(before),
+      `${before.length} → ${names(after?.body).length}: ${names(after?.body).slice(before.length).join(',')}`)
+    const added = after?.body?.tools?.find(t => t.name === 'volume_set')
+    const additionMsg = (after?.body?.messages ?? []).some(m => JSON.stringify(m.content).includes('"tool_addition"') && JSON.stringify(m.content).includes('volume_set'))
+    check('H: DeepSeek route: the addition goes after the cached prefix (defer_loading + tool_addition)', added?.defer_loading === true && additionMsg, JSON.stringify({ defer: added?.defer_loading, additionMsg }))
+    check('H: the system prompt did not change when the tool was loaded', after !== undefined && after.body.system === first.body.system)
+    check('H: the follow-up request reused the cached prefix', (after?.usage?.cache_read_input_tokens ?? 0) > 0, JSON.stringify(after?.usage ?? null))
+    log(`H: first request usage ${JSON.stringify(first?.usage)}; follow-up ${JSON.stringify(after?.usage)}`)
+    const rec = g1.events.find(e => e.sessionId === sid && e.event?.type === 'plugin:android-mode/tools-loaded')
+    check('H: the load is recorded in the session log (plugin record)', rec?.event?.ignorable === true && rec.event.data?.names?.includes('volume_set'), JSON.stringify(rec?.event ?? null).slice(0, 200))
+
+    const loadsBefore = calls(g1.events, 'load_tools').length
+    await prompt(g1.sdk, 'Now set the volume to 3. Reply with one short sentence.')
+    check('H: a later turn calls the loaded tool without loading it again', invokes.some(i => i.tool === 'volume_set' && i.args?.level === 3) && calls(g1.events, 'load_tools').length === loadsBefore)
+    await g1.sdk.request('shutdown', {}).catch(() => {})
+    await withTimeout(g1.eng.exited, 15_000, 'exit H1').catch(() => g1.eng.child.kill('SIGKILL'))
+
+    const g2 = await boot('2')
+    await g2.sdk.request('session/resume', { sessionId: sid }).catch(error => detail(`[H] resume: ${error.message}`))
+    const wireBefore = wire.length
+    await prompt(g2.sdk, 'Set the volume to 5. Reply with one short sentence.')
+    const resumed = wire.slice(wireBefore).find(w => Array.isArray(w.body?.messages))
+    check('H: after an engine restart the conversation still has the loaded tool', names(resumed?.body).includes('volume_set') && !names(resumed?.body).includes('flashlight'), names(resumed?.body).join(','))
+    check('H: …and calls it without loading again', invokes.some(i => i.tool === 'volume_set' && i.args?.level === 5) && calls(g2.events, 'load_tools').length === 0)
+    await g2.sdk.request('shutdown', {}).catch(() => {})
+    await withTimeout(g2.eng.exited, 15_000, 'exit H2').catch(() => g2.eng.child.kill('SIGKILL'))
+    check('H: no fatal error or mode warning on stderr', ![g1, g2].some(g => /fatal uncaught|StartupError|unhandled|\[android-mode\] warn/i.test(g.eng.stderr())))
+  } catch (error) {
+    check('H: run completed', false, error.stack ?? error.message)
+    g1?.eng.child.kill('SIGKILL')
+  }
+  proxy.close()
 }
 
 // ── phase X: plugins from the real npm registry (network; no API key needed) ─

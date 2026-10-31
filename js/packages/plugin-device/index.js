@@ -31,11 +31,13 @@ export const UNLOCK_TIMEOUT_MS = 900_000
 const BRIDGE_GRACE_MS = 10_000
 const TOOL_GRACE_MS = 15_000
 
+// Policy footer of every device tool description. Kept short: it is repeated in each loaded
+// definition; plugin-guard's phone section explains it once.
 const RISK_NOTE = {
-  read: 'read-only; runs without asking',
-  write: 'changes device state; the user is asked to approve each call',
-  sensitive: 'reads private data; the user is asked to approve each call',
-  dangerous: 'destructive or irreversible; the user must approve every single call, even in full-access mode',
+  read: 'read-only',
+  write: 'changes the phone',
+  sensitive: 'private data',
+  dangerous: 'destructive; always asks',
 }
 
 // SDK mode reserves stdout for JSON-RPC; plugin diagnostics go to stderr (the app logs it).
@@ -70,9 +72,9 @@ export function normalizeDescriptor(raw) {
 
 /** Model-facing description: the app's text plus a one-line policy footer. */
 export function toolDescription(d) {
-  const parts = [`group: ${d.group}`, `risk: ${d.risk} (${RISK_NOTE[d.risk]})`]
-  if (d.needsUnlock) parts.push(`needs the phone unlocked; if locked, the call waits up to ${Math.round((d.timeoutMs ?? UNLOCK_TIMEOUT_MS) / 60_000)} min for the user to unlock, then returns waiting_for_user and does nothing`)
-  return `${d.description}\n\n[Android device tool — ${parts.join('; ')}]`
+  const parts = [`risk: ${d.risk} (${RISK_NOTE[d.risk]})`]
+  if (d.needsUnlock) parts.push('needs the phone unlocked')
+  return `${d.description}\n[${parts.join('; ')}]`
 }
 
 /** The session id the app knows: the root of a subagent chain. */

@@ -348,8 +348,7 @@ class ScreenTools @Inject constructor(
     private abstract inner class ScreenTool(name: String, risk: Risk, needsUnlock: Boolean, description: String, schema: SchemaBuilder.() -> Unit) :
         Tool(name, ToolGroup.Screen, risk, needsUnlock, description, {
             schema()
-            string("screen", "Which screen: \"agent\" = your own background screen (default when this conversation has one), " +
-                "\"main\" = the user's screen (for what they are looking at)", enum = listOf("agent", "main"))
+            screen()
         }) {
         abstract suspend fun run(args: JsonObject, call: CallContext, t: ScreenTarget): ToolResult
 
@@ -625,9 +624,8 @@ class ScreenTools @Inject constructor(
                 "or a choice that is theirs to make. The user sees a card with the reason; the app moves to their screen while they handle it " +
                 "and comes back afterwards. Returns whether they handled it (then the screen is read again), finished the task themselves, skipped or stopped.", {
                 string("reason", "What the user should do, in the user's language (shown to them), e.g. \"请登录你的淘宝账号\"", required = true)
-                string("kind", "Kind of step: $KINDS", required = true, enum = KINDS.split(", "))
-                string("screen", "Where the step is: \"agent\" = your background screen (default when this conversation has one), \"main\" = the user's screen",
-                    enum = listOf("agent", "main"))
+                string("kind", "Kind of step", required = true, enum = KINDS.split(", "))
+                screen()
             }, timeoutMs = ToolDescriptor.UNLOCK_TIMEOUT_MS) {
             override suspend fun invoke(args: JsonObject, call: CallContext): ToolResult =
                 takeover(call, agent.target(call.sessionId, args.str("screen")), name, args.reqStr("reason"), args.str("kind") ?: "other")

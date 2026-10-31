@@ -17,6 +17,14 @@
 // whose `tools` list omits it (the app's read-only modes) hides them: nothing says a plugin
 // tool is read-only.
 // A conversation the app has not described (or `mode: null`) is unrestricted.
+//
+// Deferred tools (deferred.js, issue #36): device, extension and rarely used built-in tools are
+// hidden the same way until `load_tools` loads them; a catalog section lists them. Config
+// `deferTools: false` loads everything up front.
+import {
+  CATALOG_ORDER, CATALOG_SECTION, LOADED_RECORD, LOADER, catalogGroups, catalogSection, deferredGroup, isDeferredBuiltin,
+  loadedInLog, loaderDefinition, resolveLoad,
+} from './deferred.js'
 
 export const name = 'android-mode'
 export const inject = ['tools']
@@ -129,14 +137,18 @@ const SECTION_TOOL = { jobs: 'job_list' }
 /**
  * Drops the `tool:<name>` guidance sections of tools [mode] hides. Most dsh tool sections already
  * render empty for a scope that cannot see their tool; a few (bash, jobs) are unconditional.
+ * With [deferred], the sections of deferred built-ins go too, loaded or not: a section that
+ * appeared on loading would change the cached system prompt (the catalog carries their gist).
  */
-export function withoutHiddenToolSections(sections, mode, descriptorOf = () => undefined, isExtension = () => false) {
-  if (!restricts(mode)) return sections
-  return sections.filter(section => {
+export function withoutHiddenToolSections(sections, mode, descriptorOf = () => undefined, isExtension = () => false, deferred = false) {
+  if (!restricts(mode) && !deferred) return sections
+  const kept = sections.filter(section => {
     const m = /^tool:([^:]+)/.exec(String(section?.name ?? ''))
     if (m === null) return true
-    return !excludes(mode, SECTION_TOOL[m[1]] ?? m[1], descriptorOf, isExtension)
+    const tool = SECTION_TOOL[m[1]] ?? m[1]
+    return !(deferred && isDeferredBuiltin(tool)) && !excludes(mode, tool, descriptorOf, isExtension)
   })
+  return kept.length === sections.length ? sections : kept
 }
 
 /** The id the app knows for a (possibly subagent) agent: the root of its session chain. */
@@ -183,16 +195,35 @@ function remember(map, key, value, max = 500) {
 
 export function apply(ctx, config = {}) {
   const append = typeof config.appendRecord === 'function' ? config.appendRecord : appendRecord
+  const deferTools = config.deferTools !== false
   /** root session id → normalized mode (from the app; unrestricted until it says). */
   const modes = new Map()
-  /** agent → { key, disposers } of what is installed on its scope now. */
+  /** agent → { key, disposers, groups } of what is installed on its scope now (groups: its deferred catalog). */
   const installed = new WeakMap()
+  /** root session id → deferred tool names loaded in that conversation. */
+  const loadedByRoot = new Map()
   let loggedNames = false
 
   const descriptorOf = toolName => { try { return ctx.get('androidBridge')?.descriptorOf?.(toolName) } catch { return undefined } }
   const isExtension = toolName => { try { return ctx.get('androidExtensions')?.isExtensionTool?.(toolName) === true } catch { return false } }
   const agents = () => { try { return ctx.get('agents')?.list?.() ?? [] } catch { return [] } }
   const modeOf = agent => { const root = rootSessionId(ctx, agent); return root === undefined ? undefined : modes.get(root) }
+  const describe = toolName => { try { return ctx.tools.get?.(toolName)?.description } catch { return undefined } }
+
+  /** What [root]'s conversation has loaded; restored from the root agent's log the first time. */
+  const loadedOf = root => {
+    let set = loadedByRoot.get(root)
+    if (set === undefined) {
+      const rootAgent = agents().find(a => String(a.session?.id) === root)
+      set = rootAgent === undefined ? new Set() : loadedInLog(rootAgent.session)
+      remember(loadedByRoot, root, set)
+    }
+    return set
+  }
+
+  /** The deferred catalog of [agent] given the tools that exist ([names]) and its [mode]. */
+  const catalogOf = (names, mode) => !deferTools ? [] :
+    catalogGroups(names.filter(n => !excludes(mode, n, descriptorOf, isExtension)), descriptorOf, isExtension)
 
   /** Names a restriction on [agent]'s scope may name (dsh rejects unknown ones). */
   const restrictable = agent => {
@@ -228,19 +259,27 @@ export function apply(ctx, config = {}) {
       loggedNames = true
       log('info', `tools seen by modes: ${names.slice().sort().join(', ')}`)
     }
-    const deny = mode === undefined ? [] : names.filter(n => excludes(mode, n, descriptorOf, isExtension)).sort()
+    const root = rootSessionId(ctx, agent)
+    const groups = catalogOf(names, mode)
+    const loaded = groups.length === 0 || root === undefined ? new Set() : loadedOf(root)
+    const deny = names.filter(n =>
+      excludes(mode, n, descriptorOf, isExtension) ||
+      (deferTools && n === LOADER && groups.length === 0) ||
+      (groups.length > 0 && deferredGroup(n, descriptorOf, isExtension) !== undefined && !loaded.has(n))).sort()
     const section = modeSection(mode)
-    const key = JSON.stringify([mode?.id, section, deny])
+    const catalog = catalogSection(groups, describe)
+    const key = JSON.stringify([mode?.id, section, catalog, deny])
     if (installed.get(agent)?.key === key) return
     uninstall(agent)
     const disposers = []
     try {
       if (deny.length > 0) disposers.push(agent.ctx.tools.restrict({ deny }))
       if (section !== '') disposers.push(agent.ctx.systemPrompt.section({ name: SECTION_NAME, order: SECTION_ORDER, interpolate: false, text: section }))
+      if (catalog !== '') disposers.push(agent.ctx.systemPrompt.section({ name: CATALOG_SECTION, order: CATALOG_ORDER, interpolate: false, text: catalog }))
     } catch (error) {
       log('warn', `cannot apply mode ${mode?.id} to ${agent.session?.id}: ${error?.message ?? error}`)
     }
-    installed.set(agent, { key, disposers })
+    installed.set(agent, { key, disposers, groups })
     record(agent, mode)
   }
 
@@ -268,7 +307,7 @@ export function apply(ctx, config = {}) {
   // Device tools come and go (bridge reconnect, group toggles): re-derive the deny lists.
   let pending = false
   ctx.on('tools/change', () => {
-    if (pending || modes.size === 0) return
+    if (pending || (modes.size === 0 && !deferTools)) return
     pending = true
     setImmediate(() => { pending = false; applyAll(undefined) })
   })
@@ -277,8 +316,40 @@ export function apply(ctx, config = {}) {
   ctx.on('system-prompt/assemble', async (_assembly, context, next) => {
     const assembly = await next()
     const mode = context?.agent === undefined ? undefined : modeOf(context.agent)
-    if (!restricts(mode) || !Array.isArray(assembly?.sections)) return assembly
-    return { ...assembly, sections: withoutHiddenToolSections(assembly.sections, mode, descriptorOf, isExtension) }
+    if ((!restricts(mode) && !deferTools) || !Array.isArray(assembly?.sections)) return assembly
+    const sections = withoutHiddenToolSections(assembly.sections, mode, descriptorOf, isExtension, deferTools)
+    return sections === assembly.sections ? assembly : { ...assembly, sections }
+  })
+
+  if (deferTools) {
+    // ── load_tools: activates deferred definitions for the whole conversation ─────
+    ctx.tools.register(loaderDefinition(async (args, exec) => {
+      const agent = exec.agent
+      const root = rootSessionId(ctx, agent)
+      const groups = (agent !== undefined && installed.get(agent)?.groups) || catalogOf(restrictable(agent), modeOf(agent))
+      if (root === undefined) return { content: [{ type: 'text', text: 'No conversation to load tools into.' }] }
+      const loaded = loadedOf(root)
+      const offered = name => { try { return ctx.tools.get(name, agent) !== undefined } catch { return false } }
+      const { add, text } = resolveLoad(args?.names, groups, loaded, offered)
+      if (add.length > 0) {
+        for (const n of add) loaded.add(n)
+        const rootAgent = agents().find(a => String(a.session?.id) === root) ?? agent
+        Promise.resolve(append(rootAgent.session, LOADED_RECORD, { names: add }))
+          .catch(error => log('warn', `cannot record loaded tools for ${root}: ${error?.message ?? error}`))
+        applyAll(root)
+      }
+      return { content: [{ type: 'text', text }] }
+    }))
+  }
+
+  // Whether a tool is in [scope]'s deferred catalog (loaded or not): plugin-guard's phone section
+  // describes what the conversation can use, so that it stays the same when a tool is loaded.
+  ctx.provide?.('androidToolScope', {
+    deferred(toolName, scope) {
+      if (!deferTools || scope === undefined) return false
+      const groups = installed.get(scope)?.groups
+      return Array.isArray(groups) && groups.some(g => g.tools.includes(toolName))
+    },
   })
 
   // Backstop: refuse an excluded call even if a tool appeared after the last restriction.

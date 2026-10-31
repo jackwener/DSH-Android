@@ -192,7 +192,7 @@ class CommsTools @Inject constructor(
             int("startMs", "Start epoch ms (alternative)"); int("endMs", "End epoch ms (alternative)")
             bool("allDay", "All-day event (also implied by a bare date)")
             string("location", ""); string("description", "")
-            string("screen", "Where to open it: \"agent\" = your background screen (default when Shizuku is ready), \"main\" = the user's screen", enum = listOf("agent", "main"))
+            screen()
         }) {
             override suspend fun invoke(args: JsonObject, call: CallContext): ToolResult {
                 val zone = java.time.ZoneId.systemDefault()

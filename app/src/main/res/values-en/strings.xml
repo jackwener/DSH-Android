@@ -302,6 +302,7 @@
     <string name="tool_rule_delete">Delete automation</string>
     <string name="tool_schedule">Schedule</string>
     <string name="tool_skill">Skill</string>
+    <string name="tool_load_tools">Load tools</string>
     <string name="tool_subagent">Subagent</string>
     <string name="tool_generic">Tool call</string>
     <string name="on">on</string>

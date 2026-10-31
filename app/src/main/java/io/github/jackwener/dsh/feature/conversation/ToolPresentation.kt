@@ -88,6 +88,8 @@ object ToolPresentation {
         "hand_to_user" -> ToolInfo(R.drawable.dsw_user_outline, R.string.tool_hand_to_user, Activity.Other, BodyKind.Text)
         "schedule_create", "schedule_update", "schedule_delete", "schedule_list" -> ToolInfo(R.drawable.dsw_clock_outline, R.string.tool_schedule, Activity.Rules, BodyKind.InOut)
         "skill" -> ToolInfo(R.drawable.dsw_skill_outline, R.string.tool_skill, Activity.Other, BodyKind.InOut)
+        // Deferred tool loading (engine plugin-mode, issue #36): activates tool definitions on demand.
+        "load_tools" -> ToolInfo(R.drawable.dsw_apps_add_outline, R.string.tool_load_tools, Activity.Other, BodyKind.InOut)
         else -> if ("agent" in name || "subagent" in name || name == "send_message")
             ToolInfo(R.drawable.dsw_users_outline, R.string.tool_subagent, Activity.Subagent, BodyKind.InOut)
         else ToolInfo(R.drawable.dsw_sparkle, R.string.tool_generic, Activity.Other, BodyKind.InOut)
@@ -154,6 +156,7 @@ object ToolPresentation {
             "web_search" -> a.str("query")
             "web_fetch" -> a.str("url")
             "todo_write" -> null
+            "load_tools" -> (a["names"] as? kotlinx.serialization.json.JsonArray)?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull }?.joinToString(", ")
             "screen_tap" -> a.str("text")?.let { "“$it”" } ?: a.str("node")?.let { "#$it" }
                 ?: if (a.str("x") != null) "(${a.str("x")}, ${a.str("y")})" else null
             "screen_swipe" -> "(${a.str("x1")}, ${a.str("y1")}) → (${a.str("x2")}, ${a.str("y2")})"
