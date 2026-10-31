@@ -72,7 +72,7 @@ import io.github.jackwener.dsh.core.platform.Browser
  * exchanges the code and answers with its completion page, which navigates to
  * `dsh-android://account/login?result=…` (as an `intent:` URL when the engine knows the package).
  * That navigation is intercepted here and closes the screen; the attempt settling closes it too
- * (AccountRepository.apply). Back walks the page history, then closes; closing cancels the attempt.
+ * (AccountRepository.apply). Back walks the page history, then pops the screen; closing cancels the attempt.
  *
  * Links that leave Platform on the sign-in page (privacy policy, terms, …), every new window,
  * and non-web schemes go to the system browser / the app that handles them.
@@ -85,7 +85,10 @@ fun PlatformWebScreen(page: PlatformPage, account: AccountRepository) {
     var pageTitle by remember { mutableStateOf<String?>(null) }
     var failed by remember { mutableStateOf(false) }
     val close = { account.closePage() }
-    BackHandler { web?.takeIf { it.canGoBack() }?.goBack() ?: close() }
+    // This screen is a destination (PlatformWebRoute): Back walks the page history here, and with
+    // none left the NavHost pops the destination (MainActivity then closes the page).
+    var canGoBack by remember { mutableStateOf(false) }
+    BackHandler(canGoBack && web != null) { web?.goBack() }
 
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     DisposableEffect(lifecycle, web) {
@@ -112,7 +115,7 @@ fun PlatformWebScreen(page: PlatformPage, account: AccountRepository) {
                 AndroidView(
                     factory = { ctx ->
                         platformWebView(ctx, page, c.bgBase.toArgb(), account,
-                            onProgress = { progress = it }, onTitle = { pageTitle = it }, onFailed = { failed = it },
+                            onProgress = { progress = it }, onTitle = { pageTitle = it }, onFailed = { failed = it }, onHistory = { canGoBack = it },
                             onGone = { web = null; close() },
                         ).also { web = it; it.loadUrl(page.url) }
                     },
@@ -145,6 +148,7 @@ private fun platformWebView(
     onProgress: (Int) -> Unit,
     onTitle: (String?) -> Unit,
     onFailed: (Boolean) -> Unit,
+    onHistory: (canGoBack: Boolean) -> Unit,
     onGone: () -> Unit,
 ): WebView = WebView(context).apply {
     layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
@@ -189,6 +193,8 @@ private fun platformWebView(
             request.isForMainFrame && route(request.url, request.isRedirect, request.hasGesture())
 
         override fun onPageStarted(view: WebView, url: String?, favicon: Bitmap?) { onFailed(false) }
+
+        override fun doUpdateVisitedHistory(view: WebView, url: String?, isReload: Boolean) { onHistory(view.canGoBack()) }
 
         override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
             if (request.isForMainFrame) { Log.i(TAG, "load failed: ${error.errorCode} ${error.description}"); onFailed(true) }

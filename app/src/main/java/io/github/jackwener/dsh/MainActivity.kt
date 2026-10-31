@@ -15,6 +15,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
@@ -22,11 +23,8 @@ import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
-import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
-import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
-import androidx.navigation.navArgument
 import dagger.hilt.android.AndroidEntryPoint
 import dagger.hilt.android.lifecycle.HiltViewModel
 import io.github.jackwener.dsh.core.account.AccountRepository
@@ -34,22 +32,24 @@ import io.github.jackwener.dsh.core.data.SecretStore
 import io.github.jackwener.dsh.feature.account.AccountToastHost
 import io.github.jackwener.dsh.feature.account.LocalAccount
 import io.github.jackwener.dsh.feature.account.SignInDialog
-import io.github.jackwener.dsh.feature.account.PlatformWebScreen
 import androidx.compose.runtime.CompositionLocalProvider
 import io.github.jackwener.dsh.core.data.SettingsRepository
 import io.github.jackwener.dsh.core.data.ThemeMode
 import io.github.jackwener.dsh.core.designsystem.Dsh
 import io.github.jackwener.dsh.core.designsystem.DshTheme
-import io.github.jackwener.dsh.feature.automation.AutomationScreen
-import io.github.jackwener.dsh.feature.automation.RuleDetailScreen
-import io.github.jackwener.dsh.feature.conversation.HomeScreen
 import io.github.jackwener.dsh.feature.conversation.HomeViewModel
-import io.github.jackwener.dsh.feature.settings.EnhanceStep
-import io.github.jackwener.dsh.feature.settings.Onboarding
-import io.github.jackwener.dsh.feature.settings.shellAccessOf
-import io.github.jackwener.dsh.feature.settings.NotificationAppsScreen
-import io.github.jackwener.dsh.feature.settings.SettingsScreen
 import io.github.jackwener.dsh.feature.settings.SettingsSection
+import io.github.jackwener.dsh.core.account.PlatformPage
+import io.github.jackwener.dsh.nav.HomeRoute
+import io.github.jackwener.dsh.nav.OnboardingKeyRoute
+import io.github.jackwener.dsh.nav.PlatformWebRoute
+import io.github.jackwener.dsh.nav.dshGraph
+import io.github.jackwener.dsh.nav.onboardingOnStack
+import io.github.jackwener.dsh.nav.startOnboarding
+import io.github.jackwener.dsh.nav.toHome
+import io.github.jackwener.dsh.nav.openSettings
+import androidx.navigation.NavHostController
+import androidx.navigation.NavDestination.Companion.hasRoute
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
@@ -77,8 +77,7 @@ class MainActivity : ComponentActivity() {
     private var pendingSession by mutableStateOf<String?>(null)
     /** Settings section to open (EXTRA_SECTION, e.g. the quick panel's 登录 / 添加 API Key / 打开自检). */
     private var pendingSection by mutableStateOf<String?>(null)
-    /** The sign-in dialog's 添加 API Key while onboarding expands the key card in place. */
-    private var onboardingKey by mutableStateOf(false)
+    private var navReady by mutableStateOf(false)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         val splash = installSplashScreen()
@@ -95,16 +94,16 @@ class MainActivity : ComponentActivity() {
             val vm: MainViewModel = hiltViewModel()
             val boot by vm.boot.collectAsStateWithLifecycle()
             val theme = boot?.first
-            splash.setKeepOnScreenCondition { theme == null }
+            // Until the theme is known and the first page chosen (home / onboarding).
+            splash.setKeepOnScreenCondition { theme == null || !navReady }
             DshTheme(theme ?: ThemeMode.System) {
                 val c = Dsh.colors
                 LaunchedEffect(c.isDark) { account.darkTheme = c.isDark }
-                // Platform pages (sign-in, 充值, 用量) cover the app in its own WebView screen.
+                // Platform pages (sign-in, 充值, 用量): a destination of their own (PlatformPageSync).
                 val platformPage by account.page.collectAsStateWithLifecycle()
                 CompositionLocalProvider(LocalAccount provides account) {
                     Box(Modifier.fillMaxSize().background(c.bgBase)) {
-                        boot?.let { AppNav(it.second, platformPage == null) }
-                        platformPage?.let { PlatformWebScreen(it, account) }
+                        boot?.let { AppNav(it.second, platformPage) }
                         AccountToastHost(account)
                     }
                 }
@@ -146,58 +145,55 @@ class MainActivity : ComponentActivity() {
         if (data.scheme == "dsh-android" && data.host == "account") account.onSignInReturned()
     }
 
+    /**
+     * The page tree (nav.DshNavGraph), home as the fixed start. Settings links from outside the tree
+     * (EXTRA_SECTION, share, the sign-in dialog) use nav.openSettings: home → 设置 → section.
+     */
     @Composable
-    private fun AppNav(hasCredentials: Boolean, dialogs: Boolean) {
+    private fun AppNav(hasCredentials: Boolean, platformPage: PlatformPage?) {
         val nav = rememberNavController()
         val home: HomeViewModel = hiltViewModel()
         val accountState by account.state.collectAsStateWithLifecycle()
+        // Home is the fixed start; without a credential the first launch goes to onboarding (once, not after recreation).
+        var routed by rememberSaveable { mutableStateOf(false) }
+        // First, so the links below already see onboarding.
+        LaunchedEffect(Unit) {
+            if (!routed && !hasCredentials) nav.startOnboarding()
+            routed = true; navReady = true
+        }
         LaunchedEffect(pendingSession) {
-            pendingSession?.let { id -> home.open(id); nav.popBackStack("home", inclusive = false); pendingSession = null }
+            pendingSession?.let { id -> home.open(id); nav.toHome(); pendingSession = null }
         }
         LaunchedEffect(pendingSection) {
-            pendingSection?.let { sec ->
-                pendingSection = null
-                if (nav.currentDestination?.route != "onboarding") nav.navigate("settings?section=$sec") { launchSingleTop = true }
-            }
+            // Ignored during onboarding (home is not on the stack yet), as before.
+            pendingSection?.let { sec -> pendingSection = null; nav.openSettings(sec) }
         }
-        val start = remember { if (hasCredentials) "home" else "onboarding" }
+        PlatformPageSync(nav, platformPage)
         // The dialog is a window of its own: hidden while the Platform screen is up.
-        if (accountState.loginVisible && dialogs) SignInDialog(account, onUseApiKey = {
-            if (nav.currentDestination?.route == "onboarding") onboardingKey = true
-            else nav.navigate("settings?section=Model")
+        if (accountState.loginVisible && platformPage == null) SignInDialog(account, onUseApiKey = {
+            if (nav.onboardingOnStack()) nav.navigate(OnboardingKeyRoute) { launchSingleTop = true } else nav.openSettings(SettingsSection.Model.name)
         })
-        NavHost(nav, startDestination = start, enterTransition = { fadeIn() }, exitTransition = { fadeOut() }) {
-            composable("onboarding") {
-                Onboarding(showKey = onboardingKey, onShowKey = { onboardingKey = it },
-                    onThirdParty = {
-                        nav.navigate("home") { popUpTo("onboarding") { inclusive = true } }
-                        nav.navigate("settings?section=Model")
-                    },
-                    onDone = {
-                        // Optional 增强能力 step (Shizuku) unless it is already set up.
-                        val next = if (shellAccessOf(this@MainActivity).refresh().ready) "home" else "enhance"
-                        nav.navigate(next) { popUpTo("onboarding") { inclusive = true } }
-                    })
-            }
-            composable("enhance") { EnhanceStep(onDone = { nav.navigate("home") { popUpTo("enhance") { inclusive = true } } }) }
-            composable("home") {
-                HomeScreen(home,
-                    onSettings = { section -> nav.navigate("settings?section=${section ?: ""}") },
-                    onAutomation = { nav.navigate("automation") })
-            }
-            composable("settings?section={section}", arguments = listOf(navArgument("section") { type = NavType.StringType; defaultValue = "" })) { e ->
-                SettingsScreen(SettingsSection.of(e.arguments?.getString("section")), onBack = { nav.popBackStack() }, onNotificationApps = { nav.navigate("notif_apps") },
-                    onAppNotes = { nav.navigate("app_notes") })
-            }
-            composable("app_notes") { io.github.jackwener.dsh.feature.settings.AppNotesScreen(onBack = { nav.popBackStack() }) }
-            composable("notif_apps") { NotificationAppsScreen(onBack = { nav.popBackStack() }) }
-            composable("automation") {
-                AutomationScreen(onBack = { nav.popBackStack() },
-                    onNew = { prefill -> home.newSession(prefill); nav.popBackStack("home", inclusive = false) },
-                    onOpenRule = { nav.navigate("rule/$it") })
-            }
-            composable("rule/{id}", arguments = listOf(navArgument("id") { type = NavType.StringType })) {
-                RuleDetailScreen(onBack = { nav.popBackStack() }, onOpenSession = { sid -> home.open(sid); nav.popBackStack("home", inclusive = false) })
+        NavHost(nav, startDestination = HomeRoute, enterTransition = { fadeIn() }, exitTransition = { fadeOut() }) {
+            dshGraph(nav) { home }
+        }
+    }
+
+    /**
+     * AccountRepository.page (sign-in, 充值, 用量) ⇄ the PlatformWebRoute destination: a page pushes
+     * it over the current one, closing the page pops it, and Back popping it closes the page.
+     */
+    @Composable
+    private fun PlatformPageSync(nav: NavHostController, page: PlatformPage?) {
+        val stack by nav.currentBackStack.collectAsStateWithLifecycle()
+        val shown = stack.any { it.destination.hasRoute(PlatformWebRoute::class) }
+        var pushed by remember { mutableStateOf(false) }
+        LaunchedEffect(page != null, shown) {
+            when {
+                page != null && shown -> pushed = true
+                page != null && !pushed -> nav.navigate(PlatformWebRoute) { launchSingleTop = true }
+                page != null -> { pushed = false; account.closePage() }
+                shown -> { pushed = false; nav.popBackStack(PlatformWebRoute, inclusive = true) }
+                else -> pushed = false
             }
         }
     }

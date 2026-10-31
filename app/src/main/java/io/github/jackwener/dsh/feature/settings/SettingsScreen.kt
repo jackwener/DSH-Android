@@ -18,7 +18,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
-import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -84,6 +83,12 @@ import io.github.jackwener.dsh.core.engine.EngineState
 import io.github.jackwener.dsh.core.model.PermissionPreset
 import io.github.jackwener.dsh.core.model.ToolGroup
 import io.github.jackwener.dsh.feature.conversation.PresetUi
+import io.github.jackwener.dsh.nav.AppNotesRoute
+import io.github.jackwener.dsh.nav.ModeRoute
+import io.github.jackwener.dsh.nav.NotifAppsRoute
+import io.github.jackwener.dsh.nav.ProviderRoute
+import io.github.jackwener.dsh.nav.Route
+import io.github.jackwener.dsh.nav.SectionRoute
 import kotlinx.coroutines.launch
 
 private fun openKeyPage(context: android.content.Context) {
@@ -108,53 +113,62 @@ enum class SettingsSection(val label: Int, val icon: Int) {
 }
 
 /**
- * dsh settings on a phone: a section index (one card of rows with chevrons) that pushes each
- * section as its own page. A deep link (error row 打开自检, drawer 权限与无障碍 …) opens the page
- * directly and Back returns to where it came from.
+ * A settings page: top bar (Back = up one level, the same as system Back) over one scrolling
+ * column. Every settings page is its own destination (nav.Routes), so there is no in-page back logic.
  */
 @Composable
-fun SettingsScreen(initial: SettingsSection?, onBack: () -> Unit, onNotificationApps: () -> Unit, onAppNotes: () -> Unit = {}, vm: SettingsViewModel = hiltViewModel()) {
-    val c = Dsh.colors
-    var section by rememberSaveable { mutableStateOf(initial) }
-    val deepLinked = rememberSaveable { initial != null }
-    val toIndex = section != null && !deepLinked
-    /** 模型服务 sub-page: [NEW_PROVIDER] or a provider id being edited. */
-    var provider by rememberSaveable { mutableStateOf<String?>(null) }
-    /** 会话模式 sub-page: [NEW_MODE] or a mode id. */
-    var modePage by rememberSaveable { mutableStateOf<String?>(null) }
-    /** 扩展 sub-page (feature/extensions ExtPages): a plugin, an index entry, 管理索引, an MCP server. */
-    var extPage by rememberSaveable { mutableStateOf<String?>(null) }
-    BackHandler(toIndex) { section = null }
-    BackHandler(extPage != null) { extPage = null }
-    BackHandler(provider != null) { provider = null }
-    BackHandler(modePage != null) { modePage = null }
-    Column(Modifier.fillMaxSize().background(c.bgBase).statusBarsPadding()) {
-        val modeTitle = modePage?.let { id -> if (id == NEW_MODE) stringResource(R.string.mode_new)
-            else if (io.github.jackwener.dsh.core.model.SessionModes.builtIns.any { it.id == id }) stringResource(R.string.mode_view_title) else stringResource(R.string.mode_edit_title) }
-        val extTitle = if (section == SettingsSection.Extensions) io.github.jackwener.dsh.feature.extensions.extensionsPageTitle(extPage) else null
-        val title = modeTitle ?: extTitle ?: if (provider != null) stringResource(R.string.prov_title) else section?.let { stringResource(it.label) } ?: stringResource(R.string.settings)
-        DTopBar(title, { if (extPage != null) extPage = null else if (modePage != null) modePage = null else if (provider != null) provider = null else if (toIndex) section = null else onBack() })
-        // One scroll position per page; IME insets first so focused fields and their buttons stay above the keyboard.
-        val scroll = rememberSaveable(section, provider, modePage, extPage, saver = androidx.compose.foundation.ScrollState.Saver) { androidx.compose.foundation.ScrollState(0) }
-        Column(Modifier.fillMaxSize().imePadding().verticalScroll(scroll).navigationBarsPadding().padding(horizontal = 16.dp).padding(bottom = 24.dp)) {
-            when (section) {
-                null -> SettingsIndex(vm.settings.collectAsStateWithLifecycle().value.extUpdateBadge) { section = it }
-                SettingsSection.Account -> {
-                    val hasKey by vm.hasKeyFlow.collectAsStateWithLifecycle()
-                    Spacer(Modifier.height(8.dp))
-                    io.github.jackwener.dsh.feature.account.AccountSettingsSection(vm.account, usingApiKey = hasKey)
-                }
-                SettingsSection.General -> GeneralSection(vm)
-                SettingsSection.Model -> provider?.let { ProviderPage(vm, it) { provider = null } } ?: ModelSection(vm) { provider = it }
-                SettingsSection.Agent -> AgentSection(vm, onAppNotes)
-                SettingsSection.Extensions -> io.github.jackwener.dsh.feature.extensions.ExtensionsSection(extPage, { extPage = it })
-                SettingsSection.Modes -> modePage?.let { ModePage(vm, it, onDone = { modePage = null }, onOpen = { id -> modePage = id }) } ?: ModesSection(vm) { modePage = it }
-                SettingsSection.Usage -> UsageSection(vm)
-                SettingsSection.Phone -> PhoneSection(vm, onNotificationApps)
-                SettingsSection.About -> AboutSection(vm)
-            }
+fun SettingsPage(title: String, onBack: () -> Unit, content: @Composable () -> Unit) {
+    Column(Modifier.fillMaxSize().background(Dsh.colors.bgBase).statusBarsPadding()) {
+        DTopBar(title, onBack)
+        // IME insets first so focused fields and their buttons stay above the keyboard.
+        Column(Modifier.fillMaxSize().imePadding().verticalScroll(rememberScrollState()).navigationBarsPadding().padding(horizontal = 16.dp).padding(bottom = 24.dp)) {
+            content()
         }
     }
+}
+
+/** dsh settings on a phone: a section index (one card of rows with chevrons); each section is its own page. */
+@Composable
+fun SettingsIndexScreen(onBack: () -> Unit, open: (Route) -> Unit, vm: SettingsViewModel = hiltViewModel()) =
+    SettingsPage(stringResource(R.string.settings), onBack) {
+        SettingsIndex(vm.settings.collectAsStateWithLifecycle().value.extUpdateBadge) { open(SectionRoute(it)) }
+    }
+
+/** One settings section page; its sub-pages are opened with [open]. [onTop]: the current page (sheets show on one page only). */
+@Composable
+fun SettingsSectionScreen(section: SettingsSection, onBack: () -> Unit, open: (Route) -> Unit, onTop: Boolean = true, vm: SettingsViewModel = hiltViewModel()) =
+    SettingsPage(stringResource(section.label), onBack) {
+        when (section) {
+            SettingsSection.Account -> {
+                val hasKey by vm.hasKeyFlow.collectAsStateWithLifecycle()
+                Spacer(Modifier.height(8.dp))
+                io.github.jackwener.dsh.feature.account.AccountSettingsSection(vm.account, usingApiKey = hasKey)
+            }
+            SettingsSection.General -> GeneralSection(vm)
+            SettingsSection.Model -> ModelSection(vm) { open(ProviderRoute(it.takeUnless { id -> id == NEW_PROVIDER })) }
+            SettingsSection.Agent -> AgentSection(vm) { open(AppNotesRoute) }
+            SettingsSection.Extensions -> io.github.jackwener.dsh.feature.extensions.ExtensionsSection(open, onTop)
+            SettingsSection.Modes -> ModesSection(vm) { open(ModeRoute(it.takeUnless { id -> id == NEW_MODE })) }
+            SettingsSection.Usage -> UsageSection(vm)
+            SettingsSection.Phone -> PhoneSection(vm) { open(NotifAppsRoute) }
+            SettingsSection.About -> AboutSection(vm)
+        }
+    }
+
+/** 模型服务 → a provider: the preset picker (a preset opens the editor as the next level), or the editor; [onDone] returns to 模型服务. */
+@Composable
+fun ProviderScreen(route: ProviderRoute, onBack: () -> Unit, open: (Route) -> Unit, onDone: () -> Unit, vm: SettingsViewModel = hiltViewModel()) =
+    SettingsPage(stringResource(R.string.prov_title), onBack) {
+        ProviderPage(vm, route.id ?: NEW_PROVIDER, route.preset, onPreset = { open(ProviderRoute(preset = it)) }, onDone = onDone)
+    }
+
+/** 会话模式 → a mode (view / edit / new); [onReplace] swaps this page for another mode (复制). */
+@Composable
+fun ModeScreen(route: ModeRoute, onBack: () -> Unit, onReplace: (String) -> Unit, vm: SettingsViewModel = hiltViewModel()) {
+    val id = route.id ?: NEW_MODE
+    val title = if (id == NEW_MODE) stringResource(R.string.mode_new)
+        else if (io.github.jackwener.dsh.core.model.SessionModes.builtIns.any { it.id == id }) stringResource(R.string.mode_view_title) else stringResource(R.string.mode_edit_title)
+    SettingsPage(title, onBack) { ModePage(vm, id, onDone = onBack, onOpen = onReplace) }
 }
 
 @Composable

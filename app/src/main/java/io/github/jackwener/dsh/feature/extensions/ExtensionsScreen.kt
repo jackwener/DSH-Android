@@ -71,54 +71,33 @@ import io.github.jackwener.dsh.core.extensions.RegistryMode
 import io.github.jackwener.dsh.core.extensions.RestartState
 import io.github.jackwener.dsh.core.extensions.SourceKind
 import io.github.jackwener.dsh.core.extensions.UserError
+import io.github.jackwener.dsh.nav.IndexesRoute
+import io.github.jackwener.dsh.nav.MarketEntryRoute
+import io.github.jackwener.dsh.nav.McpRoute
+import io.github.jackwener.dsh.nav.PluginRoute
+import io.github.jackwener.dsh.nav.Route
 import kotlinx.coroutines.launch
 
 /*
- * 设置 → 扩展 (PLUGINS-DESIGN §9). Sub-pages are addressed by a string the settings screen keeps
- * (so Back and the title work like 模型服务 / 会话模式):
- *   null            the three tabs
- *   p:<name>        an installed plugin
- *   m:<url>\n<name> a plugin from an index (not installed)
- *   indexes         管理索引
- *   mcp:new / mcp:<id>  MCP editor
+ * 设置 → 扩展 (PLUGINS-DESIGN §9): the section page has the three tabs; each sub-page (an installed
+ * plugin, an index entry, 管理索引, an MCP server) is a destination of its own (nav.Routes), so Back
+ * always returns to the page it was opened from. All of them share the settings graph's
+ * [ExtensionsViewModel], and each shows the install sheet while it is on top.
  */
-object ExtPages {
-    fun plugin(name: String) = "p:$name"
-    fun market(url: String, name: String) = "m:$url\n$name"
-    const val INDEXES = "indexes"
-    const val MCP_NEW = "mcp:new"
-    fun mcp(id: String) = "mcp:$id"
-}
-
-/** The top bar title for [page], or null for the tabs (the section's own title). */
-@Composable
-fun extensionsPageTitle(page: String?, vm: ExtensionsViewModel = hiltViewModel()): String? {
-    val list by vm.store.list.collectAsStateWithLifecycle()
-    val lang = language()
-    return when {
-        page == null -> null
-        page.startsWith("p:") -> page.removePrefix("p:").let { n -> list?.plugins?.firstOrNull { it.name == n }?.displayTitle ?: n }
-        page.startsWith("m:") -> page.substringAfter('\n').let { n -> vm.market.state.value.entries.firstOrNull { it.second.name == n }?.second?.title(lang) ?: n }
-        page == ExtPages.INDEXES -> stringResource(R.string.ext_manage_indexes)
-        page.startsWith(ExtPages.MCP_NEW) -> stringResource(R.string.ext_mcp_new)
-        page.startsWith("mcp:") -> page.removePrefix("mcp:").let { id -> vm.settings.value.mcpServers.firstOrNull { it.id == id }?.name ?: id }
-        else -> null
-    }
-}
 
 @Composable
 internal fun language(): String = LocalConfiguration.current.locales[0].toLanguageTag()
 
+/** The 扩展 section page (the tabs). [onTop]: this page is the current one (the install sheet shows on one page only). */
 @Composable
-fun ExtensionsSection(page: String?, onPage: (String?) -> Unit, vm: ExtensionsViewModel = hiltViewModel()) {
-    LaunchedEffect(Unit) { vm.open() }
-    // Shared to DSH (分享 → 安装为 DSH 扩展): start the matching flow once.
+fun ExtensionsSection(open: (Route) -> Unit, onTop: Boolean = true, vm: ExtensionsViewModel = hiltViewModel()) {
+    LaunchedEffect(Unit) { vm.openOnce() }
+    // Shared to DSH (分享 → 安装为 DSH 扩展): start the matching flow once (the share opened this page).
     val shared by vm.repo.pendingInput.collectAsStateWithLifecycle()
     var sharedJson by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(shared) {
         val input = shared ?: return@LaunchedEffect
         vm.repo.pendingInput.value = null
-        onPage(null)
         when (io.github.jackwener.dsh.core.extensions.ShareTarget.of(input)) {
             io.github.jackwener.dsh.core.extensions.ShareTarget.Plugin -> { vm.tab.value = 0; vm.install.start(input) }
             io.github.jackwener.dsh.core.extensions.ShareTarget.Skill -> { vm.tab.value = 1; vm.skills.preview(input) }
@@ -126,27 +105,52 @@ fun ExtensionsSection(page: String?, onPage: (String?) -> Unit, vm: ExtensionsVi
         }
     }
     sharedJson?.let { json -> PasteJsonDialog(vm, initial = json) { sharedJson = null } }
-    when {
-        page == null -> ExtensionsTabs(vm, onPage)
-        page.startsWith("p:") -> PluginDetailPage(vm, page.removePrefix("p:"), onBack = { onPage(null) })
-        page.startsWith("m:") -> MarketEntryPage(vm, page.removePrefix("m:").substringBefore('\n'), page.substringAfter('\n'), onInstalled = { onPage(null) })
-        page == ExtPages.INDEXES -> IndexesPage(vm)
-        page.startsWith("mcp:") -> McpEditorPage(vm, page.removePrefix("mcp:").takeIf { page != ExtPages.MCP_NEW }, onDone = { onPage(null) })
+    ExtensionsTabs(vm, open)
+    if (onTop) InstallSheet(vm, onOpenMcp = { vm.tab.value = 2 })
+}
+
+/** The top bar title of an extensions sub-page. */
+@Composable
+fun extensionsPageTitle(route: Route, vm: ExtensionsViewModel = hiltViewModel()): String {
+    val list by vm.store.list.collectAsStateWithLifecycle()
+    val lang = language()
+    return when (route) {
+        is PluginRoute -> list?.plugins?.firstOrNull { it.name == route.name }?.displayTitle ?: route.name
+        is MarketEntryRoute -> vm.market.state.value.entries.firstOrNull { it.second.name == route.name }?.second?.title(lang) ?: route.name
+        IndexesRoute -> stringResource(R.string.ext_manage_indexes)
+        is McpRoute -> route.id?.let { id -> vm.settings.value.mcpServers.firstOrNull { it.id == id }?.name ?: id } ?: stringResource(R.string.ext_mcp_new)
+        else -> stringResource(R.string.set_extensions)
     }
-    InstallSheet(vm, onOpenMcp = { vm.tab.value = 2; onPage(null) })
+}
+
+/**
+ * An extensions sub-page's content. [onBack] is up one level (done / uninstalled / installed);
+ * [toSection] returns to the tabs (the install sheet's MCP button).
+ */
+@Composable
+fun ExtensionsSubPage(route: Route, onBack: () -> Unit, toSection: () -> Unit, onTop: Boolean, vm: ExtensionsViewModel = hiltViewModel()) {
+    LaunchedEffect(Unit) { vm.openOnce() }
+    when (route) {
+        is PluginRoute -> PluginDetailPage(vm, route.name, onBack = onBack)
+        is MarketEntryRoute -> MarketEntryPage(vm, route.url, route.name, onInstalled = onBack)
+        IndexesRoute -> IndexesPage(vm)
+        is McpRoute -> McpEditorPage(vm, route.id, route.npm, onDone = onBack)
+        else -> {}
+    }
+    if (onTop) InstallSheet(vm, onOpenMcp = { vm.tab.value = 2; toSection() })
 }
 
 @Composable
-private fun ExtensionsTabs(vm: ExtensionsViewModel, onPage: (String?) -> Unit) {
+private fun ExtensionsTabs(vm: ExtensionsViewModel, open: (Route) -> Unit) {
     val tab by vm.tab.collectAsStateWithLifecycle()
     Spacer(Modifier.height(8.dp))
     Segmented(listOf(stringResource(R.string.ext_tab_plugins), stringResource(R.string.ext_tab_skills), stringResource(R.string.ext_tab_mcp)), tab, { vm.tab.value = it })
     EngineGate(vm)
     StatusBanners(vm)
     when (tab) {
-        0 -> PluginsTab(vm, onPage)
+        0 -> PluginsTab(vm, open)
         1 -> SkillsTab(vm)
-        2 -> McpTab(vm, onPage)
+        2 -> McpTab(vm, open)
     }
 }
 
@@ -214,7 +218,7 @@ internal fun Notice(text: String, tone: Tone, busy: Boolean = false, action: (@C
 // ---- 插件 tab ---------------------------------------------------------------------------------------
 
 @Composable
-private fun PluginsTab(vm: ExtensionsViewModel, onPage: (String?) -> Unit) {
+private fun PluginsTab(vm: ExtensionsViewModel, open: (Route) -> Unit) {
     val c = Dsh.colors
     val context = LocalContext.current
     val list by vm.store.list.collectAsStateWithLifecycle()
@@ -234,7 +238,7 @@ private fun PluginsTab(vm: ExtensionsViewModel, onPage: (String?) -> Unit) {
             DMenu(menu, { menu = false }) {
                 MenuItem(stringResource(R.string.ext_add_menu_link), { menu = false; linkDialog = true }, icon = R.drawable.dsw_link_outline)
                 MenuItem(stringResource(R.string.ext_add_menu_file), { menu = false; pick.launch(arrayOf("application/gzip", "application/x-gzip", "application/x-tar", "application/zip", "application/octet-stream")) }, icon = R.drawable.dsw_folder_open_outline)
-                MenuItem(stringResource(R.string.ext_add_menu_index), { menu = false; onPage(ExtPages.INDEXES) }, icon = R.drawable.dsw_flat_list_outline)
+                MenuItem(stringResource(R.string.ext_add_menu_index), { menu = false; open(IndexesRoute) }, icon = R.drawable.dsw_flat_list_outline)
             }
         }
     }
@@ -255,7 +259,7 @@ private fun PluginsTab(vm: ExtensionsViewModel, onPage: (String?) -> Unit) {
     SettingsCard {
         if (plugins.isEmpty()) EmptyNote(stringResource(R.string.ext_none_installed))
         plugins.forEachIndexed { i, p ->
-            PluginRow(p, divider = i > 0, busy = p.name in busy, onOpen = { onPage(ExtPages.plugin(p.name)) }, onToggle = { vm.setEnabled(p.name, it) })
+            PluginRow(p, divider = i > 0, busy = p.name in busy, onOpen = { open(PluginRoute(p.name)) }, onToggle = { vm.setEnabled(p.name, it) })
             errors[p.name]?.let { e -> Text(ExtText.error(context, e), Modifier.padding(start = 16.dp, end = 16.dp, bottom = 10.dp), style = DshType.xxs12, color = c.error) }
         }
     }
@@ -266,7 +270,7 @@ private fun PluginsTab(vm: ExtensionsViewModel, onPage: (String?) -> Unit) {
     Row(Modifier.padding(start = 4.dp, top = 20.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
         Text(stringResource(R.string.ext_discover_from, if (market.indexes.size > 1) "${market.indexes.size}" else title), Modifier.weight(1f), style = DshType.xs13m, color = c.labelTertiary)
         if (market.loading) Spinner(12.dp)
-        Text(stringResource(R.string.ext_manage_indexes), Modifier.clip(Radius.sm).pressable({ onPage(ExtPages.INDEXES) }, Radius.sm).padding(horizontal = 6.dp, vertical = 2.dp),
+        Text(stringResource(R.string.ext_manage_indexes), Modifier.clip(Radius.sm).pressable({ open(IndexesRoute) }, Radius.sm).padding(horizontal = 6.dp, vertical = 2.dp),
             style = DshType.xs13, color = c.link)
     }
     val entries = market.entries
@@ -280,7 +284,7 @@ private fun PluginsTab(vm: ExtensionsViewModel, onPage: (String?) -> Unit) {
         if (entries.isEmpty() && !market.loading && market.errors.isEmpty()) EmptyNote(stringResource(R.string.ext_market_empty))
         entries.forEachIndexed { i, (url, e) ->
             MarketRow(e, lang, installed = e.name in installedNames || e.installed, divider = i > 0 || market.errors.isNotEmpty(),
-                onOpen = { onPage(if (e.name in installedNames) ExtPages.plugin(e.name) else ExtPages.market(url, e.name)) },
+                onOpen = { open(if (e.name in installedNames) PluginRoute(e.name) else MarketEntryRoute(url, e.name)) },
                 onInstall = { vm.install.start(e.installVersion?.let { v -> MarketIndex.installSpec(e.name, v) } ?: e.name) })
         }
     }

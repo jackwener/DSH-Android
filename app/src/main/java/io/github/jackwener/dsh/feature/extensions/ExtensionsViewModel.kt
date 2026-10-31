@@ -57,6 +57,10 @@ class ExtensionsViewModel @Inject constructor(
     /** Plugins with an action in flight (switch disabled meanwhile). */
     val busy = MutableStateFlow<Set<String>>(emptySet())
 
+    private var opened = false
+    /** [open] once per ViewModel (the settings graph): every extensions page calls it, whichever is shown first. */
+    fun openOnce() { if (!opened) { opened = true; open() } }
+
     fun open() = viewModelScope.launch {
         if (store.refresh() != null) {
             market.load()

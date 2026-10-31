@@ -61,7 +61,7 @@ import kotlinx.coroutines.launch
 
 /** MCP 服务 (§11): the user's servers with live status, and the three ways to add one. */
 @Composable
-fun McpTab(vm: ExtensionsViewModel, onPage: (String?) -> Unit) {
+fun McpTab(vm: ExtensionsViewModel, open: (io.github.jackwener.dsh.nav.Route) -> Unit) {
     val c = Dsh.colors
     val s by vm.settings.collectAsStateWithLifecycle()
     val status by vm.mcpStatus.collectAsStateWithLifecycle()
@@ -70,11 +70,11 @@ fun McpTab(vm: ExtensionsViewModel, onPage: (String?) -> Unit) {
 
     Text(stringResource(R.string.ext_mcp_desc), Modifier.padding(start = 4.dp, top = 12.dp, bottom = 8.dp), style = DshType.xs13, color = c.labelTertiary)
     SettingsCard {
-        SettingsRow(stringResource(R.string.ext_mcp_add_form), null, divider = false, onClick = { onPage(McpPages.new(McpServer.KIND_REMOTE)) },
+        SettingsRow(stringResource(R.string.ext_mcp_add_form), null, divider = false, onClick = { open(io.github.jackwener.dsh.nav.McpRoute()) },
             leading = { DIcon(R.drawable.dsw_link_outline, size = 16.dp, tint = c.labelSecondary) })
         SettingsRow(stringResource(R.string.ext_mcp_add_json), null, onClick = { paste = true },
             leading = { DIcon(R.drawable.dsw_code_outline, size = 16.dp, tint = c.labelSecondary) })
-        SettingsRow(stringResource(R.string.ext_mcp_add_npm), null, onClick = { onPage(McpPages.new(McpServer.KIND_NPM)) },
+        SettingsRow(stringResource(R.string.ext_mcp_add_npm), null, onClick = { open(io.github.jackwener.dsh.nav.McpRoute(npm = true)) },
             leading = { DIcon(R.drawable.dsw_download_outline, size = 16.dp, tint = c.labelSecondary) })
     }
     SettingsGroupTitle(stringResource(R.string.ext_tab_mcp))
@@ -83,7 +83,7 @@ fun McpTab(vm: ExtensionsViewModel, onPage: (String?) -> Unit) {
         s.mcpServers.forEachIndexed { i, m ->
             val st = status?.servers?.firstOrNull { it.server == m.id }
             SettingsRow(m.name, listOf(stringResource(if (m.local) R.string.ext_mcp_kind_npm else R.string.ext_mcp_kind_remote), mcpStateText(m, st)).joinToString(" · "),
-                divider = i > 0, onClick = { onPage(ExtPages.mcp(m.id)) },
+                divider = i > 0, onClick = { open(io.github.jackwener.dsh.nav.McpRoute(m.id)) },
                 leading = { StateDot(mcpDot(m, st)) },
                 trailing = { McpSwitch(vm, m) })
         }
@@ -91,11 +91,6 @@ fun McpTab(vm: ExtensionsViewModel, onPage: (String?) -> Unit) {
     if (s.mcpServers.any { it.local }) Text(stringResource(R.string.ext_mcp_local_note, McpServer.MAX_LOCAL_ENABLED), Modifier.padding(start = 4.dp, top = 6.dp),
         style = DshType.xxs12, color = c.labelTertiary)
     if (paste) PasteJsonDialog(vm) { paste = false }
-}
-
-/** `mcp:new` pages carry the kind the editor opens with. */
-object McpPages {
-    fun new(kind: String) = if (kind == McpServer.KIND_NPM) "mcp:new" + "#npm" else ExtPages.MCP_NEW
 }
 
 @Composable
@@ -123,18 +118,17 @@ private fun mcpDot(m: McpServer, st: McpServerStatus?) = when {
     else -> DotKind.Info
 }
 
-/** Add (`mcp:new`, `mcp:new#npm`) or edit (`mcp:<id>`) one server; remote servers are tested before saving. */
+/** Add ([serverId] null; [npmNew] opens on the npm kind) or edit one server; remote servers are tested before saving. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun McpEditorPage(vm: ExtensionsViewModel, idOrNull: String?, onDone: () -> Unit) {
+fun McpEditorPage(vm: ExtensionsViewModel, serverId: String?, npmNew: Boolean, onDone: () -> Unit) {
     val c = Dsh.colors
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val s by vm.settings.collectAsStateWithLifecycle()
     val status by vm.mcpStatus.collectAsStateWithLifecycle()
-    val npmNew = idOrNull == "new#npm"
-    val existing = idOrNull?.takeIf { !it.startsWith("new") }?.let { id -> s.mcpServers.firstOrNull { it.id == id } }
-    if (idOrNull != null && !idOrNull.startsWith("new") && existing == null) { LaunchedEffect(Unit) { onDone() }; return }
+    val existing = serverId?.let { s.mcpServers.firstOrNull { m -> m.id == it } }
+    if (serverId != null && existing == null) { LaunchedEffect(Unit) { onDone() }; return }
     var kind by rememberSaveable { mutableStateOf(existing?.kind ?: if (npmNew) McpServer.KIND_NPM else McpServer.KIND_REMOTE) }
     var name by rememberSaveable { mutableStateOf(existing?.name.orEmpty()) }
     var url by rememberSaveable { mutableStateOf(existing?.url.orEmpty()) }

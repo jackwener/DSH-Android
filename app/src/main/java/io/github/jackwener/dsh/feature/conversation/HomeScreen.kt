@@ -69,6 +69,7 @@ fun HomeScreen(vm: HomeViewModel, onSettings: (String?) -> Unit, onAutomation: (
     val sessions by vm.sessions.collectAsStateWithLifecycle()
     val status by vm.rowStatus.collectAsStateWithLifecycle()
     val currentId by vm.currentId.collectAsStateWithLifecycle()
+    // Transient layers close before Back leaves home (BackHandlerAllowlistTest): the open drawer.
     BackHandler(drawer.isOpen) { scope.launch { drawer.close() } }
     ModalNavigationDrawer(
         drawerState = drawer,
@@ -105,6 +106,7 @@ private fun ConversationPane(vm: HomeViewModel, onMenu: () -> Unit, onSettings: 
         if (live.sessionId == vm.id) prefill?.let { composer.text = it; vm.prefill.value = null }
     }
     val empty = conv.isEmpty && !live.running
+    // …and 轨迹, a view of the same session (not a page): Back returns to 对话.
     BackHandler(view == SessionView.Trajectory) { vm.view.value = SessionView.Chat }
     // While the run waits on the user (approval / question / permission / takeover card) nothing is
     // happening, so stop the "working" animations: the UI settles to idle, which also lets
