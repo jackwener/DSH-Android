@@ -158,11 +158,14 @@ async function run(id, replies, { budget } = {}) {
 }
 
 const todos = (...items) => ['todo_write', { todos: items.map(([content, status]) => ({ content, status })) }]
+/** contacts_unfollow is a deferred tool (ENGINE-CONTRACT §2.5.1): a scripted model loads it first, as a real one would. */
+const load = ['load_tools', { names: ['contacts_unfollow'] }]
 const unfollow = account => ['contacts_unfollow', { account }]
 
 test('model ends with "will continue next round" while todos are open: the same turn continues until done', async () => {
   const r = await run('cont', [
     { tools: [todos(['取关 @a', 'in_progress'], ['取关 @b', 'pending'], ['取关 @c', 'pending'])] },
+    { tools: [load] },
     { tools: [unfollow('@a')] },
     { text: '已取关 @a。未停止，仍在处理，下一轮会自动继续。' },
     { tools: [unfollow('@b'), unfollow('@c')] },
@@ -175,8 +178,8 @@ test('model ends with "will continue next round" while todos are open: the same 
   assert.deepEqual(r.ends.map(e => e.kind), ['completed'])
   assert.equal(r.nudges.length, 1)
   assert.match(JSON.stringify(r.nudges[0].data.content), /todo/i)
-  // The nudge reached the model as the newest message of the 4th request.
-  assert.match(JSON.stringify(r.reqs[3].body.messages.at(-1)), /continue|继续/i)
+  // The nudge reached the model as the newest message of the 5th request (after todos, load, unfollow, text).
+  assert.match(JSON.stringify(r.reqs[4].body.messages.at(-1)), /continue|继续/i)
   assert.deepEqual(r.status, ['running', 'idle'], 'no idle gap: the UI stays running across the continuation')
   assert.equal(r.outcomes.at(-1)?.reason, 'done')
 })
@@ -197,6 +200,7 @@ test('model stops again right after the nudge: reason pending_work with the open
 
 test('"will continue automatically" without a todo list gets one nudge', async () => {
   const r = await run('notodo', [
+    { tools: [load] },
     { tools: [unfollow('@f')] },
     { text: 'Still processing; the next round will continue automatically.' },
     { text: '已完成，共取关 1 个账号。' },
