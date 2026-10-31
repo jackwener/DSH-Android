@@ -87,7 +87,7 @@ class SystemTools @Inject constructor(
     }
 
     private companion object {
-        const val SCREEN_DESC = "Where the clock app opens: \"agent\" = your background screen if this conversation has one (default), \"main\" = the user's screen"
+        const val SCREEN_DESC = io.github.jackwener.dsh.core.capability.SchemaBuilder.SCREEN_DESC
     }
 
     override val tools = listOf(
@@ -200,7 +200,7 @@ class SystemTools @Inject constructor(
         // needsUnlock = true: the clock app handles the request in an activity, which Android only starts
         // reliably on an unlocked screen (and some clocks show a confirmation page).
         object : Tool("alarm_set", ToolGroup.System, Risk.write, true,
-            "Create an alarm in the clock app (optionally repeating), or start a countdown timer. Needs the phone unlocked. " +
+            "Create an alarm in the clock app (optionally repeating), or start a countdown timer. " +
                 "For an alarm the result says whether the system now reports it as the next alarm (verified / earlier_alarm_first / not_seen / unknown); " +
                 "unless verified, check the alarm list (alarm_show) before telling the user it is set. not_supported: set it in the clock app on screen.", {
             int("hour", "0-23"); int("minute", "0-59"); string("label", "Label")

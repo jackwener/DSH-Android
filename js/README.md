@@ -13,7 +13,7 @@ DeepSeek Harness (dsh) **0.2.1-rc.5**, installed unmodified from npm and customi
 | `packages/plugin-extensions/` | plugins, skills, MCP servers: the phone gate around dsh's plugin manager and the `android/ext/*` SDK methods ([`../docs/PLUGINS-CONTRACT.md`](../docs/PLUGINS-CONTRACT.md)); `boot.js` is main.mjs's pre-boot bookkeeping |
 | `packages/plugin-device/` | capability bridge client (`DSH_BRIDGE_FD`) → dynamic dsh tools |
 | `packages/plugin-guard/` | hardline shell floor, approval policy, budgets, phone system prompt |
-| `packages/plugin-mode/` | session modes: per-conversation tool restriction, skills switch, mode prompt section (`android/session/mode`, ENGINE-CONTRACT §2.5) |
+| `packages/plugin-mode/` | session modes: per-conversation tool restriction, skills switch, mode prompt section (`android/session/mode`, ENGINE-CONTRACT §2.5); deferred tools: catalog section + `load_tools` (`deferred.js`, §2.5.1) |
 | `packages/plugin-account/` | DeepSeek account login: loopback OAuth callback server + `account/*` SDK methods |
 | `packages/llm-service-lite/` | vendored `@snnh/dsh-llm-service-lite` 0.2.1 (MIT, snnh): third-party OpenAI-compatible model routes; built `lib/index.js` copied verbatim from the npm tarball (provenance in its `package.json` `//vendored`), Web client dropped. Upgrade = replace `lib/index.js` + note; changes go in `patches/` (14, 16, 17, 18); upstreaming notes in [`patches/UPSTREAM.md`](patches/UPSTREAM.md) |
 | `patches/*.patch` | unified diffs against `node_modules/`, applied in order with `patch -p1` (dry-run first) |
@@ -21,9 +21,10 @@ DeepSeek Harness (dsh) **0.2.1-rc.5**, installed unmodified from npm and customi
 | `scripts/unreachable.mjs` | lists packages reachable only through given deps (used to prune pi-ai's provider SDKs) |
 | `scripts/make-zip.py` | deterministic zip (sorted, fixed mtimes, rejects symlinks) |
 | `scripts/bench-cold-start.mjs` | host cold-start benchmark (spawn → `initialize`) |
+| `scripts/measure-prompt.mjs` | first-request size per session mode ("Hi"): system sections and tools by group, through a capture server on `DEEPSEEK_BASE_URL`; `--live` forwards to DeepSeek and adds provider token counts. Input: the app's `capability/list` (`DSH_CAPABILITY_DUMP=<file> ./gradlew testDebugUnitTest --tests '*CapabilityListTest*'`) |
 | `test/hardline.test.mjs` | hardline unit tests: `node --test js/test/hardline.test.mjs` |
 | `test/prompt.test.mjs` | system prompt section tests: `node --test js/test/prompt.test.mjs` |
-| `test/mode.test.mjs` | plugin-mode unit tests (categories, payload validation, restriction / guard / record on a fake context): `node --test js/test/mode.test.mjs` |
+| `test/mode.test.mjs` | plugin-mode unit tests (categories, payload validation, restriction / guard / record on a fake context; deferred tools: catalog, `load_tools`, loaded set across subagents and resume, stable prompt): `node --test js/test/mode.test.mjs` |
 | `test/provider-network.test.mjs` | patches 14/15 against a built stage tree: `DSH_STAGE_NM=<WORK_DIR>/stage/node_modules node --test js/test/provider-network.test.mjs` |
 | `test/provider-protocol.test.mjs` | patch 16 end to end: the real adapter against synthetic `node:http` SSE servers (`usage: null` frames, malformed JSON, bare-origin 404, refused port); same `DSH_STAGE_NM` |
 | `test/provider-headers.test.mjs` | patch 18 route headers against a fake OpenCode-Go-like server that refuses a chat without `x-opencode-session`: session id stable across two turns of a session, different across sessions / routes, fresh without a session and for listings; static / secret (`headerEnv`) headers; User-Agent token; same `DSH_STAGE_NM` |
@@ -32,7 +33,7 @@ DeepSeek Harness (dsh) **0.2.1-rc.5**, installed unmodified from npm and customi
 | `test/links.test.mjs` | user-supplied links (§5.1 of PLUGINS-CONTRACT): GitHub link normalization (blob/tree/raw/refs-heads/jsDelivr/gist), fake slow servers (answers after 3 s: a lone slow source and the last mirror left are not cut off; earlier attempts keep running), deadline, root-cause codes in failures, plugin `.zip` via mirrors; skill import from a SKILL.md blob link (jsDelivr listing → codeload → single file) when `DSH_STAGE_NM` is set: `node --test js/test/links.test.mjs` |
 | `test/extensions.test.mjs` | plugins end to end on a built stage with two fake registries, fake MCP servers and real restarts (native refusal before download, scan rollback, web-service precheck, peers, config forms, mirror fallback, integrity, updates, deferred removal, crash suspension, safe mode, engine replacement, MCP, skills); `DSH_STAGE_NM` as below, ~4 min |
 | `test/guard-ask.test.mjs` | plugin-guard's per-plugin ask-before-call |
-| `test/host-e2e.mjs` | host end-to-end run of the built `engine.zip` with a fake bridge; phase X installs real plugins from npm |
+| `test/host-e2e.mjs` | host end-to-end run of the built `engine.zip` with a fake bridge; phase H checks deferred tool loading on the wire (capture proxy in front of DeepSeek); phase X installs real plugins from npm |
 | `test/host-ac8-resume.mjs` | host repro of engine kill + `session/resume` + continuation |
 
 Our packages are plain ESM with no dependencies outside `node:` built-ins; there is no compile step (the vendored adapter is shipped as built upstream).
@@ -127,7 +128,7 @@ profile pnpm settings, overlay migration. Methods, files and error codes: `docs/
 - Opens `new net.Socket({ fd: DSH_BRIDGE_FD })` (unref'd; SDK stdin owns process lifetime).
 - `capability/list` at activation (with retries) and on every `capability/changed`; each `ToolDescriptor` becomes a dsh
   tool with its JSON Schema. Changed or removed tools are unregistered first; names that collide with dsh built-ins are
-  skipped. The description gets a footer with group, risk and unlock behaviour.
+  skipped. The description gets a one-line footer with risk and unlock (`[risk: write (changes the phone); needs the phone unlocked]`); plugin-guard's phone section explains it once.
 - Approval: a `tools/pre-execute` listener returns `ask` for `write | sensitive | dangerous`; dsh then sends
   `approval/request` to the app. `read` runs directly.
 - Timeouts (contract §3.1): dsh tool timeout = `timeoutMs + 15 s`, bridge request timeout = `timeoutMs + 10 s`;

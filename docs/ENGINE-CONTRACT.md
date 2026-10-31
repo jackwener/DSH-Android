@@ -228,6 +228,33 @@ The app lets the user pick the mode only before the conversation's first message
 (an edited user mode applies from the next prompt). CapabilityHub additionally refuses device calls of a group the
 session's mode excludes (`not_authorized`). `capability/list` stays global.
 
+#### 2.5.1 Deferred tools (issue #36)
+
+Tool definitions are input on every request; with all device groups a bare "Hi" cost ~19k input tokens, ~90 % of
+them schemas. plugin-mode (`deferred.js`) therefore loads definitions on demand, in every mode:
+
+- **Always loaded** (when the mode offers them): bash, read, read_image, write, edit, glob, grep, web_search, web_fetch,
+  skill, ask_user_question, todo_write, the goal tools, `load_tools`, and any built-in not listed below.
+- **Deferred**: every device tool, every third-party plugin / MCP tool, and the built-in groups `jobs` (job_*),
+  `subagents` (subagent, subagent_fork, list_subagent_models, send_message, interrupt_agent, list_agents) and `session`
+  (working_directory, exit_plan_mode). They are hidden with the same per-agent `tools.restrict({ deny })` as excluded
+  tools and listed in a per-agent section `android:deferred-tools` (order 160; `# Tools loaded on demand`, one line per
+  group: id, short summary, tool names; extension tools with a one-sentence hint). Fewer than 3 deferrable tools are
+  simply loaded (no catalog, no loader).
+- `load_tools { names: string[] }` takes tool and/or group names, adds them to the conversation's loaded set (per root
+  session, shared by subagents) and re-applies the restriction; the next step's request offers them. Excluded or unknown
+  names are reported back. No approval (it only changes what the model may call).
+- **Caching**: loading only adds tools. The catalog lists every deferred tool whether loaded or not, the `tool:<name>`
+  guidance sections of deferred built-ins are always dropped (the catalog line carries their gist), and plugin-guard's
+  phone section counts deferred tools as available (`androidToolScope.deferred(name, agent)`), so the system prompt does
+  not change on a load. dsh logs the addition (`developer/message` tool-addition); routes with mid-conversation tool
+  changes (official DeepSeek, `toolUpdate: addition-only`) send the new definitions after the cached prefix
+  (`defer_loading` + a `tool_addition` system block), other routes resend the tool list once per load.
+- **Persistence**: the loaded set is the deferrable tools the session's logged request header already offers plus the
+  plugin records `plugin:android-mode/tools-loaded { names }` (ignorable, never model-visible) the loader writes, so a
+  resumed conversation (and one started before this change, whose header lists every tool) never loses a tool.
+- Row config `deferTools: false` (android-mode) loads everything up front.
+
 ### 2.6 Extensions — `@dsh-android/plugin-extensions`
 
 Plugins, skills and MCP servers: `android/ext/*` methods and `android.ext.*` notifications, specified in
@@ -309,13 +336,13 @@ later, or send an SMS twice after a retry). The rules:
   engine start (the app currently sets only the two token limits; a limit of 0 is omitted). Token limits
   are metered **input-equivalent**: uncached input + cache writes + output, plus cache reads weighted by their price
   ratio (cacheRead / input = 0.1 by default). The cached prompt prefix (~13k tokens with all device groups) is re-read on
-  every step; counting it at full weight made a 10-step task look like ~130k tokens. The cost limit uses real prices.
+  every step; counting it at full weight made a 10-step task look like ~130k tokens (before deferred tools, §2.5.1; ~5k now plus what a conversation loads). The cost limit uses real prices.
 
 ## 4. dsh-side responsibilities (js/)
 - `@dsh-android/plugin-device`: registers every `ToolDescriptor` as a dsh tool; maps `risk` → dsh approval requirement (`read` auto; others ask); per-tool timeouts from `ToolDescriptor.timeoutMs` and `capability/cancel` on timeout/abort (§3.1).
 - `@dsh-android/plugin-account`: loopback OAuth callback server + account SDK methods/notifications (§2.4).
 - `@dsh-android/plugin-mode`: session modes (§2.5): per-conversation tool restriction + guard, skills switch, mode prompt
-  section, selection record.
+  section, selection record; deferred tools and `load_tools` (§2.5.1).
 - `@dsh-android/plugin-guard`: hardline command floor for the shell tool (relative paths resolve against the session
   cwd and any `cd` earlier in the command); approval policy (§2); token/cost budget enforcement from `budget/update`;
   system-prompt section describing the phone context and the tool-priority rule (system API > intent/deeplink >

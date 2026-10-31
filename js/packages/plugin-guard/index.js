@@ -220,7 +220,7 @@ Tool priority — always prefer the most direct, least fragile path:
 2. Intents and deep links (app_open_link, app_send_intent, share_to_app).
 3. Shizuku-backed tools (wifi_toggle, bluetooth_toggle, setting_put; adb_shell for pm, am, cmd, dumpsys, logcat or Android/data when no dedicated tool fits) when available.
 4. Screen automation (screen_read, screen_tap, screen_type, …) only when nothing above can do the job; it needs the phone unlocked and is slow and brittle.
-Each device tool's description ends with its policy line. A tool marked "needs the phone unlocked" waits until the user unlocks the phone; tell the user when that happens instead of reporting the task as done.` : 'This conversation has no device tools: you cannot act on the phone here.'}
+Each device tool's description ends with its policy line: risk read runs directly; write and sensitive (private data) may ask the user, depending on the permission mode; dangerous always asks. A tool marked "needs the phone unlocked" waits while the phone is locked (the user gets a notification) and returns waiting_for_user without acting if nobody unlocks it in time; tell the user when that happens instead of reporting the task as done.` : 'This conversation has no device tools: you cannot act on the phone here.'}
 
 Approvals and safety:
 - Read-only tools and read-only shell commands run directly${homeWrites ? ', and so do file writes inside your private home and temp folders (except in 仅可查看 mode)' : ''}. Other actions that change the phone ask the user, depending on the permission mode the user picked for this conversation; a read of private data (messages, contacts, notifications, clipboard, …) asks once per conversation.
@@ -492,7 +492,10 @@ export function apply(ctx, config = {}) {
     // while the tool set is.
     sp.variable('android_phone_context', context => {
       const scope = context?.scope
-      const visible = name => { try { return ctx.tools.get(name, scope) !== undefined } catch { return true } }
+      // A deferred tool (plugin-mode, loaded on demand) counts as visible: the section must not
+      // change when the conversation loads it (that would re-send the cached system prompt).
+      const deferred = name => { try { return ctx.get('androidToolScope')?.deferred?.(name, scope) === true } catch { return false } }
+      const visible = name => { try { return ctx.tools.get(name, scope) !== undefined || deferred(name) } catch { return true } }
       const all = descriptors()
       const shown = scope === undefined ? all : all.filter(d => visible(d.name))
       return systemPromptSection(locale, shown, {

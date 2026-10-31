@@ -302,6 +302,7 @@
     <string name="tool_rule_delete">删除自动化</string>
     <string name="tool_schedule">定时任务</string>
     <string name="tool_skill">技能</string>
+    <string name="tool_load_tools">加载工具</string>
     <string name="tool_subagent">子智能体</string>
     <string name="tool_generic">工具调用</string>
     <string name="on">开</string>

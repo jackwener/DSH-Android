@@ -6,6 +6,7 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonObjectBuilder
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
@@ -132,24 +133,33 @@ class SchemaBuilder {
     private val required = mutableListOf<String>()
 
     private fun add(name: String, required: Boolean, o: JsonObject) { props[name] = o; if (required) this.required += name }
+    // Every byte here is input on every request that has the tool loaded (issue #36): empty
+    // descriptions and an empty `required` are left out.
+    private fun JsonObjectBuilder.describe(desc: String) { if (desc.isNotBlank()) put("description", desc) }
     fun string(name: String, desc: String, required: Boolean = false, enum: List<String>? = null) = add(name, required, buildJsonObject {
-        put("type", "string"); put("description", desc)
+        put("type", "string"); describe(desc)
         if (enum != null) putJsonArray("enum") { enum.forEach { add(it) } }
     })
-    fun int(name: String, desc: String, required: Boolean = false) = add(name, required, buildJsonObject { put("type", "integer"); put("description", desc) })
-    fun number(name: String, desc: String, required: Boolean = false) = add(name, required, buildJsonObject { put("type", "number"); put("description", desc) })
-    fun bool(name: String, desc: String, required: Boolean = false) = add(name, required, buildJsonObject { put("type", "boolean"); put("description", desc) })
+    fun int(name: String, desc: String, required: Boolean = false) = add(name, required, buildJsonObject { put("type", "integer"); describe(desc) })
+    fun number(name: String, desc: String, required: Boolean = false) = add(name, required, buildJsonObject { put("type", "number"); describe(desc) })
+    fun bool(name: String, desc: String, required: Boolean = false) = add(name, required, buildJsonObject { put("type", "boolean"); describe(desc) })
     fun strings(name: String, desc: String, required: Boolean = false) = add(name, required, buildJsonObject {
-        put("type", "array"); put("description", desc); putJsonObject("items") { put("type", "string") }
+        put("type", "array"); describe(desc); putJsonObject("items") { put("type", "string") }
     })
-    fun obj(name: String, desc: String, required: Boolean = false) = add(name, required, buildJsonObject { put("type", "object"); put("description", desc) })
+    fun obj(name: String, desc: String, required: Boolean = false) = add(name, required, buildJsonObject { put("type", "object"); describe(desc) })
     fun raw(name: String, schema: JsonObject, required: Boolean = false) = add(name, required, schema)
+    /** The `screen` parameter of tools that act on or open a screen (the phone section explains the background screen). */
+    fun screen() = string("screen", SCREEN_DESC, enum = listOf("agent", "main"))
 
     fun build() = buildJsonObject {
         put("type", "object")
         putJsonObject("properties") { props.forEach { (k, v) -> put(k, v) } }
-        putJsonArray("required") { required.forEach { add(it) } }
+        if (required.isNotEmpty()) putJsonArray("required") { required.forEach { add(it) } }
         put("additionalProperties", false)
+    }
+
+    companion object {
+        const val SCREEN_DESC = "\"agent\" (default) = your background screen, \"main\" = the user's screen"
     }
 }
 

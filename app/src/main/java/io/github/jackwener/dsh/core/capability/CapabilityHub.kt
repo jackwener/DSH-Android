@@ -107,10 +107,7 @@ class CapabilityHub @Inject constructor(
      * the call's result or error instead (path=…, shizuku_unavailable, permission_missing).
      */
     private val listedCache = java.util.concurrent.ConcurrentHashMap<String, ToolDescriptor>()
-    private fun listed(t: Tool): ToolDescriptor = listedCache.getOrPut(t.name) {
-        if (t.shell == ShellUse.None) t.descriptor
-        else t.descriptor.copy(description = t.descriptor.description + ShellGate.staticNote(t.shell, t.shellFallback))
-    }
+    private fun listed(t: Tool): ToolDescriptor = listedCache.getOrPut(t.name) { Companion.listed(t) }
 
     fun attach(peer: JsonRpcPeer) { bridge = peer }
 
@@ -315,8 +312,13 @@ class CapabilityHub @Inject constructor(
         if (!r.ok) putJsonObject("error") { put("code", r.errorCode ?: "failed"); put("message", r.errorMessage ?: "") }
     }
 
-    private companion object {
-        const val TAG = "CapabilityHub"
+    companion object {
+        private const val TAG = "CapabilityHub"
+
+        /** [t]'s descriptor as `capability/list` sends it. */
+        fun listed(t: Tool): ToolDescriptor =
+            if (t.shell == ShellUse.None) t.descriptor
+            else t.descriptor.copy(description = t.descriptor.description + ShellGate.staticNote(t.shell, t.shellFallback))
         /** Fixed-step automations (no engine): how long a needsUnlock step waits for the user to unlock. */
         const val UNATTENDED_UNLOCK_WAIT_MS = 2 * 60 * 60_000L
         const val ANSWER_MARGIN_MS = 5_000L

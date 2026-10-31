@@ -41,7 +41,7 @@ class AppTools @Inject constructor(
 
     private companion object {
         const val SCREEN = "screen"
-        const val SCREEN_DESC = "Where to open it: \"agent\" = your own background screen (default when Shizuku is ready), \"main\" = the user's screen"
+        const val SCREEN_DESC = io.github.jackwener.dsh.core.capability.SchemaBuilder.SCREEN_DESC
     }
 
     private fun label(ai: ApplicationInfo) = pm.getApplicationLabel(ai).toString()
@@ -116,7 +116,7 @@ class AppTools @Inject constructor(
                 string("type", "MIME type")
                 string("package", "Target package")
                 obj("extras", "String extras {key: value}")
-                string(SCREEN, "Which screen: \"agent\" = your background screen if this conversation has one (default), \"main\" = the user's screen", enum = listOf("agent", "main"))
+                string(SCREEN, SCREEN_DESC, enum = listOf("agent", "main"))
             }) {
             override suspend fun invoke(args: JsonObject, call: CallContext): ToolResult {
                 val intent = Intent(args.reqStr("action"))

@@ -59,6 +59,13 @@
   config:
     modelsTimeoutMs: 1
 
+# The skill catalog (a user message in every conversation with skills on) lists name + one line
+# per skill; dsh allows 500 characters per description. 250 keeps the "use when …" part of
+# typical descriptions; the full SKILL.md loads with the `skill` tool (issue #36).
+- id: tool-skill
+  config:
+    catalogDescriptionMaxLength: 250
+
 # ── rows a phone does not need ───────────────────────────────────────────────
 # Mounted on demand by android-extensions instead (see above).
 - id: plugin-manager
