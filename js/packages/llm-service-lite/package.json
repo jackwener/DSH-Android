@@ -25,6 +25,7 @@
   },
   "homepage": "https://github.com/snnh/dsh-llm-service-lite#readme",
   "//vendored": "Vendored verbatim from npm @snnh/dsh-llm-service-lite@0.2.1 (gitHead 691f125641e1732417ef344ed640b6dae41d90df, tarball sha512-G+1/u+pb3k4HP0RjlCAG+L9hK2h8Us9n5QfmvGZKpL8QDaaoh6GSeqRefOL/nz8NrIuwA5Q+bSM6gJm4fIdClg==). Only lib/index.js (server side), LICENSE and locale are kept; the Web client (lib/client.js), types and the bundle patch are dropped: bundle-android mounts the row itself. Upgrade: replace lib/index.js from a newer tarball and update this note.",
+  "//patched": "DSH-Android: lib/index.js additionally carries one local fix (upstream snnh/dsh-llm-service-lite#1, DSH-Android issue #20): usageOf$1 (chat-completions) and usageOf (responses) treat `\"usage\": null` as `no usage report for this frame` instead of reading `.prompt_tokens` off null. OpenAI-compatible gateways send `\"usage\": null` on every intermediate streaming frame, and the resulting TypeError was reported as a provider transport failure. Regenerate by applying the same one-line guards when replacing lib/index.js from a newer tarball; drop this note once the vendored tarball carries the fix.",
   "engines": {
     "node": "^22.19.0 || >=24.0.0"
   },
