@@ -166,20 +166,19 @@ fun DefaultModelCard(vm: SettingsViewModel) {
     }
 }
 
-/** Add (preset list → editor) or edit one provider. */
+/** Add (preset list → [onPreset] opens the editor for it) or edit one provider ([presetId]: the new provider's preset). */
 @Composable
-fun ProviderPage(vm: SettingsViewModel, target: String, onDone: () -> Unit) {
+fun ProviderPage(vm: SettingsViewModel, target: String, presetId: String?, onPreset: (String) -> Unit, onDone: () -> Unit) {
     val s by vm.settings.collectAsStateWithLifecycle()
     val existing = s.providers.firstOrNull { it.id == target }
-    var presetId by rememberSaveable(target) { mutableStateOf(existing?.preset) }
-    val preset = presetOf(presetId)
+    val preset = presetOf(presetId ?: existing?.preset)
     if (existing == null && preset == null) {
         // Step 1: pick a preset.
         Spacer(Modifier.height(8.dp))
         SettingsGroupTitle(stringResource(R.string.prov_choose))
         SettingsCard {
             PRESETS.forEachIndexed { i, p ->
-                SettingsRow(presetName(p), p.baseUrl.ifEmpty { null }, onClick = { presetId = p.id }, divider = i > 0, trailing = { chevron() })
+                SettingsRow(presetName(p), p.baseUrl.ifEmpty { null }, onClick = { onPreset(p.id) }, divider = i > 0, trailing = { chevron() })
             }
         }
         return

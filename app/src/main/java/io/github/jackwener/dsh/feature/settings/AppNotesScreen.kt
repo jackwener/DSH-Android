@@ -1,7 +1,6 @@
 package io.github.jackwener.dsh.feature.settings
 
 import android.content.Context
-import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -20,10 +19,10 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -97,19 +96,22 @@ class AppNotesViewModel @Inject constructor(
     fun clearAll() = io { notes.clearAll() }
 }
 
-/** 设置 → App 经验: apps with notes, then one app's notes (delete one, or clear the app / everything). */
+/**
+ * 设置 → App 经验: apps with notes ([open] null), or one app's notes ([open] = its package; delete
+ * one, or clear the app / everything). Both are pages of their own; [onOpen] opens an app's.
+ */
 @Composable
-fun AppNotesScreen(onBack: () -> Unit, vm: AppNotesViewModel = hiltViewModel()) {
+fun AppNotesScreen(open: String?, onBack: () -> Unit, onOpen: (String) -> Unit = {}, vm: AppNotesViewModel = hiltViewModel()) {
     val c = Dsh.colors
     val apps by vm.apps.collectAsStateWithLifecycle()
     val reflect by vm.reflect.collectAsStateWithLifecycle()
-    var open by rememberSaveable { mutableStateOf<String?>(null) }
     /** "" = everything, else a package. */
     var confirm by remember { mutableStateOf<String?>(null) }
     val group = apps?.firstOrNull { it.pkg == open }
-    BackHandler(open != null) { open = null }
+    // An app's page whose notes are all gone (deleted / cleared) goes back to the list.
+    if (open != null && apps != null && group == null) LaunchedEffect(Unit) { onBack() }
     Column(Modifier.fillMaxSize().background(c.bgBase).statusBarsPadding()) {
-        DTopBar(group?.label ?: stringResource(R.string.app_notes), { if (open != null) open = null else onBack() }) {
+        DTopBar(group?.label ?: stringResource(R.string.app_notes), onBack) {
             val count = group?.notes?.size ?: apps.orEmpty().sumOf { it.notes.size }
             if (count > 0) DButton(stringResource(if (group != null) R.string.app_notes_clear else R.string.app_notes_clear_all),
                 { confirm = group?.pkg ?: "" }, variant = BtnVariant.Ghost, size = BtnSize.Sm)
@@ -129,7 +131,7 @@ fun AppNotesScreen(onBack: () -> Unit, vm: AppNotesViewModel = hiltViewModel()) 
                 group == null -> item {
                     SettingsCard {
                         list.forEachIndexed { i, g ->
-                            SettingsRow(g.label, g.pkg, divider = i > 0, onClick = { open = g.pkg },
+                            SettingsRow(g.label, g.pkg, divider = i > 0, onClick = { onOpen(g.pkg) },
                                 leading = { AppIcon(g.icon) },
                                 trailing = {
                                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -150,7 +152,7 @@ fun AppNotesScreen(onBack: () -> Unit, vm: AppNotesViewModel = hiltViewModel()) 
         DDialog({ confirm = null }, stringResource(R.string.app_notes_clear_title), buttons = {
             DButton(stringResource(R.string.cancel), { confirm = null }, variant = BtnVariant.Outline)
             DButton(stringResource(R.string.app_notes_clear), {
-                if (target.isEmpty()) vm.clearAll() else { vm.clear(target); open = null }
+                if (target.isEmpty()) vm.clearAll() else vm.clear(target)
                 confirm = null
             }, variant = BtnVariant.Danger)
         }) {

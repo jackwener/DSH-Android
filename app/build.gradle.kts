@@ -52,6 +52,11 @@ android {
             signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")
         }
     }
+    testOptions {
+        unitTests.isIncludeAndroidResources = true
+        // Robolectric reaches into java.io.FileDescriptor on JDK 17+.
+        unitTests.all { it.jvmArgs("--add-exports=java.base/jdk.internal.access=ALL-UNNAMED", "--add-opens=java.base/java.io=ALL-UNNAMED") }
+    }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
@@ -122,6 +127,10 @@ dependencies {
     implementation(libs.coil.compose)
     implementation(libs.markdown.m3)
     testImplementation(libs.junit)
+    // Back-stack tests: the real nav graph on a TestNavHostController (Robolectric for the Android framework bits).
+    testImplementation(libs.robolectric)
+    testImplementation(libs.androidx.test.core)
+    testImplementation(libs.androidx.navigation.testing)
     // Room migration tests on the JVM: the real SQLite engine runs the migration SQL against the exported schemas.
     testImplementation(libs.sqlite.jdbc)
     // Geofences on devices with Play services (background-FGS-start exempt); LocationManager otherwise.

@@ -101,7 +101,7 @@ fun ModePage(vm: SettingsViewModel, target: String, onDone: () -> Unit, onOpen: 
     val s by vm.settings.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
     val existing = if (target == NEW_MODE) null else s.allModes.firstOrNull { it.id == target }
-    if (target != NEW_MODE && existing == null) { onDone(); return }
+    if (target != NEW_MODE && existing == null) { androidx.compose.runtime.LaunchedEffect(Unit) { onDone() }; return }
     val copyName = existing?.let { stringResource(R.string.mode_copy_name, ModeUi.name(it)) } ?: ""
     val duplicate: (SessionMode) -> Unit = { m ->
         val id = SessionModes.newCustomId(s.allModes.map { it.id })
