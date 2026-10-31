@@ -226,6 +226,8 @@ data class ExtList(
     @Serializable(with = ExtPluginListSerializer::class)
     val plugins: List<ExtPlugin> = emptyList(),
     val safeMode: Boolean = false,
+    /** Why safe mode is on: 'boot-failures' | 'requested' | 'crash-loop' (absent from older engines). */
+    val safeModeReason: String? = null,
     val restartPending: Boolean = false,
     val dshVersion: String = "",
     val registries: List<String> = emptyList(),
@@ -233,6 +235,10 @@ data class ExtList(
     val notices: List<ExtNotice> = emptyList(),
 ) {
     val updates: List<ExtPlugin> get() = plugins.filter { it.update?.compatible == true }
+
+    /** Plugins safe mode keeps paused; the banner shows only while there is at least one (an empty set is no safe mode). */
+    val safeModePaused: Int get() = plugins.count { it.suspended?.reason == "safe-mode" }
+    val showSafeModeBanner: Boolean get() = safeMode && safeModePaused > 0
 }
 
 /** Result of every state-changing call (§14). */
@@ -338,7 +344,7 @@ data class ExtProgress(
 /** `android.ext.notice` (sent after `ready`). */
 @Serializable
 data class ExtNotice(
-    /** 'suspended' | 'safe-mode' | 'activated' | 'activation-failed'. */
+    /** 'suspended' | 'safe-mode' | 'safe-mode-cleared' | 'activated' | 'activation-failed'. */
     val kind: String,
     val name: String? = null,
     val message: String = "",

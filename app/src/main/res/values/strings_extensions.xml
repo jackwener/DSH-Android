@@ -15,6 +15,8 @@
     <string name="ext_safe_mode_start">安全模式启动</string>
     <string name="ext_safe_mode_start_desc">先暂停全部插件再启动，用来找出是哪个插件出了问题。</string>
     <string name="ext_safe_mode_banner">引擎连续两次没能启动，已暂停全部 %d 个插件。可以逐个重新启用，找出有问题的那个。</string>
+    <string name="ext_safe_mode_banner_requested">安全模式：已暂停全部 %d 个插件。可以逐个重新启用，找出有问题的那个。</string>
+    <string name="ext_safe_mode_banner_crash_loop">引擎反复崩溃，已进入安全模式，暂停了全部 %d 个插件。可以逐个重新启用，找出有问题的那个。</string>
     <string name="ext_restart_pending">插件变更会在当前任务结束后生效。</string>
     <string name="ext_restart_now">立即重启</string>
     <string name="ext_restarting">正在重新加载插件…</string>

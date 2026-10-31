@@ -15,6 +15,8 @@
     <string name="ext_safe_mode_start">Start in safe mode</string>
     <string name="ext_safe_mode_start_desc">Pauses every plugin, then starts. Use it to find the plugin that breaks things.</string>
     <string name="ext_safe_mode_banner">The engine failed to start twice in a row, so all %d plugins were paused. Turn them back on one at a time to find the one causing trouble.</string>
+    <string name="ext_safe_mode_banner_requested">Safe mode: all %d plugins are paused. Turn them back on one at a time to find the one causing trouble.</string>
+    <string name="ext_safe_mode_banner_crash_loop">The engine kept crashing, so safe mode paused all %d plugins. Turn them back on one at a time to find the one causing trouble.</string>
     <string name="ext_restart_pending">Plugin changes will apply when the current task ends.</string>
     <string name="ext_restart_now">Restart now</string>
     <string name="ext_restarting">Reloading plugins…</string>

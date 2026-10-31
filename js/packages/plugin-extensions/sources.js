@@ -15,9 +15,10 @@
 // Result: { spec, kind, display, updatable, repo?, note? }. Failures throw SourceError(code, params).
 import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
-import { basename, join, relative } from 'node:path'
+import { basename, dirname, join, relative } from 'node:path'
 import { ArchiveError, commonTop, packageRoot, readArchive, subtree, writeTgz } from './archive.js'
-import { SourcesError, fetchFirst, githubFileUrls } from './fetch-sources.js'
+import { linkFailure, triedText } from './errors.js'
+import { SourcesError, fetchLink, fetchLinkJson, githubFileUrls, parseGithubLink } from './fetch-sources.js'
 
 export class SourceError extends Error {
   constructor(code, params = {}) { super(`${code}: ${JSON.stringify(params)}`); this.code = code; this.params = params }
@@ -67,22 +68,13 @@ export function githubRepoOf(repository) {
   return m === null ? undefined : `${m[1]}/${m[2]}`.toLowerCase()
 }
 
-async function fetchBytes(url, { timeoutMs = 20000, maxBytes = 64 * 1024 * 1024, headers = {}, fetchImpl = fetch } = {}) {
-  const res = await fetchImpl(url, { signal: AbortSignal.timeout(timeoutMs), redirect: 'follow', headers: { 'user-agent': 'DSH-Android', ...headers } })
-  if (!res.ok) { await res.body?.cancel(); const e = new Error(`HTTP ${res.status} from ${new URL(url).host}`); e.status = res.status; throw e }
-  const chunks = []
-  let size = 0
-  for await (const chunk of res.body ?? []) {
-    size += chunk.byteLength
-    if (size > maxBytes) throw new Error(`download larger than ${maxBytes} bytes`)
-    chunks.push(chunk)
-  }
-  return Buffer.concat(chunks.map(c => Buffer.from(c)))
-}
-
-async function fetchJson(url, options) {
-  return JSON.parse((await fetchBytes(url, { maxBytes: 16 * 1024 * 1024, ...options, headers: { accept: 'application/json', ...options?.headers } })).toString('utf8'))
-}
+// Every download goes through fetch-sources' fetchLink (mirrors for GitHub files, slow-link
+// timeouts, every source named on failure). API / registry lookups are optional steps: shorter.
+const API = { timeoutMs: 15000, headerTimeoutMs: 15000 }
+const fetchBytes = async (url, options = {}) => (await fetchLink(url, { urls: [url], ...options })).bytes
+const fetchJson = (url, options = {}) => fetchLinkJson(url, { urls: [url], ...API, ...options })
+const is404 = error => error instanceof SourcesError && error.attempts.length > 0 && error.attempts.every(a => a.reason === 'http-404')
+const reasonText = error => error instanceof SourcesError ? triedText(error.attempts) : String(error?.message ?? error)
 
 /** A staging tgz for a package directory tree (entries re-rooted at the package). */
 function stage(entries, staging, label) {
@@ -186,18 +178,32 @@ export async function resolveSource(input, options = {}) {
     if (/\.(tgz|tar\.gz)$/i.test(url.pathname)) return { spec: text, kind: 'tarball', display: basename(url.pathname), updatable: false }
     if (/\.zip$/i.test(url.pathname)) {
       let bytes
-      try { bytes = await fetchBytes(text, { fetchImpl }) } catch (error) { throw new SourceError('network', { host: url.host, reason: String(error?.message ?? error) }) }
+      try { ({ bytes } = await fetchLink(text, { fetchImpl })) } catch (error) { throw new SourceError(...linkFailure(error, text)) }
       const staged = fromArchive(bytes, staging, basename(url.pathname))
       return { spec: `file:${staged.file}`, kind: 'file', display: staged.manifest.name, updatable: false, note: 'zip repacked' }
     }
   }
 
-  const gh = parseGithub(text)
+  const gh = githubOf(text)
   if (gh !== undefined) return resolveGithub(gh, { ...options, fetchImpl, staging, input: text })
 
   const npm = parseNpmSpec(text)
   if (npm !== undefined) return { spec: text, kind: 'npm', display: npm.name, updatable: true }
   throw new SourceError('bad-input', { input: text })
+}
+
+/**
+ * The GitHub package directory an input names: parseGithub's forms (shorthand, github.com
+ * repository / tree / blob links), and every link parseGithubLink understands (raw / jsDelivr
+ * file URLs): a file link means the package directory holding it.
+ */
+function githubOf(text) {
+  const link = /^https?:/i.test(text) ? parseGithubLink(text) : undefined
+  if (link !== undefined) {
+    const dir = link.kind === 'file' ? (dirname(link.path) === '.' ? '' : dirname(link.path)) : link.path
+    return { owner: link.owner, repo: link.repo, ref: link.ref, dir }
+  }
+  return parseGithub(text)
 }
 
 async function resolveGithub(gh, options) {
@@ -208,9 +214,9 @@ async function resolveGithub(gh, options) {
   let ref = gh.ref
   const reasons = []
   if (ref === undefined) {
-    try { ref = (await fetchJson(`${ep.api}/repos/${gh.owner}/${gh.repo}`, { fetchImpl, timeoutMs: 10000 })).default_branch } catch (error) {
-      if (error?.status === 404) throw new SourceError('needs-git', { reason: 'repository not found or private' })
-      reasons.push(String(error?.message ?? error))
+    try { ref = (await fetchJson(`${ep.api}/repos/${gh.owner}/${gh.repo}`, { fetchImpl })).default_branch } catch (error) {
+      if (is404(error)) throw new SourceError('needs-git', { reason: 'repository not found or private' })
+      reasons.push(reasonText(error))
     }
   }
   const at = ref ?? 'HEAD'
@@ -220,8 +226,7 @@ async function resolveGithub(gh, options) {
   {
     const urls = githubFileUrls({ owner: gh.owner, repo: gh.repo, ref: at, path: `${gh.dir ? gh.dir + '/' : ''}package.json` }, { ...process.env, ...options.env })
     try {
-      const { response } = await fetchFirst([urls.at(-1), ...urls.slice(0, -1)], { family: 'github', fetchImpl, init: { signal: AbortSignal.timeout(20000), redirect: 'follow', headers: { 'user-agent': 'DSH-Android', accept: 'application/json' } } })
-      manifest = JSON.parse(await response.text())
+      manifest = await fetchLinkJson(undefined, { urls: [urls.at(-1), ...urls.slice(0, -1)], family: 'github', fetchImpl, timeoutMs: 25000 })
     } catch (error) {
       if (error instanceof SourcesError) reasons.push(...error.attempts.map(a => a.detail ?? a.reason))
       else reasons.push(String(error?.message ?? error))
@@ -231,7 +236,7 @@ async function resolveGithub(gh, options) {
   const candidates = [...new Set([manifest?.name, gh.dir ? basename(gh.dir).toLowerCase() : undefined, gh.repo.toLowerCase()].filter(n => typeof n === 'string' && NPM_NAME.test(n)))]
   for (const name of candidates) {
     try {
-      const latest = await fetchJson(`${registry}${name.replace('/', '%2F')}/latest`, { fetchImpl, timeoutMs: 10000 })
+      const latest = await fetchJson(`${registry}${name.replace('/', '%2F')}/latest`, { fetchImpl })
       if (githubRepoOf(latest.repository) === repoKey && latest.dsh?.bundle !== undefined) {
         return { spec: name, kind: 'npm', display: name, updatable: true, repo: `https://github.com/${gh.owner}/${gh.repo}`, note: 'github → npm' }
       }
@@ -240,7 +245,7 @@ async function resolveGithub(gh, options) {
   // 2. a .tgz attached to the latest release
   if (gh.dir === '') {
     try {
-      const release = await fetchJson(`${ep.api}/repos/${gh.owner}/${gh.repo}/releases/latest`, { fetchImpl, timeoutMs: 10000 })
+      const release = await fetchJson(`${ep.api}/repos/${gh.owner}/${gh.repo}/releases/latest`, { fetchImpl })
       const asset = (release.assets ?? []).find(a => /\.(tgz|tar\.gz)$/i.test(a.name ?? '') && !/source/i.test(a.name ?? ''))
       if (asset?.browser_download_url) return { spec: asset.browser_download_url, kind: 'tarball', display: asset.name, updatable: false, repo: `https://github.com/${gh.owner}/${gh.repo}`, note: 'github release asset' }
     } catch {}
@@ -248,9 +253,9 @@ async function resolveGithub(gh, options) {
   if (manifest === undefined && reasons.length > 0 && reasons.every(r => !/HTTP 404/.test(r))) throw new SourceError('github-unreachable', { reason: reasons[0] })
   // 3. the commit's source tree (codeload), its package directory repacked
   let bytes
-  try { bytes = await fetchBytes(`${ep.codeload}/${gh.owner}/${gh.repo}/tar.gz/${encodeURIComponent(at)}`, { fetchImpl, timeoutMs: 60000 }) } catch (error) {
-    if (error?.status === 404) throw new SourceError('needs-git', { reason: 'repository not found or private' })
-    throw new SourceError('github-unreachable', { reason: String(error?.message ?? error) })
+  try { bytes = await fetchBytes(`${ep.codeload}/${gh.owner}/${gh.repo}/tar.gz/${encodeURIComponent(at)}`, { fetchImpl }) } catch (error) {
+    if (is404(error)) throw new SourceError('needs-git', { reason: 'repository not found or private' })
+    throw new SourceError('github-unreachable', { reason: reasonText(error), ...error instanceof SourcesError ? { attempts: error.attempts } : {} })
   }
   let entries
   try { entries = readArchive(bytes) } catch (error) { throw new SourceError('bad-archive', { reason: String(error?.message ?? error) }) }

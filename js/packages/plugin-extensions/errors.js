@@ -6,7 +6,7 @@
 // Sources: the pnpmfile gate (`DSHA_NATIVE <pkg>@<ver> <code> <detail>`), our scan and
 // precheck, dsh's plugin manager (ManagementError codes, pnpm failure kinds, incompatible[]).
 
-import { SourcesError, reasonOf } from './fetch-sources.js'
+import { LinkTooLargeError, SourcesError, codeOf, reasonOf } from './fetch-sources.js'
 
 const ZH = {
   'native-addon': p => `无法安装 ${p.name}：它依赖原生模块 ${p.pkg}（要为电脑编译的二进制程序），手机上的 DSH 运行不了这类插件。`,
@@ -23,6 +23,9 @@ const ZH = {
   'needs-build': () => '这个 GitHub 仓库是源代码，要先构建才能用。请让作者发布到 npm，或者在 Releases 里附上 .tgz 包。',
   'github-unreachable': p => `访问 GitHub 失败（${p.reason}）。可以改用 npm 包名，或者下载 .tgz 后从文件安装。`,
   'index-unreachable': p => `连不上插件索引。试过：${p.tried}。检查网络或代理后重试。`,
+  'link-unreachable': p => `下载 ${p.host} 上的文件失败。试过：${p.tried}。检查链接、网络或代理后重试。`,
+  'link-is-page': p => `${p.host} 返回的是网页，不是文件。请改用文件的直链（GitHub 上点「Raw」得到的地址），或者直接粘贴 GitHub 仓库 / 目录链接。`,
+  'link-too-large': p => `${p.host} 上的文件太大（超过 ${Math.round((p.maxBytes ?? 0) / 1048576)} MB），已中止。`,
   'index-invalid': p => `插件索引的内容有误（${p.reason}），请稍后重试或联系索引维护者。`,
   'bad-archive': () => '文件里找不到 package.json，看起来不是插件包。',
   'bad-input': p => `看不懂这个输入：${p.input}。请填 npm 包名、npm 或 GitHub 链接、.tgz/.zip 链接或本地文件。`,
@@ -31,7 +34,7 @@ const ZH = {
   'activation-failed': p => `${p.name} 已安装，但启动时出错：${p.error}。其他功能不受影响。`,
   'waiting-service': p => `${p.name} 在等待服务 ${p.services}，可能还缺它依赖的另一个插件。`,
   'crash-suspended': p => `${p.name} 让引擎崩溃了，已暂停它。`,
-  'safe-mode': p => `引擎连续两次没能启动，已暂停全部 ${p.count} 个插件。可以逐个重新启用，找出有问题的那个。`,
+  'safe-mode': p => `${p.why === 'requested' ? '安全模式启动' : p.why === 'crash-loop' ? '引擎反复崩溃' : '引擎连续两次没能启动'}，已暂停全部 ${p.count} 个插件。可以逐个重新启用，找出有问题的那个。`,
   'restart-pending': () => '插件变更会在当前任务结束后生效。',
   'pnpm-failed': p => `安装没成功：${p.reason}。`,
   'not-installed': p => `${p.name} 没有安装。`,
@@ -66,6 +69,9 @@ const EN = {
   'needs-build': () => 'This GitHub repository is source code that must be built first. Ask the author to publish it to npm or attach a .tgz to a release.',
   'github-unreachable': p => `GitHub could not be reached (${p.reason}). Use the npm package name, or download the .tgz and install it from a file.`,
   'index-unreachable': p => `Couldn't reach the plugin index. Tried: ${p.tried}. Check the network or proxy, then retry.`,
+  'link-unreachable': p => `Couldn't download the file from ${p.host}. Tried: ${p.tried}. Check the link, the network or proxy, then retry.`,
+  'link-is-page': p => `${p.host} answered with a web page, not a file. Use the file's direct link (GitHub's "Raw" button), or paste the GitHub repository / folder link.`,
+  'link-too-large': p => `The file on ${p.host} is too large (over ${Math.round((p.maxBytes ?? 0) / 1048576)} MB); aborted.`,
   'index-invalid': p => `The plugin index is malformed (${p.reason}). Retry later or contact its maintainer.`,
   'bad-archive': () => 'No package.json in this file; it does not look like a plugin package.',
   'bad-input': p => `Cannot read this input: ${p.input}. Give an npm name, an npm or GitHub link, a .tgz/.zip link or a local file.`,
@@ -74,7 +80,7 @@ const EN = {
   'activation-failed': p => `${p.name} is installed but failed to start: ${p.error}. Everything else keeps working.`,
   'waiting-service': p => `${p.name} is waiting for the service ${p.services}; it may need another plugin.`,
   'crash-suspended': p => `${p.name} crashed the engine and was suspended.`,
-  'safe-mode': p => `The engine failed to start twice in a row; all ${p.count} plugins were suspended. Re-enable them one by one to find the culprit.`,
+  'safe-mode': p => `${p.why === 'requested' ? 'Started in safe mode' : p.why === 'crash-loop' ? 'The engine kept crashing' : 'The engine failed to start twice in a row'}; all ${p.count} plugins were suspended. Re-enable them one by one to find the culprit.`,
   'restart-pending': () => 'Plugin changes apply after the current task ends.',
   'pnpm-failed': p => `The installation failed: ${p.reason}.`,
   'not-installed': p => `${p.name} is not installed.`,
@@ -105,6 +111,7 @@ const ACTIONS = {
   'pnpm-failed': ['open-log'],
   'waiting-service': ['disable', 'uninstall'],
   'index-unreachable': ['retry'],
+  'link-unreachable': ['retry'],
   'index-invalid': ['retry'],
 }
 
@@ -226,10 +233,36 @@ export function sourceReason(reason) {
   return words ? words[z ? 0 : 1] : (z ? '网络错误' : 'network error')
 }
 
-/** `host（原因）、host（原因）` for SourcesError attempts. */
+/**
+ * `host（原因 CODE）、host（原因）` for SourcesError attempts: the reason in words plus the root
+ * cause's code (`UND_ERR_CONNECT_TIMEOUT`, `ECONNRESET`, …) when there is one, never a bare
+ * "fetch failed". A source still waiting when another answered (`abandoned`) is left out.
+ */
 export function triedText(attempts) {
   const z = zh()
-  return attempts.map(a => z ? `${a.host}（${sourceReason(a.reason)}）` : `${a.host} (${sourceReason(a.reason)})`).join(z ? '、' : ', ')
+  return attempts.filter(a => a.reason !== 'abandoned').map(a => {
+    const why = [sourceReason(a.reason), a.code].filter(Boolean).join(' ')
+    return z ? `${a.host}（${why}）` : `${a.host} (${why})`
+  }).join(z ? '、' : ', ')
+}
+
+/**
+ * A failed download of a user-supplied link (fetchLink) as `[code, params]` for SourceError /
+ * SkillError: `link-unreachable` naming every source tried and why, `link-too-large`, else
+ * `link-unreachable` for a single URL with the root cause.
+ */
+export function linkFailure(error, url) {
+  const hostOf = u => { try { return new URL(u).host } catch { return String(u) } }
+  const host = hostOf(url)
+  if (error instanceof LinkTooLargeError) return ['link-too-large', { url, host, maxBytes: error.maxBytes }]
+  let attempts
+  for (let e = error, i = 0; e != null && i < 6; e = e.cause, i++) if (e instanceof SourcesError) { attempts = e.attempts; break }
+  if (attempts === undefined) {
+    const code = codeOf(error)
+    attempts = [{ url, host, reason: reasonOf(error), detail: String(error?.message ?? error).slice(0, 200), ...code ? { code } : {} }]
+  }
+  const shown = attempts.map(a => ({ host: a.host, url: a.url, reason: a.reason ?? 'network', ...a.detail ? { detail: a.detail } : {}, ...a.code ? { code: a.code } : {} }))
+  return ['link-unreachable', { url, host, tried: triedText(shown), reason: triedText(shown), attempts: shown }]
 }
 
 export function networkReason(text) {
@@ -259,13 +292,14 @@ export function marketError(error, url) {
   const line = String(error?.message ?? error ?? '').split('\n')[0].slice(0, 300)
   for (let e = error, i = 0; e != null && i < 6; e = e.cause, i++) {
     if (e instanceof SourcesError) {
-      const attempts = e.attempts.map(a => ({ host: a.host, url: a.url, reason: a.reason ?? 'network', ...a.detail ? { detail: a.detail } : {} }))
+      const attempts = e.attempts.map(a => ({ host: a.host, url: a.url, reason: a.reason ?? 'network', ...a.detail ? { detail: a.detail } : {}, ...a.code ? { code: a.code } : {} }))
       return userError('index-unreachable', { url, tried: triedText(attempts), attempts }, { detail: line })
     }
   }
   if (error?.code === 'plugin-market/fetch-failed') {
     const status = /: HTTP (\d{3})$/.exec(error.message ?? '')?.[1]
-    const attempts = [{ host: hostOf(url), url, reason: status ? `http-${status}` : reasonOf(error) }]
+    const code = status ? undefined : codeOf(error)
+    const attempts = [{ host: hostOf(url), url, reason: status ? `http-${status}` : reasonOf(error), ...code ? { code } : {} }]
     return userError('index-unreachable', { url, tried: triedText(attempts), attempts }, { detail: line })
   }
   if (error?.code === 'plugin-market/invalid-index') return userError('index-invalid', { url, reason: line })

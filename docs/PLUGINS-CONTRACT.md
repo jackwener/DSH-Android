@@ -90,11 +90,24 @@ becomes `android/app-layer.patch.yml`. Rows the overlay sets cannot be changed b
 - A fatal error (uncaught exception, fail-loud rejection → exit ≠ 0) is written to `last-crash.json` with its stack.
   Next boot: if the stack's files under `profiles/android/node_modules/` belong to exactly one selected third-party
   bundle (itself or its dependency closure), that bundle is deselected and `suspended {reason: 'crash'}`.
-- Otherwise, when the last two boots never became ready (SIGKILL on the app's initialize timeout counts) or
-  `DSH_ANDROID_SAFE_MODE=1`, and third-party bundles are selected: **safe mode** — bundles reset to the three built-ins,
-  every third-party one `suspended {reason: 'safe-mode'}`, `safeMode.savedBundles` keeps the old list.
-- Both produce a notice (§4). `android/ext/resume` / `setEnabled` re-selects one; safe mode ends when no
-  safe-mode suspension is left.
+- Otherwise, when the last two boots of this engine build never became ready (SIGKILL on the app's initialize timeout
+  counts; journal entries carry `engineVersion`, an older build's boots do not count) or the app sets
+  `DSH_ANDROID_SAFE_MODE` (`1` = the user's 安全模式启动, `crash-loop` = the app's crash breaker is open), and
+  third-party bundles are selected: **safe mode** — bundles reset to the three built-ins, every third-party one
+  `suspended {reason: 'safe-mode'}`, `safeMode = {active, savedBundles, reason: boot-failures|requested|crash-loop,
+  engineVersion}`.
+- Only an engine that did not come up or exited unexpectedly counts (app: EngineManager start failures and channel
+  losses feed RestartPolicy); an `android/ext/…` result the app cannot decode is `bad-result` on the 扩展 page, never
+  an engine failure, a restart or a safe-mode request.
+- Both produce a notice (§4). `android/ext/resume` / `setEnabled` re-selects one. Safe mode is a state of the installed
+  plugins: it ends as soon as no installed plugin is paused by it (resumed, removed — the plugin set empty), checked at
+  every boot, on `list` and after each change; suspensions of plugins no longer installed are dropped. The app shows the
+  banner only while `safeMode` and at least one plugin is `suspended {reason: 'safe-mode'}`.
+- Upgrade: safe mode recorded by another engine build (no `engineVersion`: v0.3.2 and older) is cleared once at the
+  first boot of the new build, its plugins selected again (notice `safe-mode-cleared`). Decision: the old build's cause
+  may be gone — v0.3.1's 扩展 page offered 安全模式启动 for a list it merely failed to decode, and the banner then claimed
+  two failed boots; a plugin that really breaks boot brings safe mode back after two failed boots of the new build.
+  Crash suspensions (stack-attributed) are kept.
 
 ## 2. Data model
 
@@ -135,8 +148,8 @@ interface ExtPlugin {
   askBeforeCall: boolean
   suspended?: { reason: 'crash'|'safe-mode'; at: number; message?: string }
 }
-interface ExtList { plugins: ExtPlugin[]; safeMode: boolean; restartPending: boolean; dshVersion: string; registries: string[]; notices: Notice[] }
-interface Notice { kind: 'suspended'|'safe-mode'|'activated'|'activation-failed'; name?: string; code?: string; message: string; tools?: string[]; count?: number; at: number }
+interface ExtList { plugins: ExtPlugin[]; safeMode: boolean; safeModeReason?: 'boot-failures'|'requested'|'crash-loop'; restartPending: boolean; dshVersion: string; registries: string[]; notices: Notice[] }
+interface Notice { kind: 'suspended'|'safe-mode'|'safe-mode-cleared'|'activated'|'activation-failed'; name?: string; code?: string; message: string; tools?: string[]; count?: number; at: number }
 ```
 
 Only third-party bundles are listed (not dsh-base, dsh-sdk-app, bundle-android).
@@ -166,10 +179,10 @@ errors; a JSON-RPC error means a bad request (missing parameter) or an engine bu
 | `android/ext/log` | `{name?}` → `{text, path}` (last 64 KiB of the newest pnpm log, mentioning `name` if given) |
 | `android/ext/market/indexes` | `{}` → `{indexes: {url, title?, description?, error?}[]}` |
 | `android/ext/market/setIndexes` | `{urls}` → `{indexes}` (stored in extensions-state.json; default `https://cdn.jsdelivr.net/gh/jackwener/DSH-Android@main/plugins/index.json`; a stored former address `…/jackwener/DeepseekHarness-Android@main/…` is rewritten to it at boot and on set) |
-| `android/ext/market/search` | `{url, query?, offset?, limit?, refresh?, category?, sort?}` → dsh plugin-market `search` result (index format 1, entries annotated with install state and per-version compatibility), or `{error}` (`index-unreachable`, `index-invalid`, `unknown`). A GitHub-hosted index (jsDelivr `/gh/…`, raw.githubusercontent.com, github.com `raw`/`blob`) is read from the first of its equivalent sources that answers — cdn / fastly / gcore / testingcf.jsdelivr.net, raw.githubusercontent.com — started 2 s apart, 6 s each to send headers, the last working one first next time (`sourcePreferences` in extensions-state.json; `fetch-sources.js`, js patch 20) |
+| `android/ext/market/search` | `{url, query?, offset?, limit?, refresh?, category?, sort?}` → dsh plugin-market `search` result (index format 1, entries annotated with install state and per-version compatibility), or `{error}` (`index-unreachable`, `index-invalid`, `unknown`). A GitHub-hosted index (jsDelivr `/gh/…`, raw.githubusercontent.com, github.com `raw`/`blob`) is read from the first of its equivalent sources that answers — cdn / fastly / gcore / testingcf.jsdelivr.net, raw.githubusercontent.com — started 2 s apart (at once after 6 s without headers; earlier ones keep running, the first answer wins; 25 s overall), the last working one first next time (`sourcePreferences` in extensions-state.json; `fetch-sources.js`, js patch 20) |
 | `android/ext/market/entry` | `{url, name}` → `{entry \| null}` or `{error}` as for search |
 | `android/ext/skills/list` | `{}` → `{skills: {name, description, source: 'imported'\|'plugin'\|'agents'\|'builtin'\|…, enabled, removable, scripts: string[], path?}[]}` |
-| `android/ext/skills/preview` | `{input}` (absolute .md / .zip / .skill / directory, raw URL, GitHub repo/tree URL) → `{previewId, skills: {name, description, path, files, scripts, valid, problem?, exists}[]}` or `{error}` |
+| `android/ext/skills/preview` | `{input}` (absolute .md / .zip / .skill / directory, any URL, GitHub repo / tree / blob / raw link, §5.1) → `{previewId, skills: {name, description, path, files, scripts, valid, problem?, exists}[]}` or `{error}` |
 | `android/ext/skills/import` | `{previewId, names, overwrite?}` → `{imported, skipped: {name, reason: 'invalid'\|'exists'}[]}` |
 | `android/ext/skills/setEnabled` | `{name, enabled}` → `{}` (moves between `skills/` and `skills-disabled/`) |
 | `android/ext/skills/remove` | `{name}` → `{}` |
@@ -207,7 +220,23 @@ and local `.zip`/directories (repacked); local `.tgz`; `git+ssh:`, `git@…` →
 `management-required`, `skill-invalid`, `skill-exists`, `mcp-sse-only`, `mcp-runtime` (`runtime`), `mcp-local-path`,
 `mcp-auth` (`status`), `mcp-failed`, `mcp-too-many`, `index-unreachable` (`url`, `tried` = localized `host（原因）、…`,
 `attempts: {host, url, reason: timeout|dns|refused|reset|tls|unreachable|http-<n>|network, detail?}[]`; action `retry`),
-`index-invalid` (`url`, `reason`; action `retry`), `unknown`. Unknown codes: show `message`.
+`index-invalid` (`url`, `reason`; action `retry`), `link-unreachable` (a user-supplied link: `url`, `host`, `tried` as
+for `index-unreachable` with the root cause's code, e.g. `raw.githubusercontent.com（连接超时 UND_ERR_CONNECT_TIMEOUT）`,
+`attempts: {…, code?}[]`; action `retry`), `link-is-page` (`url`, `host`: a web page where a file was expected),
+`link-too-large` (`host`, `maxBytes`), `unknown`. Unknown codes: show `message`.
+
+### 5.1 User-supplied links
+
+Every link the user gives (skill import, plugin `.zip` / GitHub links, index URLs) goes through `fetch-sources.js`:
+`parseGithubLink` normalizes github.com `blob` / `raw` / `tree` / repository links, raw.githubusercontent.com (also
+`refs/heads/…`, `refs/tags/…`) and jsDelivr `/gh/` URLs to `{owner, repo, ref, path, kind: file|dir|repo}`; a GitHub
+file is read from raw.githubusercontent.com and the jsDelivr CDNs (a github.com page itself never: it is HTML), a gist
+page from its raw URL, anything else as is. `fetchFirst` starts candidates staggered; a candidate quiet for the header
+timeout lets the next one start but keeps running — the first 2xx answer wins — so a slow-but-working source (the only
+one, or the last mirror left) is ended only by the operation's deadline (links: 45 s to headers, 120 s body). Skills: a
+SKILL.md link imports its directory; directories come from jsDelivr's listing (`data.jsdelivr.com`) + file mirrors, or
+the codeload archive (archive first for a whole repository), the single file as the last resort. The app makes no
+extension network requests of its own.
 
 ## 6. Tools, modes, approvals
 

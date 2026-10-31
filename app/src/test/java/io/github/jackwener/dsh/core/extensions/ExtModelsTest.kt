@@ -100,5 +100,12 @@ class ExtModelsTest {
         pkg.writeText("""{"dependencies":{"ds-bot":"0.2.4"},"dsh":{"profile":{"bundles":["ds-bot"]}}}""")
         assertTrue(SafeModeRequest.hasThirdPartyBundles(pkg))
         assertFalse(SafeModeRequest.hasThirdPartyBundles(tmp.root.resolve("missing.json")))
+        // the engine is told which: the user's request, or the crash breaker
+        assertNull(SafeModeRequest.take(breakerOpen = true) { false })
+        assertEquals(SafeModeRequest.CRASH_LOOP, SafeModeRequest.take(breakerOpen = true) { true })
+        assertNull(SafeModeRequest.take(breakerOpen = false) { true })
+        SafeModeRequest.request()
+        assertEquals(SafeModeRequest.USER, SafeModeRequest.take(breakerOpen = true) { true })
+        assertNull("consumed", SafeModeRequest.take(breakerOpen = false) { true })
     }
 }

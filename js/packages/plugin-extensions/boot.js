@@ -86,6 +86,38 @@ export function writeBundles(manifest, bundles, p = paths()) {
 
 export const isThirdParty = name => !BUILTIN_BUNDLES.includes(name)
 
+/** Third-party plugins the profile has installed (dependencies) or selects. */
+export const installedOf = manifest => [...new Set([...Object.keys(manifest?.dependencies ?? {}), ...bundlesOf(manifest)])].filter(isThirdParty)
+
+/**
+ * This engine build (`engine-version.txt` next to node_modules; `DSH_ANDROID_ENGINE_VERSION`
+ * overrides), '' when unknown (host runs from the source tree).
+ */
+export function engineVersion(p = paths(), env = process.env) {
+  if (env.DSH_ANDROID_ENGINE_VERSION !== undefined) return env.DSH_ANDROID_ENGINE_VERSION
+  try { return readFileSync(join(p.engineDir, 'engine-version.txt'), 'utf8').trim() } catch { return '' }
+}
+
+const NO_SAFE_MODE = () => ({ active: false, savedBundles: [] })
+
+/**
+ * Safe mode is a state of the installed plugins, not of the engine: it lasts while at least one
+ * installed plugin is paused by it. Suspensions of plugins that are no longer installed are
+ * dropped; with none paused by safe mode left (resumed, removed, the plugin set empty) safe mode
+ * ends. Mutates [state]; returns whether anything changed.
+ */
+export function settleSafeMode(state, installed) {
+  let changed = false
+  for (const name of Object.keys(state.suspended ?? {})) {
+    if (!installed.includes(name)) { delete state.suspended[name]; changed = true }
+  }
+  if (state.safeMode?.active === true && !Object.values(state.suspended ?? {}).some(s => s?.reason === 'safe-mode')) {
+    state.safeMode = NO_SAFE_MODE()
+    changed = true
+  }
+  return changed
+}
+
 /** The curated DSH-Android plugin index (format 1, dsh's plugin market). */
 export const CURATED_INDEX = 'https://cdn.jsdelivr.net/gh/jackwener/DSH-Android@main/plugins/index.json'
 export const DEFAULT_INDEXES = Object.freeze([CURATED_INDEX])
@@ -330,20 +362,47 @@ export function prepareBoot(env = process.env) {
     writeJson(p.crash, { ...crash, handled: true, attributedTo: hit?.bundle ?? null })
   }
 
-  // 2. safe mode: two boots in a row never became ready (or the app asks for it)
-  const trailing = (() => { let n = 0; for (const b of [...journal.boots].reverse()) { if (b.phase === 'booting') n += 1; else break } return n })()
+  // 2. safe mode recorded by another engine build (an older app): its cause may be gone — v0.3.1's
+  //    Extensions page offered 安全模式启动 for a plugin list it merely could not decode. Plugins it
+  //    paused are selected again, once; a plugin that really breaks boot brings safe mode back after
+  //    two more failed boots (those are counted per engine build, below).
+  const version = engineVersion(p, env)
+  const installed = installedOf(manifest)
+  if (state.safeMode.active === true && version !== '' && state.safeMode.engineVersion !== version) {
+    const paused = Object.entries(state.suspended).filter(([, s]) => s?.reason === 'safe-mode').map(([name]) => name)
+    for (const name of paused) delete state.suspended[name]
+    const saved = Array.isArray(state.safeMode.savedBundles) ? state.safeMode.savedBundles : []
+    const restore = [...saved.filter(n => paused.includes(n)), ...paused.filter(n => !saved.includes(n))].filter(n => installed.includes(n) && !bundles.includes(n))
+    bundles = [...bundles, ...restore]
+    state.safeMode = NO_SAFE_MODE()
+    const zh = /^zh\b/i.test(env.DSH_ANDROID_LOCALE ?? '')
+    notice(state, { kind: 'safe-mode-cleared', code: 'safe-mode-cleared', count: restore.length, message: restore.length === 0 ? '' : zh ? `App 已更新：之前安全模式暂停的 ${restore.length} 个插件已重新启用。` : `App updated: the ${restore.length} plugins paused by safe mode are enabled again.` })
+    changed = true
+  }
+  // Nothing paused by safe mode is installed any more (the plugin set is empty): it ended.
+  settleSafeMode(state, installed)
+
+  // 3. safe mode: two boots of this engine build in a row never became ready (or the app asks for it:
+  //    DSH_ANDROID_SAFE_MODE=1 the user, =crash-loop the app's crash breaker)
+  const trailing = (() => {
+    let n = 0
+    for (const b of [...journal.boots].reverse()) { if (b.phase === 'booting' && (b.engineVersion ?? '') === version) n += 1; else break }
+    return n
+  })()
   const thirdParty = bundles.filter(isThirdParty)
-  const forced = env.DSH_ANDROID_SAFE_MODE === '1'
+  const request = env.DSH_ANDROID_SAFE_MODE
+  const forced = request === '1' || request === 'crash-loop'
   if (!explained && thirdParty.length > 0 && (forced || trailing >= SAFE_MODE_AFTER)) {
-    state.safeMode = { active: true, at: Date.now(), savedBundles: [...bundles], reason: forced ? 'requested' : 'boot-failures' }
+    const reason = request === 'crash-loop' ? 'crash-loop' : forced ? 'requested' : 'boot-failures'
+    state.safeMode = { active: true, at: Date.now(), savedBundles: [...bundles], reason, ...version ? { engineVersion: version } : {} }
     for (const name of thirdParty) suspend(name, 'safe-mode')
-    notice(state, { kind: 'safe-mode', code: 'safe-mode', count: thirdParty.length, message: '' })
+    notice(state, { kind: 'safe-mode', code: 'safe-mode', count: thirdParty.length, reason, message: '' })
   }
   if (explained) journal.boots = journal.boots.map(b => b.phase === 'booting' ? { ...b, phase: 'failed' } : b)
 
   if (changed && manifest !== undefined) writeBundles(manifest, bundles, p)
 
-  // 3. profile shape: pnpm settings, gate, app layer
+  // 4. profile shape: pnpm settings, gate, app layer
   let migrated
   try {
     if (manifest !== undefined) preparePnpmProject(p.profile, p)
@@ -352,8 +411,8 @@ export function prepareBoot(env = process.env) {
     process.stderr.write(`[android-extensions] profile preparation failed: ${error?.message ?? error}\n`)
   }
 
-  // 4. journal
-  journal.boots = [...journal.boots, { phase: 'booting', at: Date.now(), pid: process.pid, bundles }].slice(-JOURNAL_KEEP)
+  // 5. journal
+  journal.boots = [...journal.boots, { phase: 'booting', at: Date.now(), pid: process.pid, bundles, ...version ? { engineVersion: version } : {} }].slice(-JOURNAL_KEEP)
   writeJson(p.journal, journal)
   writeState(state, p)
 

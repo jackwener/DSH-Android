@@ -192,7 +192,14 @@ private fun EngineGate(vm: ExtensionsViewModel) {
 private fun StatusBanners(vm: ExtensionsViewModel) {
     val list by vm.store.list.collectAsStateWithLifecycle()
     val restart by vm.store.restart.collectAsStateWithLifecycle()
-    if (list?.safeMode == true) Notice(stringResource(R.string.ext_safe_mode_banner, list?.plugins?.count { it.suspended?.reason == "safe-mode" } ?: 0), Tone.Warn)
+    list?.takeIf { it.showSafeModeBanner }?.let { l ->
+        val res = when (l.safeModeReason) {
+            "requested" -> R.string.ext_safe_mode_banner_requested
+            "crash-loop" -> R.string.ext_safe_mode_banner_crash_loop
+            else -> R.string.ext_safe_mode_banner
+        }
+        Notice(stringResource(res, l.safeModePaused), Tone.Warn)
+    }
     when (restart) {
         RestartState.WaitingForIdle -> Notice(stringResource(R.string.ext_restart_pending), Tone.Info) {
             DButton(stringResource(R.string.ext_restart_now), { vm.restartNow() }, size = BtnSize.Sm, variant = BtnVariant.Outline)

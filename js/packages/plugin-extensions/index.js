@@ -17,9 +17,9 @@
 import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { DEFAULT_INDEXES, bundlesOf, isThirdParty, migrateIndexes, registryPlanFromEnv, paths as pathsOf, preparePnpmProject, readManifest, readState, removeTree, writeState } from './boot.js'
+import { DEFAULT_INDEXES, bundlesOf, installedOf, isThirdParty, migrateIndexes, settleSafeMode, registryPlanFromEnv, paths as pathsOf, preparePnpmProject, readManifest, readState, removeTree, writeState } from './boot.js'
 import { fromManagerResult, labelsOf, localizedString, localizedText, marketError, userError } from './errors.js'
-import { fetchFirst, fetchMirrored, fetchText, npmFileUrls, usePreferences } from './fetch-sources.js'
+import { fetchFirst, fetchLinkJson, fetchMirrored, fetchText, npmFileUrls, usePreferences } from './fetch-sources.js'
 import { skillScripts } from './skills.js'
 
 export const name = 'android-extensions'
@@ -94,7 +94,8 @@ const firstLine = e => String(e?.message ?? e ?? '').split('\n')[0].slice(0, 300
  * signal (fetchTimeoutMs, disposal) bounds the whole read.
  */
 export async function fetchIndexResponse(url, init) {
-  return (await fetchMirrored(url, { init, headerTimeoutMs: 6000, staggerMs: 2000 })).response
+  // timeoutMs under the market's own 30 s, so a failure names every source tried.
+  return (await fetchMirrored(url, { init, headerTimeoutMs: 6000, staggerMs: 2000, timeoutMs: 25000 })).response
 }
 
 
@@ -129,6 +130,8 @@ export function apply(ctx) {
   const dshVersion = () => { try { return JSON.parse(readFileSync(join(profile.installAnchor), 'utf8')).version } catch { return '' } }
   let state = readState(p)
   const save = () => writeState(state, p)
+  /** Safe mode ends with the last plugin it paused (resumed, re-enabled, removed); see boot.js. */
+  const settle = () => { if (settleSafeMode(state, installedOf(readManifest(p)))) save() }
   // The curated index moved with the repository (DeepseekHarness-Android → DSH-Android).
   {
     const migrated = migrateIndexes(state.marketIndexes)
@@ -216,6 +219,7 @@ export function apply(ctx) {
   // ── list ───────────────────────────────────────────────────────────────────
   async function list() {
     const manager = await pm()
+    settle()
     const manifest = readManifest(p) ?? {}
     const selected = bundlesOf(manifest)
     const deps = Object.keys(manifest.dependencies ?? {})
@@ -267,7 +271,7 @@ export function apply(ctx) {
         statusDetail = userError('activation-failed', { name: nm, error: b.error.diagnostic ?? b.error.code })
       } else if (!enabled && suspended) {
         status = 'suspended'
-        statusDetail = userError(suspended.reason === 'crash' ? 'crash-suspended' : 'safe-mode', { name: nm, count: Object.keys(state.suspended).length })
+        statusDetail = userError(suspended.reason === 'crash' ? 'crash-suspended' : 'safe-mode', { name: nm, count: Object.values(state.suspended).filter(x => x?.reason === 'safe-mode').length, why: state.safeMode.reason ?? 'boot-failures' })
       } else if (!enabled) status = 'disabled'
       else if (!started.includes(nm)) status = 'restart-pending'
       else if (rows.some(r => r.phase === 'failed')) {
@@ -311,6 +315,7 @@ export function apply(ctx) {
     return {
       plugins,
       safeMode: state.safeMode.active === true,
+      ...state.safeMode.active === true ? { safeModeReason: state.safeMode.reason ?? 'boot-failures' } : {},
       restartPending: restartPending || JSON.stringify(selected) !== JSON.stringify(started),
       dshVersion: dshVersion() || boot.getDshRuntimeVersion?.() || '',
       registries: plan(),
@@ -452,6 +457,7 @@ export function apply(ctx) {
     state.askBeforeCall = state.askBeforeCall.filter(k => k !== bundle)
     state.pendingRemoval = state.pendingRemoval.filter(n => n !== bundle)
     save()
+    settle()
     changed()
     return changeView(result)
   }
@@ -508,9 +514,9 @@ export function apply(ctx) {
       // Registry metadata for the trust card (publisher, provenance, size, compatibility).
       if (inspection.kind === 'registry' && inspection.name) {
         try {
-          const res = await fetch(`${(inspection.registry ?? plan()[0]).replace(/\/?$/, '/')}${inspection.name.replace('/', '%2F')}/${encodeURIComponent(inspection.version ?? 'latest')}`, { signal: AbortSignal.timeout(10000) })
-          if (res.ok) {
-            const v = await res.json()
+          const metaUrl = `${(inspection.registry ?? plan()[0]).replace(/\/?$/, '/')}${inspection.name.replace('/', '%2F')}/${encodeURIComponent(inspection.version ?? 'latest')}`
+          const v = await fetchLinkJson(metaUrl, { urls: [metaUrl], timeoutMs: 15000, headerTimeoutMs: 15000, bodyTimeoutMs: 30000 }).catch(() => undefined)
+          if (v !== undefined) {
             const boot = await appBoot
             const issue = boot.evaluatePluginCompatibility(v, boot.readProfileVersionExemptions(profile.dir))
             Object.assign(out, {
@@ -535,8 +541,9 @@ export function apply(ctx) {
           }
         } catch {}
         try {
-          const dl = await fetch(`https://api.npmjs.org/downloads/point/last-week/${inspection.name}`, { signal: AbortSignal.timeout(5000) })
-          if (dl.ok) out.downloads = (await dl.json()).downloads
+          const dlUrl = `https://api.npmjs.org/downloads/point/last-week/${inspection.name}`
+          const dl = await fetchLinkJson(dlUrl, { urls: [dlUrl], timeoutMs: 8000, headerTimeoutMs: 8000, bodyTimeoutMs: 10000 })
+          if (typeof dl?.downloads === 'number') out.downloads = dl.downloads
         } catch {}
       }
       return out
@@ -567,8 +574,8 @@ export function apply(ctx) {
       const result = await (await pm()).setBundleEnabled(nm, enabled)
       if (result.application !== 'failed') {
         delete state.suspended[nm]
-        if (enabled && state.safeMode.active && Object.keys(state.suspended).length === 0) state.safeMode = { active: false, savedBundles: [] }
         save()
+        settle()
         changed()
         return changeView(result)
       }
@@ -594,6 +601,7 @@ export function apply(ctx) {
         state.pendingRemoval = [...new Set([...state.pendingRemoval, nm])]
         delete state.suspended[nm]
         save()
+        settle()
         changed()
         restartPending = true
         return { application: 'restart-required', restartRequired: true, deferred: true }
@@ -702,8 +710,8 @@ export function apply(ctx) {
       const result = await (await pm()).setBundleEnabled(nm, true)
       if (result.application === 'failed') return failed(fromManagerResult(result, { name: nm, dsh: dshVersion() }))
       delete state.suspended[nm]
-      if (!Object.values(state.suspended).some(s => s.reason === 'safe-mode')) state.safeMode = { active: false, savedBundles: [] }
       save()
+      settle()
       changed()
       return changeView(result)
     }),

@@ -201,4 +201,32 @@ class ExtensionsStoreTest {
         val e = runCatching { ExtensionsClient(engine).skillRemove("x") }.exceptionOrNull() as ExtException
         assertEquals("not-installed", e.error.code)
     }
+
+    @Test fun `an unreadable plugin list is a page error, never an engine restart or a safe-mode request`() = runBlocking {
+        // v0.3.1: a title sent as a locale map failed to decode and the page offered 安全模式启动 as if the engine had not started.
+        engine.on(ExtMethods.LIST, """{"plugins":[],"safeMode":"maybe"}""")
+        val s = store()
+        assertNull(s.refresh())
+        assertEquals(ExtCodes.BAD_RESULT, s.loadError.value!!.code)
+        yield()
+        assertEquals(0, restarts.get())
+        assertNull("nothing queued a safe-mode start", SafeModeRequest.take(breakerOpen = false) { true })
+    }
+
+    @Test fun `the safe-mode banner needs a plugin safe mode still pauses`() = runBlocking {
+        val paused = plugin("a", status = "suspended", enabled = false, extra = ""","suspended":{"reason":"safe-mode","at":1}""")
+        engine.on(ExtMethods.LIST, list(paused, extra = ""","safeMode":true,"safeModeReason":"requested""""))
+        val l = store().refresh()!!
+        assertTrue(l.showSafeModeBanner)
+        assertEquals(1, l.safeModePaused)
+        assertEquals("requested", l.safeModeReason)
+        // the only plugin uninstalled: an older engine may still say safeMode=true; nothing is paused, no banner
+        engine.on(ExtMethods.LIST, list(extra = ""","safeMode":true"""))
+        val empty = store().refresh()!!
+        assertFalse(empty.showSafeModeBanner)
+        assertEquals(0, empty.safeModePaused)
+        // a crash suspension is not safe mode
+        engine.on(ExtMethods.LIST, list(plugin("b", status = "suspended", enabled = false, extra = ""","suspended":{"reason":"crash","at":1}"""), extra = ""","safeMode":true"""))
+        assertFalse(store().refresh()!!.showSafeModeBanner)
+    }
 }

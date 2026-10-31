@@ -440,7 +440,7 @@ class EngineManager @Inject constructor(
         putString("NODE_OPTIONS", "--max-old-space-size=768")
         putString("DSH_TELEMETRY_DISABLED", "1")
         putString("NARB_DISABLE_NATIVE_CACHE", "1")
-        if (io.github.jackwener.dsh.core.extensions.SafeModeRequest.take(context, restarts.open)) putString(io.github.jackwener.dsh.core.extensions.SafeModeRequest.ENV, "1")
+        io.github.jackwener.dsh.core.extensions.SafeModeRequest.take(context, restarts.open)?.let { putString(io.github.jackwener.dsh.core.extensions.SafeModeRequest.ENV, it) }
     }
 
     private fun Bundle.pfd(key: String): ParcelFileDescriptor =

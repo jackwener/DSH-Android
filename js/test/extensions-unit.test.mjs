@@ -11,7 +11,7 @@ import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { deflateRawSync } from 'node:zlib'
-import { attributeCrash, packagesOnStack, migrateAppLayer, withWorkspaceKeys, prepareBoot, markBoot, paths, readState, BUILTIN_BUNDLES, LEGACY_APP_HEADER } from '../packages/plugin-extensions/boot.js'
+import { attributeCrash, packagesOnStack, migrateAppLayer, withWorkspaceKeys, prepareBoot, markBoot, paths, readState, settleSafeMode, writeState, BUILTIN_BUNDLES, LEGACY_APP_HEADER } from '../packages/plugin-extensions/boot.js'
 import { readTar, readZip, writeTgz, packageRoot } from '../packages/plugin-extensions/archive.js'
 import { parseGithub, githubRepoOf, checkBuilt } from '../packages/plugin-extensions/sources.js'
 import { classifyText, npxPackage } from '../packages/plugin-extensions/mcp.js'
@@ -116,6 +116,77 @@ test('boot: safe mode after two unready boots; crash suspension; journal; overla
   assert.equal(s2.notices.at(-1).kind, 'suspended')
   // forced safe mode (the app's DSH_ANDROID_SAFE_MODE=1) with nothing third-party left: no-op
   prepareBoot({ ...env, DSH_ANDROID_SAFE_MODE: '1' })
+})
+
+test('safe mode ends with the plugin set: uninstalling the only paused plugin clears it (state, list and next boot)', () => {
+  // the state the field report had: safe mode on, its only plugin uninstalled → banner 「已暂停全部 0 个插件」
+  const st = { suspended: { 'plugin-a': { reason: 'safe-mode', at: 1 } }, safeMode: { active: true, savedBundles: [...BUILTIN_BUNDLES, 'plugin-a'], reason: 'requested' } }
+  assert.equal(settleSafeMode(st, ['plugin-a']), false, 'still installed and paused: safe mode stays')
+  assert.equal(st.safeMode.active, true)
+  assert.equal(settleSafeMode(st, []), true)
+  assert.deepEqual(st, { suspended: {}, safeMode: { active: false, savedBundles: [] } })
+  // a crash suspension alone does not keep safe mode on
+  const st2 = { suspended: { 'plugin-b': { reason: 'crash', at: 1 } }, safeMode: { active: true, savedBundles: [] } }
+  settleSafeMode(st2, ['plugin-b'])
+  assert.equal(st2.safeMode.active, false)
+  assert.equal(st2.suspended['plugin-b'].reason, 'crash')
+
+  // the next boot settles a state an older engine left behind
+  const dir = tmp()
+  const env = { DSH_HOME: join(dir, 'dsh'), DSH_ANDROID_CACHE_DIR: join(dir, 'cache') }
+  const p = paths(env)
+  mkdirSync(p.profile, { recursive: true })
+  writeFileSync(join(p.profile, 'package.json'), JSON.stringify({ name: 'dsh-profile-android', private: true, dependencies: {}, dsh: { profile: { bundles: [...BUILTIN_BUNDLES] } } }))
+  writeState({ ...readState(p), suspended: { 'plugin-a': { reason: 'safe-mode', at: 1 } }, safeMode: { active: true, savedBundles: [...BUILTIN_BUNDLES, 'plugin-a'], reason: 'boot-failures' } }, p)
+  prepareBoot(env)
+  const s = readState(p)
+  assert.equal(s.safeMode.active, false)
+  assert.deepEqual(s.suspended, {})
+})
+
+test('safe mode recorded by an older engine build is cleared once on upgrade; failed boots count per build; the reason is kept', () => {
+  const dir = tmp()
+  const base = { DSH_HOME: join(dir, 'dsh'), DSH_ANDROID_CACHE_DIR: join(dir, 'cache') }
+  const p = paths(base)
+  mkdirSync(join(p.profile, 'node_modules/plugin-a'), { recursive: true })
+  writeFileSync(join(p.profile, 'node_modules/plugin-a/package.json'), JSON.stringify({ name: 'plugin-a', version: '1.0.0' }))
+  const manifest = bundles => ({ name: 'dsh-profile-android', private: true, dependencies: { 'plugin-a': '1.0.0' }, dsh: { profile: { bundles } } })
+  const selected = () => JSON.parse(readFileSync(join(p.profile, 'package.json'), 'utf8')).dsh.profile.bundles
+  writeFileSync(join(p.profile, 'package.json'), JSON.stringify(manifest([...BUILTIN_BUNDLES])))
+  // v0.3.1/v0.3.2 state: safe mode without an engine stamp, two never-ready boots of the old build in the journal
+  writeState({ ...readState(p), suspended: { 'plugin-a': { reason: 'safe-mode', at: 1 } }, safeMode: { active: true, savedBundles: [...BUILTIN_BUNDLES, 'plugin-a'], reason: 'requested' } }, p)
+  writeFileSync(p.journal, JSON.stringify({ boots: [{ phase: 'booting', pid: 1, at: 1 }, { phase: 'booting', pid: 2, at: 2 }] }))
+  const v2 = { ...base, DSH_ANDROID_ENGINE_VERSION: '0.2.1-rc.5-a2', DSH_ANDROID_LOCALE: 'zh-CN' }
+  prepareBoot(v2)
+  let s = readState(p)
+  assert.equal(s.safeMode.active, false, 'the old build\'s safe mode is gone')
+  assert.deepEqual(s.suspended, {})
+  assert.deepEqual(selected(), [...BUILTIN_BUNDLES, 'plugin-a'], 'its plugin is selected again')
+  assert.equal(s.notices.at(-1).kind, 'safe-mode-cleared')
+  assert.match(s.notices.at(-1).message, /1 个插件已重新启用/)
+  assert.equal(JSON.parse(readFileSync(p.journal, 'utf8')).boots.at(-1).engineVersion, '0.2.1-rc.5-a2')
+  // the old build's unready boots did not count; this build's first boot never became ready, nor the second
+  prepareBoot(v2)
+  assert.equal(readState(p).safeMode.active, false)
+  prepareBoot(v2)
+  s = readState(p)
+  assert.equal(s.safeMode.active, true, 'two failed boots of this build: safe mode again')
+  assert.equal(s.safeMode.reason, 'boot-failures')
+  assert.equal(s.safeMode.engineVersion, '0.2.1-rc.5-a2')
+  // the same build does not clear its own safe mode
+  markBoot('ready', p)
+  prepareBoot(v2)
+  assert.equal(readState(p).safeMode.active, true)
+  // the app's requests are told apart: the user (1) and the crash breaker (crash-loop)
+  for (const [request, reason] of [['1', 'requested'], ['crash-loop', 'crash-loop']]) {
+    writeState({ ...readState(p), suspended: {}, safeMode: { active: false, savedBundles: [] } }, p)
+    writeFileSync(join(p.profile, 'package.json'), JSON.stringify(manifest([...BUILTIN_BUNDLES, 'plugin-a'])))
+    markBoot('ready', p)
+    prepareBoot({ ...v2, DSH_ANDROID_SAFE_MODE: request })
+    s = readState(p)
+    assert.equal(s.safeMode.reason, reason)
+    assert.equal(s.notices.at(-1).reason, reason)
+  }
 })
 
 test('boot: workspace keys keep foreign settings', () => {
@@ -285,10 +356,11 @@ test('index URLs: a GitHub file has equivalent sources on every jsDelivr CDN and
     'https://testingcf.jsdelivr.net/gh/o/r@main/plugins/index.json',
     'https://raw.githubusercontent.com/o/r/main/plugins/index.json',
   ]
-  assert.deepEqual(sourcesFor(all[0], {}), { family: 'github', urls: all })
+  assert.deepEqual(sourcesFor(all[0], {}), { family: 'github', urls: all, github: { owner: 'o', repo: 'r', ref: 'main', path: 'plugins/index.json' } })
   // the configured URL is asked first, whichever source it names
   assert.deepEqual(sourcesFor(all[4], {}).urls, [all[4], ...all.slice(0, 4)])
-  assert.deepEqual(sourcesFor('https://github.com/o/r/blob/main/plugins/index.json', {}).urls.slice(1), all)
+  // a github.com page serves HTML: only its mirrors are fetched, never the page
+  assert.deepEqual(sourcesFor('https://github.com/o/r/blob/main/plugins/index.json', {}).urls, all)
   // anything else is fetched as is
   assert.deepEqual(sourcesFor('https://example.com/gh/o/r@main/index.json', {}), { family: undefined, urls: ['https://example.com/gh/o/r@main/index.json'] })
   assert.deepEqual(sourcesFor('https://cdn.jsdelivr.net/gh/o/r@main/x.json?v=1', {}).urls.length, 1)
@@ -310,7 +382,7 @@ async function indexServers(body) {
   return { hits, stuckBase: base(stuck), okBase: base(ok), close: () => { for (const s of [stuck, ok]) { s.closeAllConnections?.(); s.close() } } }
 }
 
-test('fetchFirst: a source that never answers is abandoned after its header timeout; the next one answers and is remembered', async () => {
+test('fetchFirst: a source that never answers lets the next one start after its header timeout; the next one answers and is remembered', async () => {
   const doc = JSON.stringify({ format: 1, title: 'x', plugins: [] })
   const srv = await indexServers(doc)
   usePreferences({}, () => {})
@@ -324,7 +396,8 @@ test('fetchFirst: a source that never answers is abandoned after its header time
     assert.equal(first.url, urls[1])
     assert.equal(await first.response.text(), doc)
     assert.ok(took >= 250 && took < 2000, `fell over after the header timeout, not the stagger (${took} ms)`)
-    assert.deepEqual(first.attempts.map(a => [a.host, a.reason]), [[new URL(srv.stuckBase).host, 'timeout'], [new URL(srv.okBase).host, 'ok']])
+    // the stuck one was still waiting (not dropped) when the second answered
+    assert.deepEqual(first.attempts.map(a => [a.host, a.reason]), [[new URL(srv.stuckBase).host, 'abandoned'], [new URL(srv.okBase).host, 'ok']])
     assert.equal(srv.hits.stuck, 1)
     assert.deepEqual(saved, { test: srv.okBase })
     assert.deepEqual(preferences(), { test: srv.okBase })
@@ -352,7 +425,7 @@ test('fetchFirst: every source failing names each one; marketError turns it into
     const closedPort = closed.address().port
     await new Promise(r => closed.close(r))
     const urls = [`${srv.stuckBase}/a/plugins/index.json`, `${srv.okBase}/b/missing.json`, `http://127.0.0.1:${closedPort}/c.json`]
-    const error = await fetchFirst(urls, { headerTimeoutMs: 300, staggerMs: 100 }).then(() => undefined, e => e)
+    const error = await fetchFirst(urls, { headerTimeoutMs: 300, staggerMs: 100, timeoutMs: 800 }).then(() => undefined, e => e)
     assert.ok(error instanceof SourcesError)
     assert.deepEqual(error.attempts.map(a => a.reason).sort(), ['http-404', 'refused', 'timeout'])
     assert.match(error.message, /no source answered: .*timeout.*/)
@@ -365,12 +438,12 @@ test('fetchFirst: every source failing names each one; marketError turns it into
       assert.equal(zh.code, 'index-unreachable')
       assert.deepEqual(zh.actions, ['retry'])
       assert.equal(zh.params.attempts.length, 3)
-      assert.match(zh.message, /^连不上插件索引。试过：127\.0\.0\.1:\d+（连接超时）、127\.0\.0\.1:\d+（HTTP 404）、127\.0\.0\.1:\d+（拒绝连接）。检查网络或代理后重试。$/)
+      assert.match(zh.message, /^连不上插件索引。试过：127\.0\.0\.1:\d+（连接超时）、127\.0\.0\.1:\d+（HTTP 404）、127\.0\.0\.1:\d+（拒绝连接 ECONNREFUSED）。检查网络或代理后重试。$/)
       process.env.DSH_ANDROID_LOCALE = 'en'
-      assert.match(marketError(remote, urls[0]).message, /^Couldn't reach the plugin index\. Tried: .*\(timed out\), .*\(HTTP 404\), .*\(connection refused\)\. Check the network or proxy, then retry\.$/)
+      assert.match(marketError(remote, urls[0]).message, /^Couldn't reach the plugin index\. Tried: .*\(timed out\), .*\(HTTP 404\), .*\(connection refused ECONNREFUSED\)\. Check the network or proxy, then retry\.$/)
       // a plain fetch failure without our cause (another fetch path) still names its host and reason
       const bare = Object.assign(new Error('Could not fetch https://x.example/i.json: fetch failed: Connect Timeout Error'), { code: 'plugin-market/fetch-failed', cause: new TypeError('fetch failed', { cause: Object.assign(new Error('Connect Timeout Error'), { code: 'UND_ERR_CONNECT_TIMEOUT' }) }) })
-      assert.equal(marketError(bare, 'https://x.example/i.json').params.tried, 'x.example (timed out)')
+      assert.equal(marketError(bare, 'https://x.example/i.json').params.tried, 'x.example (timed out UND_ERR_CONNECT_TIMEOUT)')
       assert.equal(marketError(Object.assign(new Error('u: $.format: must be 1'), { code: 'plugin-market/invalid-index' }), 'u').code, 'index-invalid')
     } finally { if (saved === undefined) delete process.env.DSH_ANDROID_LOCALE; else process.env.DSH_ANDROID_LOCALE = saved }
   } finally { srv.close() }

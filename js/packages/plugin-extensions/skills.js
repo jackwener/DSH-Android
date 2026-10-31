@@ -9,6 +9,8 @@ import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, r
 import { basename, dirname, join, relative } from 'node:path'
 import { parse as parseYaml } from 'yaml'
 import { commonTop, readArchive } from './archive.js'
+import { linkFailure } from './errors.js'
+import { SourcesError, fetchLink, fetchLinkJson, githubFileUrls, jsdelivrData, parseGithubLink } from './fetch-sources.js'
 import { endpoints, parseGithub } from './sources.js'
 
 const SKILL_NAME = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
@@ -34,20 +36,87 @@ export function parseSkill(text) {
   return { name: data.name, description: data.description, ...typeof data.whenToUse === 'string' ? { whenToUse: data.whenToUse } : {} }
 }
 
-async function download(url, fetchImpl, maxBytes = 32 * 1024 * 1024) {
-  const res = await fetchImpl(url, { redirect: 'follow', signal: AbortSignal.timeout(30000), headers: { 'user-agent': 'DSH-Android' } })
-  if (!res.ok) { await res.body?.cancel(); throw new Error(`HTTP ${res.status} from ${new URL(url).host}`) }
-  const buf = Buffer.from(await res.arrayBuffer())
-  if (buf.length > maxBytes) throw new Error('download too large')
-  return buf
-}
+const MAX_BYTES = 32 * 1024 * 1024
+const MAX_FILES = 400
+const ARCHIVE = /\.(zip|tgz|tar\.gz|tar|skill)$/i
 
 function writeEntries(entries, dir) {
   for (const e of entries) {
     const file = join(dir, e.path)
+    if (!file.startsWith(dir + '/')) continue
     mkdirSync(dirname(file), { recursive: true })
     writeFileSync(file, e.data)
   }
+}
+
+/** A failed download as the SkillError the app shows (every source tried, with the root cause). */
+const linkError = (error, url) => error instanceof SkillError ? error : new SkillError(...linkFailure(error, url))
+
+/** Entries under [prefix] (a directory path, '' = all), re-rooted there. */
+const under = (entries, prefix) => prefix === '' ? entries : entries.filter(e => e.path.startsWith(prefix + '/')).map(e => ({ ...e, path: e.path.slice(prefix.length + 1) }))
+
+/** A GitHub directory from the commit archive (codeload.github.com). */
+async function githubArchive(gh, dir, fetchImpl, env) {
+  const url = `${endpoints(env).codeload}/${gh.owner}/${gh.repo}/tar.gz/${encodeURIComponent(gh.ref ?? 'HEAD')}`
+  const { bytes } = await fetchLink(url, { urls: [url], fetchImpl, env, maxBytes: 4 * MAX_BYTES })
+  const entries = readArchive(bytes)
+  const top = commonTop(entries)
+  writeEntries(under(under(entries, top ?? ''), gh.path), dir)
+}
+
+/**
+ * A GitHub directory file by file through the mirrors: jsDelivr's listing of the ref, then each
+ * file from jsDelivr / raw.githubusercontent.com (no codeload, which a slow or filtered link often
+ * cannot reach). A bare repository link tries `main`, then `master`.
+ */
+async function githubListing(gh, dir, fetchImpl, env) {
+  const refs = gh.ref !== undefined ? [gh.ref] : ['main', 'master']
+  let last
+  for (const ref of refs) {
+    let listing
+    const url = `${jsdelivrData(env)}/v1/packages/gh/${gh.owner}/${gh.repo}@${encodeURIComponent(ref)}?structure=flat`
+    try { listing = await fetchLinkJson(url, { urls: [url], fetchImpl, env }) } catch (error) { last = error; continue }
+    const prefix = gh.path === '' ? '/' : `/${gh.path}/`
+    const files = (Array.isArray(listing?.files) ? listing.files : []).filter(f => typeof f?.name === 'string' && f.name.startsWith(prefix) && !f.name.split('/').some(s => s === '..' || s === 'node_modules' || s.startsWith('.git')))
+    if (files.length === 0) throw new SkillError('skill-invalid', { file: `${gh.owner}/${gh.repo}/${gh.path}`, missing: 'SKILL.md' })
+    if (files.length > MAX_FILES || files.reduce((n, f) => n + (f.size ?? 0), 0) > MAX_BYTES) throw new SkillError('link-too-large', { host: 'cdn.jsdelivr.net', maxBytes: MAX_BYTES })
+    const queue = [...files]
+    const worker = async () => {
+      for (let f = queue.shift(); f !== undefined; f = queue.shift()) {
+        const path = f.name.slice(1)
+        const { bytes } = await fetchLink(undefined, { urls: githubFileUrls({ owner: gh.owner, repo: gh.repo, ref, path }, env), family: 'github', fetchImpl, env, maxBytes: MAX_BYTES })
+        writeEntries([{ path: path.slice(prefix.length - 1), data: bytes }], dir)
+      }
+    }
+    await Promise.all(Array.from({ length: 4 }, worker))
+    return
+  }
+  throw last
+}
+
+/** A GitHub directory (repository, tree link or a SKILL.md's directory): the archive and the mirrors, in the order likelier to work. */
+async function githubDir(gh, dir, fetchImpl, env) {
+  // A whole repository is one archive; a subdirectory is a few files (the archive may be large).
+  const ways = gh.path === '' ? [githubArchive, githubListing] : [githubListing, githubArchive]
+  const failures = []
+  for (const way of ways) {
+    try { await way(gh, dir, fetchImpl, env); return } catch (error) {
+      if (error instanceof SkillError && error.code !== 'link-unreachable') throw error
+      failures.push(error)
+      rmSync(dir, { recursive: true, force: true }); mkdirSync(dir, { recursive: true })
+    }
+  }
+  const attempts = failures.flatMap(e => e instanceof SourcesError ? e.attempts : e instanceof SkillError ? e.params.attempts ?? [] : [{ host: '?', reason: 'network', detail: String(e?.message ?? e) }])
+  throw linkError(new SourcesError(attempts), `https://github.com/${gh.owner}/${gh.repo}`)
+}
+
+/** The GitHub object a skill input names: any github.com / raw / jsDelivr link (parseGithubLink), or `github:o/r[#ref]`. */
+function githubTarget(text, env) {
+  const link = parseGithubLink(text, env)
+  if (link !== undefined) return link
+  if (!text.startsWith('github:')) return undefined
+  const gh = parseGithub(text)
+  return gh === undefined ? undefined : { owner: gh.owner, repo: gh.repo, ref: gh.ref, path: gh.dir ?? '', kind: gh.ref ? 'dir' : 'repo' }
 }
 
 /** Stage [input] (file, dir, archive, raw URL, GitHub URL) into [dir]. */
@@ -63,24 +132,21 @@ async function stageInput(input, dir, fetchImpl, env) {
     writeEntries(readArchive(readFileSync(local)), dir)
     return
   }
-  const gh = parseGithub(text)
-  if (gh !== undefined && /^https?:|^github:/.test(text)) {
-    const ep = endpoints(env)
-    let bytes
-    try { bytes = await download(`${ep.codeload}/${gh.owner}/${gh.repo}/tar.gz/${encodeURIComponent(gh.ref ?? 'HEAD')}`, fetchImpl) } catch (error) {
-      throw new SkillError('github-unreachable', { reason: String(error?.message ?? error) })
-    }
-    let entries = readArchive(bytes)
-    const top = commonTop(entries)
-    const prefix = [top, gh.dir].filter(Boolean).join('/')
-    entries = entries.filter(e => prefix === '' || e.path.startsWith(prefix + '/')).map(e => ({ ...e, path: prefix === '' ? e.path : e.path.slice(prefix.length + 1) }))
-    writeEntries(entries, dir)
-    return
+  const gh = githubTarget(text, env)
+  if (gh !== undefined && gh.kind !== 'file') { await githubDir(gh, dir, fetchImpl, env); return }
+  if (gh !== undefined && basename(gh.path) === 'SKILL.md') {
+    // A link to a skill's SKILL.md means the skill: its directory (scripts, references) when it can be read.
+    try { await githubDir({ ...gh, path: dirname(gh.path) === '.' ? '' : dirname(gh.path), kind: 'dir' }, dir, fetchImpl, env); if (existsSync(join(dir, 'SKILL.md'))) return } catch {}
+    rmSync(dir, { recursive: true, force: true }); mkdirSync(dir, { recursive: true })
   }
-  if (/^https?:\/\//i.test(text)) {
+  if (gh !== undefined || /^https?:\/\//i.test(text)) {
     const url = new URL(text)
-    const bytes = await download(text, fetchImpl).catch(error => { throw new SkillError('network', { host: url.host, reason: String(error?.message ?? error) }) })
-    if (/\.md$/i.test(url.pathname) || bytes.subarray(0, 3).toString() === '---') { writeFileSync(join(dir, basename(url.pathname) || 'SKILL.md'), bytes); return }
+    const name = basename(gh?.path ?? url.pathname) || 'SKILL.md'
+    let bytes
+    try { ({ bytes } = await fetchLink(text, { fetchImpl, env, maxBytes: MAX_BYTES })) } catch (error) { throw linkError(error, text) }
+    if (ARCHIVE.test(name) && bytes.subarray(0, 3).toString() !== '---') { writeEntries(readArchive(bytes), dir); return }
+    if (/\.md$/i.test(name) || bytes.subarray(0, 3).toString() === '---') { writeFileSync(join(dir, /\.md$/i.test(name) ? name : 'SKILL.md'), bytes); return }
+    if (/^\s*</.test(bytes.subarray(0, 64).toString())) throw new SkillError('link-is-page', { url: text, host: url.host })
     writeEntries(readArchive(bytes), dir)
     return
   }
