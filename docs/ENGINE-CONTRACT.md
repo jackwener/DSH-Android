@@ -233,6 +233,30 @@ session's mode excludes (`not_authorized`). `capability/list` stays global.
 Plugins, skills and MCP servers: `android/ext/*` methods and `android.ext.*` notifications, specified in
 [`PLUGINS-CONTRACT.md`](PLUGINS-CONTRACT.md) §3–§5.
 
+### 2.7 Turn ends and continuation — `@dsh-android/plugin-guard` (`continuation.js`, #37)
+
+dsh's loop has no step limit. A turn ends (`turn/end.reason.kind`) when the model answers without a tool call
+(`completed`), on the output cap (`max-tokens`), when a pre-step hook refuses (`blocked`: a budget, an archived
+session), on an error (`error`) or when the run is stopped (`aborted`; the app stops the engine). The phone profile
+disables dsh's same-session goals (`tool-goal`, `goal-round-driver`, `command-goal`): a goal round is a new turn
+started while the session is idle, which the app showed as the run ending; long tasks continue inside the turn.
+
+- **Continuation.** At dsh's `agent/turn-stopping` of a root session, when the model's last answer has no tool call
+  and the turn's own todo list (`todo/write` since its `turn/start`) has `pending`/`in_progress` items — or the answer
+  claims the work goes on by itself ("下一轮会自动继续") — and it does not ask the user anything, plugin-guard injects
+  a next-step `user/message` with `source { kind: "android-continue", form: "notice", summary }` (model-facing:
+  continue now, do not repeat what succeeded, or stop and say why). The turn and the session status stay running.
+  No second nudge when the model answered the previous one without calling a tool; at most 8 per turn.
+- **Outcome record.** Before `turn/end`, an ignorable `plugin:android-guard/turn-outcome { turn, reason, todos:
+  { pending, inProgress, completed } | null, nudges }` with `reason` `done` | `needs_user` | `pending_work` (stopped
+  with work left despite a nudge) | `continue_limit`; a budget refusal records `{ turn, reason: "budget", kind, used,
+  limit }` (then `turn/end` `blocked`).
+- **App.** `Turn.endReason` (Projection.kt) maps both: `done`/`needs_user` read as a normal reply; `pending_work`,
+  `continue_limit`, `budget` and `max-tokens` get an end card (reason, todo progress, next item, 继续). Without a
+  record (older engine) a `completed` turn whose todo list has open items counts as `pending_work`. 继续 logs an
+  `app/notice { kind: "user_continue" }` and sends an app prompt (`[DSH] …`, do not repeat what succeeded); the
+  continuation turn folds into the ended one. The nudge shows as a notice inside the turn.
+
 ## 3. Capability channel (`DSH_BRIDGE_FD`)
 
 A `socketpair(AF_UNIX, SOCK_STREAM)`; Node opens it with `new net.Socket({ fd })`. Newline-delimited JSON-RPC 2.0, both directions.

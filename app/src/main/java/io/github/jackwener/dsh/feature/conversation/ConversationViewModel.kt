@@ -128,6 +128,8 @@ open class ConversationController(
 
     fun stop() = viewModelScope.launch { store.stop() }
     fun retry(e: TurnError) = viewModelScope.launch { store.retry(sessionId.value, e) }
+    /** 继续 on a turn's end card (work remains). */
+    fun continueTask() = viewModelScope.launch { store.continueTask(sessionId.value) }
     fun approve(a: PendingApproval, outcome: ApprovalOutcome) = store.answerApproval(a.requestKey, outcome)
     fun answer(q: PendingQuestion, answers: Map<String, Pair<List<String>, String?>>) = store.answerQuestion(q.requestKey, answers)
     fun skipQuestion(q: PendingQuestion) = store.answerQuestion(q.requestKey, q.questions.associate { it.id to (emptyList<String>() to null) })

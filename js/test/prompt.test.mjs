@@ -46,3 +46,9 @@ test('picker guidance only when screen_set_wheel is registered', () => {
   assert.ok(withWheel.endsWith('\n\n'))
   assert.ok(!screenSection([screen]).includes('screen_set_wheel'))
 })
+
+test('long tasks: no "next round" claims, progress kept with todo_write (#37)', () => {
+  const text = systemPromptSection('zh-CN', [screen])
+  for (const s of ['keep calling tools until the task is done', 'there is no automatic next round', 'todo_write', 'does not repeat actions', 'what remains'])
+    assert.ok(text.includes(s), s)
+})
