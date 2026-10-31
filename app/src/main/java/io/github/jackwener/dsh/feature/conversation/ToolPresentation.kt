@@ -59,6 +59,7 @@ object ToolPresentation {
         "file_mkdir", "file_move", "file_delete", "archive_create", "archive_extract" ->
             ToolInfo(if (name == "file_delete") R.drawable.dsw_trash_outline else R.drawable.dsw_folder_close, titleOf(name), Activity.Files, BodyKind.Text)
         "bash", "pwsh", "shell" -> ToolInfo(R.drawable.dsw_api_outline, R.string.tool_bash, Activity.Command, BodyKind.Terminal)
+        "adb_shell" -> ToolInfo(R.drawable.dsw_api_outline, R.string.tool_adb_shell, Activity.Command, BodyKind.Terminal)
         "web_search" -> ToolInfo(R.drawable.dsw_globe_outline, R.string.tool_web_search, Activity.WebSearch, BodyKind.Web)
         "web_fetch" -> ToolInfo(R.drawable.dsw_browse_outline, R.string.tool_web_fetch, Activity.WebFetch, BodyKind.Web)
         "todo_write" -> ToolInfo(R.drawable.dsw_checklist_outline, R.string.tool_todo, Activity.Plan, BodyKind.Todo)
@@ -147,7 +148,7 @@ object ToolPresentation {
     fun summary(context: Context, t: Block.Tool): String? {
         val a = t.args ?: return t.arguments.take(80).ifBlank { null }
         return when (t.name) {
-            "bash", "pwsh", "shell" -> a.str("command")?.lineSequence()?.firstOrNull()
+            "bash", "pwsh", "shell", "adb_shell" -> a.str("command")?.lineSequence()?.firstOrNull()
             "read", "write", "edit", "str_replace_editor", "read_image" -> a.str("path") ?: a.str("file_path")
             "grep", "glob" -> a.str("pattern") ?: a.str("query")
             "web_search" -> a.str("query")

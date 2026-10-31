@@ -10,6 +10,7 @@ import android.media.ImageReader
 import android.os.Binder
 import android.os.Build
 import android.os.Looper
+import android.os.ParcelFileDescriptor
 import android.util.Log
 import java.io.ByteArrayOutputStream
 import java.io.File
@@ -41,7 +42,8 @@ class ShellUserService : IShellService.Stub() {
     }
 
     override fun exec(cmd: String, timeoutMs: Long): String {
-        val p = ProcessBuilder("sh", "-c", cmd).redirectErrorStream(true).start()
+        // Run from "/" like `adb shell`, so relative paths mean what the engine's hardline check assumed.
+        val p = ProcessBuilder("sh", "-c", cmd).directory(File("/")).redirectErrorStream(true).start()
         // Read on a separate thread: readText() blocks until stdout closes, so a hung command would
         // never reach waitFor/destroy and would hold a Shizuku binder thread for ever.
         val out = StringBuilder()
@@ -59,23 +61,61 @@ class ShellUserService : IShellService.Stub() {
         return "${if (done) p.exitValue() else 124}\n${synchronized(out) { out.toString() }}"
     }
 
+    /** The shell identity every system-service call made here goes through (see [ShellContext]). */
+    private val shellContext: ShellContext by lazy { ShellContext.create() }
+    @Volatile private var displayError: String? = null
+
     @SuppressLint("WrongConstant")
     override fun createDisplay(width: Int, height: Int, dpi: Int): Int {
-        if (Looper.myLooper() == null) Looper.prepare()
-        val dm = SystemContext.get().getSystemService(DisplayManager::class.java)
-        val reader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2)
-        // Newest flag set first; an older or stricter build that rejects it gets the previous one.
-        for (flags in displayFlags()) {
-            val vd = try { dm.createVirtualDisplay("dsh-agent", width, height, dpi, reader.surface, flags) } catch (t: Throwable) {
-                Log.w(TAG, "createVirtualDisplay(flags=0x${flags.toString(16)}) failed", t); null
-            } ?: continue
-            val id = vd.display.displayId
-            synchronized(displays) { displays[id] = Screen(vd, reader) }
-            setImePolicy(id)
-            return id
+        val failures = ArrayList<String>()
+        try {
+            if (Looper.myLooper() == null) Looper.prepare()
+            val dm = shellContext.getSystemService(DisplayManager::class.java) ?: error("no DisplayManager")
+            val reader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2)
+            // Newest flag set first; an older or stricter build that rejects it gets the previous one.
+            for (flags in displayFlags()) {
+                val vd = try { dm.createVirtualDisplay("dsh-agent", width, height, dpi, reader.surface, flags) } catch (t: Throwable) {
+                    Log.w(TAG, "createVirtualDisplay(flags=0x${flags.toString(16)}) failed", t)
+                    failures += "flags 0x${flags.toString(16)}: ${ShellIdentity.describe(t)}"; null
+                } ?: continue
+                val id = vd.display.displayId
+                synchronized(displays) { displays[id] = Screen(vd, reader) }
+                setImePolicy(id)
+                displayError = null
+                return id
+            }
+            reader.close()
+        } catch (t: Throwable) {
+            Log.w(TAG, "createDisplay failed", t)
+            failures += ShellIdentity.describe(t)
         }
-        reader.close()
+        displayError = DisplayFailure.summary(failures)
         return -1
+    }
+
+    override fun lastDisplayError(): String? = displayError
+
+    // ---- Android/data and Android/obb (FileTools) ----------------------------------------------
+
+    private val files = ShellFiles()
+
+    override fun fsStat(path: String): String? = files.stat(path)
+    override fun fsList(path: String, recursive: Boolean, limit: Int): String = files.list(path, recursive, limit)
+    override fun fsMkdirs(path: String): String = files.mkdirs(path)
+    override fun fsMove(from: String, to: String, copy: Boolean): String = files.move(from, to, copy)
+    override fun fsDelete(path: String): String = files.delete(path)
+    override fun fsSearch(dir: String, nameGlob: String?, content: String?, regex: Boolean, limit: Int, sort: String?): String =
+        files.search(dir, nameGlob, content, regex, limit, sort)
+
+    override fun fsOpen(path: String, mode: String): ParcelFileDescriptor {
+        val f = if (mode == "r") files.openable(path) else files.prepareWrite(path)
+        val m = when (mode) {
+            "r" -> ParcelFileDescriptor.MODE_READ_ONLY
+            "w" -> ParcelFileDescriptor.MODE_WRITE_ONLY or ParcelFileDescriptor.MODE_CREATE or ParcelFileDescriptor.MODE_TRUNCATE
+            "wa" -> ParcelFileDescriptor.MODE_WRITE_ONLY or ParcelFileDescriptor.MODE_CREATE or ParcelFileDescriptor.MODE_APPEND
+            else -> throw IllegalArgumentException("mode must be r, w or wa")
+        }
+        return try { ParcelFileDescriptor.open(f, m) } catch (t: Throwable) { throw IllegalStateException(ShellIdentity.describe(t)) }
     }
 
     override fun releaseDisplay(displayId: Int) {
@@ -283,12 +323,8 @@ internal class MuteLedger(private val file: File) {
     }
 }
 
-/** Obtains a system Context inside the Shizuku process via ActivityThread (hidden API, shell has access). */
-@SuppressLint("PrivateApi", "DiscouragedPrivateApi")
-private object SystemContext {
-    fun get(): android.content.Context {
-        val at = Class.forName("android.app.ActivityThread")
-        val thread = at.getMethod("currentActivityThread").invoke(null) ?: at.getMethod("systemMain").invoke(null)
-        return at.getMethod("getSystemContext").invoke(thread) as android.content.Context
-    }
+/** createDisplay's failure text for the app: the last flag set's error first (the most compatible one), then the others. */
+internal object DisplayFailure {
+    fun summary(failures: List<String>): String =
+        if (failures.isEmpty()) "no virtual display flags to try" else (listOf(failures.last()) + failures.dropLast(1).reversed()).joinToString("; ").take(ShellIdentity.MAX_ERROR * 2)
 }

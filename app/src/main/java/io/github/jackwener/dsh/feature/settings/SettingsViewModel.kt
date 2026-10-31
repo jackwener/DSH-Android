@@ -221,6 +221,7 @@ class SettingsViewModel @Inject constructor(
                 notifications = granted("notifications"),
                 agentScreenUnavailable = screenWhy,
                 agentScreenSetting = st.agentScreen,
+                agentScreenError = agentScreen.lastCreateError,
                 deepseekCredential = when { hasKey -> "api key"; account.signedIn -> "account"; else -> "none" },
                 roles = roles,
                 providers = st.providers.map { ProviderFacts(it.id, it.preset, it.enabled, it.baseUrl, it.models, it.verified) },
@@ -263,6 +264,7 @@ class SettingsViewModel @Inject constructor(
         val shell = shizuku.access.refresh()
         checks += DoctorCheck("Shizuku", if (shell == io.github.jackwener.dsh.core.platform.ShellState.NotInstalled) null else shell.ready,
             shellStateLabel(context, shell), shellFixIntent(shizuku.access, shell, shizukuInstaller.bundled))
+        agentScreen.lastCreateError?.let { checks += DoctorCheck(context.getString(R.string.agent_screen_doctor), false, context.getString(R.string.agent_screen_create_failed, it)) }
         val signedIn = account.signedIn
         val third = settings.value.choice.provider
         checks += DoctorCheck(if (zh) "模型凭据" else "Model credential", hasKey || signedIn || third != null, when {

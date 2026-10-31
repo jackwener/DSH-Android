@@ -72,10 +72,10 @@ Shizuku 用户服务（shell uid，可选）：ShellUserService
 
 | 组 | 工具 |
 |---|---|
-| files | `file_search` `file_read` `file_list` `file_stat`（读）；`file_write` `file_move` `file_mkdir` `archive_extract` `archive_create`（写）；`file_delete`（危险）。`file_read` 能抽取 PDF、docx、xlsx、pptx 的文本 |
+| files | `file_search` `file_read` `file_list` `file_stat`（读）；`file_write` `file_move` `file_mkdir` `archive_extract` `archive_create`（写）；`file_delete`（危险）。`file_read` 能抽取 PDF、docx、xlsx、pptx 的文本。Android 11+ 的 `Android/data`、`Android/obb` 经 Shizuku 的 shell 服务（`ShellFiles`，java.io，不拼命令）访问，没有 Shizuku 时返回 `shizuku_required`；压缩工具不支持这两个目录 |
 | apps | `app_list` `app_info`；`app_launch` `app_open_link` `app_send_intent` `share_to_app`（需解锁） |
 | screen | `screen_read` `screen_capture` `screen_wait` `screen_tap` `screen_swipe` `screen_scroll` `screen_type` `screen_key` `screen_set_wheel`（全部需解锁）；`hand_to_user`（交给用户处理：登录、验证码、付款等）。参数 `screen: agent / main`，有后台屏时默认后台屏（见 `docs/AGENT-SCREEN-V2.md`） |
-| system | `device_status` `setting_get`；`sound_mode` `volume_set` `dnd_set` `brightness_set` `flashlight` `wifi_toggle` `bluetooth_toggle` `mobile_data_toggle` `alarm_set` `alarm_show`；`location_get`（敏感）；`setting_put`（危险，仅 Shizuku） |
+| system | `device_status` `setting_get`；`sound_mode` `volume_set` `dnd_set` `brightness_set` `flashlight` `wifi_toggle` `bluetooth_toggle` `mobile_data_toggle` `alarm_set` `alarm_show`；`location_get`（敏感）；`setting_put`（危险，仅 Shizuku）；`adb_shell`（写，仅 Shizuku：以 shell 用户运行命令，等同 `adb shell`；engine 的 hardline 同样检查它的命令，不能作为自动化的直接步骤） |
 | notifications | `notification_list`（敏感）；`notification_dismiss` `notification_open`；`notification_reply`（危险） |
 | comms | `contacts_search` `sms_read` `calendar_read` `call_log_read`（敏感）；`calendar_add` `calendar_new_event`（打开日历自带的新建页，无需日历权限）；`sms_send`（危险） |
 | media / clipboard | `media_control`；`clipboard_get`（敏感）`clipboard_set` |
@@ -100,7 +100,7 @@ Shizuku 用户服务（shell uid，可选）：ShellUserService
 - **下发与执行**：`SessionStore.prompt` 在每次 `session/prompt` 之前（包括 resume 之后）发 `android/session/mode`，载荷是解析后的完整模式，引擎不保存定义。`plugin-mode` 按根会话记住模式，对根会话和它的子智能体：`agent.ctx.tools.restrict({ deny })` 隐藏被排除的工具（只列当前存在的名字，工具集变化时重新计算），全局 `tools.guard` 兜底拒绝；关技能就隐藏 `skill` 工具（dsh 不再发技能目录）；附加提示词作为每个 agent 的 prompt section；被隐藏工具的 `tool:*` 指引段落从组装后的 prompt 里去掉；`plugin-guard` 的手机说明段按 agent 可见的工具生成。选择记在 dsh 会话日志里（插件记录 `plugin:android-mode/selected`，不进模型上下文）。`CapabilityHub` 再按会话模式拒绝被排除组的设备调用，作为 App 侧兜底（`capability/list` 是全局的，所以不按会话裁剪清单）。
 - 无障碍（`DshAccessibilityService`）：读界面元素树、手势、截图（Android 14+ 遇到 `FLAG_SECURE` 页面时显示“请你来操作”的接管卡片）。没开无障碍但 Shizuku 可用时，点按和滑动改用 `input` 命令。
 - `screen_type` 逐级回退，每一步都回读字段内容确认：`ACTION_SET_TEXT` → 无障碍输入连接（Android 13+）→ DSH 输入法（当前就是它时）→ Shizuku `input text`（ASCII），或用 `ime set` 临时切到 DSH 输入法再切回 → 剪贴板粘贴。
-- Shizuku（`core/platform/ShellAccess`、`ShizukuShell`、`ShellUserService`）：只和官方 Shizuku App 通信，不自带 ADB 客户端。工具分为三类（`ShellUse`）：不需要、可选（Wi‑Fi、蓝牙、移动数据、剪贴板、`setting_get`、`location_get`；没有 Shizuku 时打开系统面板让用户点，或走普通 API）、必需（`setting_put`）。后台屏（`core/capability/AgentScreen`）在 Shizuku 就绪时由 `app_launch` / `app_open_link` 自动创建，没有 Shizuku 时退回主屏。必需 Shizuku 的调用会在输入框位置显示 Shizuku 卡片，Shizuku 就绪后自动继续。APK 内置官方 Shizuku 安装包（构建时由 `tools/fetch-shizuku.sh` 下载并校验哈希和签名），通过 `PackageInstaller` 在 App 内安装或升级。
+- Shizuku（`core/platform/ShellAccess`、`ShizukuShell`、`ShellUserService`）：只和官方 Shizuku App 通信，不自带 ADB 客户端。工具分为三类（`ShellUse`）：不需要、可选（Wi‑Fi、蓝牙、移动数据、剪贴板、`setting_get`、`location_get`；没有 Shizuku 时打开系统面板让用户点，或走普通 API）、必需（`setting_put`、`adb_shell`）。shell 服务调用系统服务时统一用 `ShellContext`（包名 `com.android.shell`、uid 2000 的 AttributionSource），不用系统 context 的 `android` 包名（#34）；建后台屏失败时把异常原因带回 App（`lastDisplayError`），模型、诊断页和诊断报告都能看到。后台屏（`core/capability/AgentScreen`）在 Shizuku 就绪时由 `app_launch` / `app_open_link` 自动创建，没有 Shizuku 时退回主屏。必需 Shizuku 的调用会在输入框位置显示 Shizuku 卡片，Shizuku 就绪后自动继续。APK 内置官方 Shizuku 安装包（构建时由 `tools/fetch-shizuku.sh` 下载并校验哈希和签名），通过 `PackageInstaller` 在 App 内安装或升级。
 - 锁屏：`needsUnlock` 的工具在锁屏或灭屏时挂起，发通知“解锁后继续”，收到 `USER_PRESENT`/`SCREEN_ON` 后执行；超过预算时间返回 `waiting_for_user`，不执行任何操作。
 
 ## 自动化（core/trigger/）

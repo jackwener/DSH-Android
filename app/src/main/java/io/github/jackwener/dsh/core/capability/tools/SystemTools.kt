@@ -378,5 +378,48 @@ class SystemTools @Inject constructor(
                 return shell("settings put ${args.reqStr("namespace")} ${args.reqStr("key").filter { it.isLetterOrDigit() || it in "_." }} '$v'", "change setting")
             }
         },
+        object : Tool(AdbShell.NAME, ToolGroup.System, Risk.write, false, AdbShell.DESCRIPTION, {
+                string("command", "The command line, e.g. \"dumpsys battery\", \"pm list packages -3\", \"ls /sdcard/Android/data\"", required = true)
+                int("timeout_s", "Seconds before the command is stopped (default ${AdbShell.DEFAULT_TIMEOUT_S}, max ${AdbShell.MAX_TIMEOUT_S})")
+            }, ShellUse.Required) {
+            override suspend fun invoke(args: JsonObject, call: CallContext): ToolResult {
+                // The hardline floor lives in the engine (plugin-guard); a direct rule step would skip it.
+                if (!call.viaEngine) return ToolResult.error("not_authorized", AdbShell.NOT_FROM_ENGINE)
+                val cmd = args.reqStr("command")
+                if (!shizuku.available) throw ShellUnavailableException(gate.access.state.value)
+                val timeoutS = AdbShell.timeoutS(args.int("timeout_s"))
+                val r = shizuku.exec(cmd, timeoutS * 1000L)
+                return ToolResult.text(AdbShell.format(r.code, r.output, timeoutS))
+            }
+        },
     )
+}
+
+/** `adb_shell`: a command as the shell user through Shizuku (= `adb shell <command>`), for what an app's own shell cannot do. */
+internal object AdbShell {
+    const val NAME = "adb_shell"
+    const val DEFAULT_TIMEOUT_S = 30
+    const val MAX_TIMEOUT_S = 240
+    /** ShellUserService.exec keeps at most this many characters of output. */
+    const val OUTPUT_CAP = 64_000
+    const val TIMED_OUT = 124
+
+    const val DESCRIPTION = "Run a command as the Android shell user through Shizuku: the same as `adb shell <command>` from a computer, on this phone. " +
+        "Only for what the bash tool cannot do as an app: pm (list, enable/disable, grant), am (start, force-stop), cmd, dumpsys, settings, wm, input, " +
+        "appops, logcat -d, and files under Android/data or Android/obb. Prefer a dedicated tool when one fits (file_*, setting_put, wifi_toggle, app_*). " +
+        "Runs /system/bin/sh from \"/\" without root and without a terminal: no prompts, and a command that never ends (logcat without -d, top without -n) " +
+        "is stopped at the timeout. Returns the exit code and stdout+stderr (at most 64 000 characters). The same hard blocks as bash apply."
+
+    const val NOT_FROM_ENGINE = "adb_shell runs only from a conversation or an automation's agent run (where DSH's command safety checks see it), " +
+        "not as a direct automation step. Make the automation an agent action instead."
+
+    fun timeoutS(requested: Int?): Int = (requested ?: DEFAULT_TIMEOUT_S).coerceIn(1, MAX_TIMEOUT_S)
+
+    fun format(code: Int, output: String, timeoutS: Int): String = buildString {
+        append("exit ").append(code)
+        if (code == TIMED_OUT) append(" (stopped after ${timeoutS}s, or the command itself exited 124)")
+        val out = output.trimEnd()
+        append('\n').append(out.ifEmpty { "(no output)" })
+        if (output.length >= OUTPUT_CAP) append("\n…(output cut at $OUTPUT_CAP characters; narrow the command, e.g. with grep or head)")
+    }
 }

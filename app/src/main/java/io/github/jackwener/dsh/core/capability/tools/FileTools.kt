@@ -1,7 +1,9 @@
 package io.github.jackwener.dsh.core.capability.tools
 
 import android.content.Context
+import android.os.Build
 import android.os.Environment
+import android.os.ParcelFileDescriptor
 import android.util.Base64
 import android.webkit.MimeTypeMap
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -18,11 +20,16 @@ import io.github.jackwener.dsh.core.capability.str
 import io.github.jackwener.dsh.core.capability.strs
 import io.github.jackwener.dsh.core.model.Risk
 import io.github.jackwener.dsh.core.model.ToolGroup
+import io.github.jackwener.dsh.core.platform.IShellService
+import io.github.jackwener.dsh.core.platform.ShellFiles
+import io.github.jackwener.dsh.core.platform.ShizukuShell
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonObject
 import java.io.File
+import java.io.InputStream
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -32,25 +39,73 @@ import java.util.zip.ZipOutputStream
 import javax.inject.Inject
 import javax.inject.Singleton
 
-/** Shared-storage file operations ("All files access"). Paths may be absolute or relative to /sdcard. */
+/**
+ * Shared-storage file operations ("All files access"). Paths may be absolute or relative to /sdcard.
+ * Android/data and Android/obb (closed to apps on Android 11+) go through the Shizuku shell user
+ * service instead ([PrivateStorage], ShellFiles), with the same limits and the same risk levels.
+ */
 @Singleton
-class FileTools @Inject constructor(@ApplicationContext private val context: Context) : ToolSet {
+class FileTools @Inject constructor(@ApplicationContext private val context: Context, private val shizuku: ShizukuShell) : ToolSet {
     private val root: File = Environment.getExternalStorageDirectory()
 
     private fun need() { if (!hasAllFilesAccess(context)) throw PermissionMissingException("All files access") }
 
+    /** A private-storage path while Shizuku is not ready: a plain model-facing error, not a permission card. */
+    private class NeedsShizuku(message: String) : Exception(message)
+
     private fun resolve(path: String): File {
         val f = (if (path.startsWith("/")) File(path) else File(root, path)).canonicalFile
         val allowed = listOf(root.canonicalPath, "/storage", "/sdcard")
-        if (allowed.none { f.path.startsWith(it) } || f.path.startsWith(File(root, "Android/data").canonicalPath) ||
-            f.path.startsWith(File(root, "Android/obb").canonicalPath))
+        if (allowed.none { f.path.startsWith(it) })
             throw InvalidArgsException("Path outside shared storage is not accessible: ${f.path}")
         return f
     }
 
-    private fun File.describe(): String {
-        val date = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US).format(Date(lastModified()))
-        return if (isDirectory) "d  ${"-".padStart(9)}  $date  $path/" else "-  ${human(length()).padStart(9)}  $date  $path"
+    /**
+     * True when [f] must be served by the shell user (Android/data|obb on Android 11+, Shizuku ready);
+     * false for an ordinary path, which needs All files access ([need]).
+     */
+    private fun viaShell(f: File): Boolean {
+        if (!PrivateStorage.needsShell(f.path, Build.VERSION.SDK_INT)) { need(); return false }
+        if (!shizuku.available) throw NeedsShizuku(PrivateStorage.needsShizuku(shizuku.access.state.value.reason))
+        return true
+    }
+
+    /** For tools that only work on ordinary paths (archives). */
+    private fun localOnly(f: File, tool: String): File {
+        if (PrivateStorage.needsShell(f.path, Build.VERSION.SDK_INT)) throw InvalidArgsException(
+            "$tool cannot work inside Android/data or Android/obb; copy the files to another folder with file_move (copy=true) first, then use $tool there.")
+        need()
+        return f
+    }
+
+    /** Runs a tool body on the IO dispatcher; a private path without Shizuku becomes a clear error. */
+    private suspend fun io(block: suspend CoroutineScope.() -> ToolResult): ToolResult = withContext(Dispatchers.IO) {
+        try { block() } catch (e: NeedsShizuku) { ToolResult.error("shizuku_required", e.message ?: "Shizuku is needed") }
+    }
+
+    private suspend fun shell(): IShellService = shizuku.service()
+
+    private fun line(dir: Boolean, size: Long, mtime: Long, path: String): String {
+        val date = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US).format(Date(mtime))
+        return if (dir) "d  ${"-".padStart(9)}  $date  $path/" else "-  ${human(size).padStart(9)}  $date  $path"
+    }
+
+    private fun File.describe(): String = line(isDirectory, length(), lastModified(), path)
+    private fun ShellFiles.Row.describe(): String = line(dir, size, mtime, path)
+
+    /** A file for file_read: [open] streams it, [file] gives a local File (the file itself, or a cached copy). */
+    private class Src(ext: String, val size: Long, val described: String, val open: () -> InputStream, val file: () -> File) {
+        val ext = ext.lowercase()
+    }
+
+    /** Shell rows plus the trailer lines ("#total N", "#more", "#note …"). */
+    private class Rows(val rows: List<ShellFiles.Row>, val total: Int?, val note: String?)
+    private fun rows(raw: String): Rows {
+        val lines = raw.lines()
+        return Rows(lines.mapNotNull { ShellFiles.parseRow(it) },
+            lines.firstOrNull { it.startsWith("#total ") }?.removePrefix("#total ")?.trim()?.toIntOrNull(),
+            lines.firstOrNull { it.startsWith("#note ") }?.removePrefix("#note "))
     }
 
     private fun human(n: Long): String = when {
@@ -60,11 +115,17 @@ class FileTools @Inject constructor(@ApplicationContext private val context: Con
         else -> "${n}B"
     }
 
-    private companion object { const val MAX_CHARS = 100_000 }
+    private companion object {
+        const val MAX_CHARS = 100_000
+        /** Images and documents read through Shizuku are copied to the cache first; larger ones are refused. */
+        const val MAX_SHELL_COPY = 64L shl 20
+        const val PRIVATE_NOTE = " Android/data and Android/obb work too (through Shizuku on Android 11+)."
+    }
 
     override val tools = listOf(
         object : Tool("file_search", ToolGroup.Files, Risk.read, false,
-            "Find files on shared storage by name pattern and/or text content. Fast (ripgrep). Use before reading or modifying files.", {
+            "Find files on shared storage by name pattern and/or text content. Fast (ripgrep). Use before reading or modifying files. " +
+                "Android/data and Android/obb are only searched when 'dir' points inside them (through Shizuku on Android 11+).", {
                 string("name", "Glob on file name, e.g. '*.pdf' or '*invoice*'")
                 string("content", "Text the file must contain (literal, case-insensitive; text files only)")
                 bool("regex", "Treat content as a regular expression")
@@ -72,10 +133,16 @@ class FileTools @Inject constructor(@ApplicationContext private val context: Con
                 int("limit", "Max results, default 100")
                 string("sort", "Order of results", enum = listOf("recent", "largest", "name"))
             }) {
-            override suspend fun invoke(args: JsonObject, call: CallContext): ToolResult = withContext(Dispatchers.IO) {
-                need()
+            override suspend fun invoke(args: JsonObject, call: CallContext): ToolResult = io {
                 val dir = resolve(args.str("dir") ?: root.path)
                 val limit = (args.int("limit") ?: 100).coerceIn(1, 1000)
+                if (viaShell(dir)) {
+                    val r = rows(shell().fsSearch(dir.path, args.str("name"), args.str("content")?.takeIf { it.isNotEmpty() }, args.bool("regex") == true, limit, args.str("sort")))
+                    val total = r.total ?: r.rows.size
+                    return@io ToolResult.text((if (r.rows.isEmpty()) "No files found." else
+                        "$total match(es)${if (total > r.rows.size) ", showing ${r.rows.size}" else ""} (via Shizuku):\n" + r.rows.joinToString("\n") { it.describe() }) +
+                        (r.note?.let { "\n(note: $it)" } ?: ""))
+                }
                 val rg = File(context.filesDir, "bin/rg").path
                 val filters = mutableListOf("--hidden", "--no-messages", "-g", "!Android/data/**", "-g", "!Android/obb/**")
                 args.str("name")?.let { filters += listOf("--iglob", it) }
@@ -84,7 +151,7 @@ class FileTools @Inject constructor(@ApplicationContext private val context: Con
                 val cmd = if (content != null) listOf(rg, "-l", "-i") + (if (args.bool("regex") == true) emptyList() else listOf("-F")) + filters + listOf("-e", content, "--", dir.path)
                     else listOf(rg, "--files") + filters + listOf("--", dir.path)
                 val (files, problem) = run(cmd)
-                if (problem != null && files.isEmpty()) return@withContext ToolResult.error("failed", problem)
+                if (problem != null && files.isEmpty()) return@io ToolResult.error("failed", problem)
                 val sorted = when (args.str("sort")) {
                     "largest" -> files.sortedByDescending { it.length() }
                     "name" -> files.sortedBy { it.name.lowercase() }
@@ -114,16 +181,25 @@ class FileTools @Inject constructor(@ApplicationContext private val context: Con
                 return files to problem
             }
         },
-        object : Tool("file_list", ToolGroup.Files, Risk.read, false, "List a directory (size, modified time).", {
+        object : Tool("file_list", ToolGroup.Files, Risk.read, false, "List a directory (size, modified time).$PRIVATE_NOTE", {
             string("path", "Directory, default /sdcard")
             bool("recursive", "Include subdirectories")
             int("limit", "Max entries, default 300")
         }) {
-            override suspend fun invoke(args: JsonObject, call: CallContext) = withContext(Dispatchers.IO) {
-                need()
+            override suspend fun invoke(args: JsonObject, call: CallContext) = io {
                 val dir = resolve(args.str("path") ?: root.path)
-                if (!dir.isDirectory) throw InvalidArgsException("Not a directory: ${dir.path}")
                 val limit = (args.int("limit") ?: 300).coerceIn(1, 2000)
+                if (viaShell(dir)) {
+                    val raw = shell().fsList(dir.path, args.bool("recursive") == true, limit)
+                    val r = rows(raw)
+                    val more = when {
+                        raw.endsWith("#more") -> "\n…(more entries not shown; use file_search or a narrower folder)"
+                        (r.total ?: 0) > r.rows.size -> "\n…(${r.total!! - r.rows.size} more not shown; raise limit or use file_search)"
+                        else -> ""
+                    }
+                    return@io ToolResult.text(if (r.rows.isEmpty()) "(empty)" else r.rows.joinToString("\n") { it.describe() } + more)
+                }
+                if (!dir.isDirectory) throw InvalidArgsException("Not a directory: ${dir.path}")
                 val (entries, total) = if (args.bool("recursive") == true) {
                     val all = dir.walkTopDown().drop(1).take(limit + 1).toList()
                     all.take(limit) to (if (all.size > limit) null else all.size)
@@ -141,39 +217,60 @@ class FileTools @Inject constructor(@ApplicationContext private val context: Con
         },
         object : Tool("file_read", ToolGroup.Files, Risk.read, false,
             "Read a file. Text files return text (use offset/limit lines for big files; GBK/GB18030 is detected); images return the image " +
-                "(any size, HEIC included); PDF, Word (docx), Excel (xlsx) and PowerPoint (pptx) return their text.", {
+                "(any size, HEIC included); PDF, Word (docx), Excel (xlsx) and PowerPoint (pptx) return their text.$PRIVATE_NOTE", {
                 string("path", "File path", required = true)
                 int("offset", "First line (0-based)")
                 int("limit", "Number of lines, default 400")
                 string("pages", "PDF only: page range like \"1-5\" (default the first 10 pages)")
             }) {
-            override suspend fun invoke(args: JsonObject, call: CallContext) = withContext(Dispatchers.IO) {
-                need()
+            override suspend fun invoke(args: JsonObject, call: CallContext) = io {
                 val f = resolve(args.reqStr("path"))
-                if (!f.isFile) throw InvalidArgsException("Not a file: ${f.path}")
-                val ext = f.extension.lowercase()
+                if (!viaShell(f)) {
+                    if (!f.isFile) throw InvalidArgsException("Not a file: ${f.path}")
+                    return@io read(Src(f.extension, f.length(), f.describe(), { f.inputStream() }, { f }), args)
+                }
+                val svc = shell()
+                val row = svc.fsStat(f.path)?.let { ShellFiles.parseRow(it) }
+                if (row == null || row.dir) throw InvalidArgsException("Not a file: ${f.path}")
+                val open = { ParcelFileDescriptor.AutoCloseInputStream(svc.fsOpen(f.path, "r")) }
+                // Images and documents need a real file: a bounded copy in the cache, removed afterwards.
+                var tmp: File? = null
+                try {
+                    read(Src(f.extension, row.size, row.describe() + " (via Shizuku)", open) {
+                        if (row.size > MAX_SHELL_COPY) throw InvalidArgsException("${f.path} is ${human(row.size)}; files over ${human(MAX_SHELL_COPY)} of this type " +
+                            "cannot be opened through Shizuku. Copy it to another folder with file_move (copy=true) and read the copy.")
+                        File(File(context.cacheDir, "shell-read").apply { mkdirs() }, "${System.nanoTime()}.${f.extension}").also { t ->
+                            tmp = t
+                            open().use { i -> t.outputStream().use { i.copyTo(it) } }
+                        }
+                    }, args)
+                } finally { tmp?.delete() }
+            }
+
+            private fun read(src: Src, args: JsonObject): ToolResult {
+                val ext = src.ext
                 val mime = MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext) ?: ""
                 val off = (args.int("offset") ?: 0).coerceAtLeast(0)
                 val lim = (args.int("limit") ?: 400).coerceIn(1, 4000)
-                when {
+                return when {
                     mime.startsWith("image/") || ext in setOf("heic", "heif", "avif") -> {
-                        val img = Images.downscale(f) ?: return@withContext ToolResult.text("Image file (${mime.ifEmpty { ext }}), ${human(f.length())}, but Android cannot decode it (unsupported format such as SVG, or a damaged file).")
-                        ToolResult.image(Images.MIME, Base64.encodeToString(img.bytes, Base64.NO_WRAP), "${f.describe()} (shown as ${img.width}x${img.height} JPEG)")
+                        val img = Images.downscale(src.file()) ?: return ToolResult.text("Image file (${mime.ifEmpty { ext }}), ${human(src.size)}, but Android cannot decode it (unsupported format such as SVG, or a damaged file).")
+                        ToolResult.image(Images.MIME, Base64.encodeToString(img.bytes, Base64.NO_WRAP), "${src.described} (shown as ${img.width}x${img.height} JPEG)")
                     }
                     ext == "pdf" -> {
                         val (a, b) = pageRange(args.str("pages"))
-                        val doc = DocText.pdf(context, f, a, b)
+                        val doc = DocText.pdf(context, src.file(), a, b)
                         ToolResult.text("[${doc.note}]\n" + window(doc.text, off, lim))
                     }
                     ext in setOf("docx", "xlsx", "pptx") -> {
-                        val doc = runCatching { DocText.office(f) }.getOrNull() ?: return@withContext ToolResult.text("Cannot read this ${ext.uppercase()} file (damaged or not Office Open XML).")
+                        val doc = runCatching { DocText.office(src.file()) }.getOrNull() ?: return ToolResult.text("Cannot read this ${ext.uppercase()} file (damaged or not Office Open XML).")
                         ToolResult.text("[${doc.note}]\n" + window(doc.text, off, lim))
                     }
-                    looksBinary(f) -> ToolResult.text("Binary file (${mime.ifEmpty { ext }}), ${human(f.length())}. Cannot show content" +
+                    looksBinary(src.open) -> ToolResult.text("Binary file (${mime.ifEmpty { ext }}), ${human(src.size)}. Cannot show content" +
                         (if (ext in setOf("doc", "xls", "ppt")) " (legacy Office format; only docx/xlsx/pptx text can be read)." else "."))
                     else -> {
-                        val cs = charsetOf(f)
-                        val lines = f.inputStream().bufferedReader(cs).useLines { it.drop(off).take(lim + 1).toList() }
+                        val cs = charsetOf(src.open)
+                        val lines = src.open().bufferedReader(cs).useLines { it.drop(off).take(lim + 1).toList() }
                         val note = if (cs != Charsets.UTF_8) "[decoded as ${cs.name()}]\n" else ""
                         ToolResult.text(note + capChars(lines.take(lim).joinToString("\n"), off) + if (lines.size > lim) "\n… (more lines; use offset=${off + lim})" else "")
                     }
@@ -199,8 +296,8 @@ class FileTools @Inject constructor(@ApplicationContext private val context: Con
                 else text.take(MAX_CHARS) + "\n… (truncated at $MAX_CHARS characters; very long lines — use a smaller limit or offset=${off + text.take(MAX_CHARS).count { it == '\n' } + 1})"
 
             /** UTF-8 when the first 64 KB decode cleanly, otherwise GB18030 (common for Chinese .txt files). */
-            private fun charsetOf(f: File): java.nio.charset.Charset {
-                val head = f.inputStream().use { s -> ByteArray(65_536).let { b -> b.copyOf(maxOf(0, s.read(b))) } }
+            private fun charsetOf(open: () -> InputStream): java.nio.charset.Charset {
+                val head = open().use { s -> ByteArray(65_536).let { b -> b.copyOf(maxOf(0, s.read(b))) } }
                 val ok = runCatching {
                     Charsets.UTF_8.newDecoder().onMalformedInput(java.nio.charset.CodingErrorAction.REPORT)
                         .onUnmappableCharacter(java.nio.charset.CodingErrorAction.REPORT).decode(java.nio.ByteBuffer.wrap(head))
@@ -210,7 +307,7 @@ class FileTools @Inject constructor(@ApplicationContext private val context: Con
                 return if (ok) Charsets.UTF_8 else java.nio.charset.Charset.forName("GB18030")
             }
 
-            private fun looksBinary(f: File): Boolean = f.inputStream().use { s ->
+            private fun looksBinary(open: () -> InputStream): Boolean = open().use { s ->
                 val buf = ByteArray(4096); val n = s.read(buf)
                 (0 until maxOf(n, 0)).any { buf[it] == 0.toByte() }
             }
@@ -218,27 +315,40 @@ class FileTools @Inject constructor(@ApplicationContext private val context: Con
         object : Tool("file_stat", ToolGroup.Files, Risk.read, false, "Get size/type/modified time of files or folders (folder size is computed).", {
             strings("paths", "Paths", required = true)
         }) {
-            override suspend fun invoke(args: JsonObject, call: CallContext) = withContext(Dispatchers.IO) {
-                need()
-                ToolResult.text(args.strs("paths").joinToString("\n") { p ->
+            override suspend fun invoke(args: JsonObject, call: CallContext) = io {
+                ToolResult.text(args.strs("paths").map { p ->
                     val f = resolve(p)
+                    if (viaShell(f)) {
+                        val row = shell().fsStat(f.path)?.let { ShellFiles.parseRow(it) }
+                        return@map when {
+                            row == null -> "$p: not found"
+                            row.dir -> "${f.path}/: folder, ${row.count ?: 0} files, ${human(row.size)}"
+                            else -> row.describe()
+                        }
+                    }
                     when {
                         !f.exists() -> "$p: not found"
                         f.isDirectory -> { val files = f.walkTopDown().filter { it.isFile }.toList()
                             "${f.path}/: folder, ${files.size} files, ${human(files.sumOf { it.length() })}" }
                         else -> f.describe()
                     }
-                })
+                }.joinToString("\n"))
             }
         },
-        object : Tool("file_write", ToolGroup.Files, Risk.write, false, "Create or overwrite a text file (or append).", {
+        object : Tool("file_write", ToolGroup.Files, Risk.write, false, "Create or overwrite a text file (or append).$PRIVATE_NOTE", {
             string("path", "File path", required = true)
             string("content", "Text content", required = true)
             bool("append", "Append instead of overwrite")
         }) {
-            override suspend fun invoke(args: JsonObject, call: CallContext) = withContext(Dispatchers.IO) {
-                need()
+            override suspend fun invoke(args: JsonObject, call: CallContext) = io {
                 val f = resolve(args.reqStr("path"))
+                if (viaShell(f)) {
+                    val svc = shell()
+                    val bytes = (args.str("content") ?: "").toByteArray(Charsets.UTF_8)
+                    ParcelFileDescriptor.AutoCloseOutputStream(svc.fsOpen(f.path, if (args.bool("append") == true) "wa" else "w")).use { it.write(bytes) }
+                    val size = svc.fsStat(f.path)?.let { ShellFiles.parseRow(it) }?.size ?: bytes.size.toLong()
+                    return@io ToolResult.text("Wrote ${f.path} (${human(size)}, via Shizuku)")
+                }
                 f.parentFile?.mkdirs()
                 if (args.bool("append") == true) f.appendText(args.str("content") ?: "") else f.writeText(args.str("content") ?: "")
                 ToolResult.text("Wrote ${f.path} (${human(f.length())})")
@@ -247,12 +357,12 @@ class FileTools @Inject constructor(@ApplicationContext private val context: Con
         object : Tool("file_mkdir", ToolGroup.Files, Risk.write, false, "Create folders (with parents).", {
             strings("paths", "Folders to create", required = true)
         }) {
-            override suspend fun invoke(args: JsonObject, call: CallContext) = withContext(Dispatchers.IO) {
-                need(); ToolResult.text(args.strs("paths").joinToString("\n") { val f = resolve(it); f.mkdirs(); "ok ${f.path}" })
+            override suspend fun invoke(args: JsonObject, call: CallContext) = io {
+                ToolResult.text(args.strs("paths").map { val f = resolve(it); if (viaShell(f)) shell().fsMkdirs(f.path) else { f.mkdirs(); "ok ${f.path}" } }.joinToString("\n"))
             }
         },
         object : Tool("file_move", ToolGroup.Files, Risk.write, false,
-            "Move or rename files/folders. Each item is {from,to}; 'to' may be an existing folder.", {
+            "Move or rename files/folders. Each item is {from,to}; 'to' may be an existing folder.$PRIVATE_NOTE", {
                 raw("items", kotlinx.serialization.json.buildJsonObject {
                     put("type", kotlinx.serialization.json.JsonPrimitive("array"))
                     put("items", kotlinx.serialization.json.buildJsonObject {
@@ -266,18 +376,22 @@ class FileTools @Inject constructor(@ApplicationContext private val context: Con
                 }, required = true)
                 bool("copy", "Copy instead of move")
             }) {
-            override suspend fun invoke(args: JsonObject, call: CallContext) = withContext(Dispatchers.IO) {
-                need()
+            override suspend fun invoke(args: JsonObject, call: CallContext) = io {
                 val copy = args.bool("copy") == true
                 val items = (args["items"] as? kotlinx.serialization.json.JsonArray) ?: throw InvalidArgsException("missing items")
                 // Each item is independent: one failure is reported and the rest still run.
-                ToolResult.text(items.joinToString("\n") { el ->
+                ToolResult.text(items.map { el ->
                     runCatching {
                         val o = el as? JsonObject ?: throw InvalidArgsException("item is not {from,to}")
                         val rawTo = o.reqStr("to")
                         val from = resolve(o.reqStr("from"))
-                        if (!from.exists()) return@runCatching "failed ${from.path}: not found"
                         var to = resolve(rawTo)
+                        if (!copy && PrivateStorage.isScopeRoot(from.path)) return@runCatching "refused: ${from.path} (moving all of Android/data or Android/obb)"
+                        // Either end in Android/data|obb: the shell user does the whole item (it reaches both).
+                        val fromShell = viaShell(from)
+                        if (fromShell || viaShell(to))
+                            return@runCatching shell().fsMove(from.path, to.path + if (rawTo.endsWith("/")) "/" else "", copy) + " (via Shizuku)"
+                        if (!from.exists()) return@runCatching "failed ${from.path}: not found"
                         // A trailing slash means "into this folder", even if it does not exist yet.
                         if (rawTo.endsWith("/") || to.isDirectory) { to.mkdirs(); to = File(to, from.name) }
                         val caseOnly = to.path != from.path && to.path.equals(from.path, ignoreCase = true)
@@ -293,22 +407,23 @@ class FileTools @Inject constructor(@ApplicationContext private val context: Con
                             from.renameTo(to) -> "moved ${from.path} → ${to.path}"
                             else -> { from.copyRecursively(to); from.deleteRecursively(); "moved ${from.path} → ${to.path}" }
                         }
-                    }.getOrElse { e -> if (e is kotlinx.coroutines.CancellationException) throw e; "failed ${(el as? JsonObject)?.str("from")}: ${e.message}" }
-                })
+                    }.getOrElse { e -> if (e is kotlinx.coroutines.CancellationException || e is NeedsShizuku) throw e; "failed ${(el as? JsonObject)?.str("from")}: ${e.message}" }
+                }.joinToString("\n"))
             }
         },
         object : Tool("file_delete", ToolGroup.Files, Risk.dangerous, false,
-            "Permanently delete files/folders. The user sees the exact list before approving, so pass every path explicitly.", {
+            "Permanently delete files/folders. The user sees the exact list before approving, so pass every path explicitly.$PRIVATE_NOTE", {
                 strings("paths", "Exact paths to delete", required = true)
             }) {
-            override suspend fun invoke(args: JsonObject, call: CallContext) = withContext(Dispatchers.IO) {
-                need()
+            override suspend fun invoke(args: JsonObject, call: CallContext) = io {
                 val paths = args.strs("paths")
                 if (paths.isEmpty()) throw InvalidArgsException("no paths")
                 val rootPath = root.canonicalPath
-                ToolResult.text(paths.joinToString("\n") { p ->
+                ToolResult.text(paths.map { p ->
                     val f = resolve(p)
                     val path = f.canonicalPath
+                    if (PrivateStorage.isScopeRoot(path)) return@map "refused: ${f.path} (all of Android/data or Android/obb)"
+                    if (viaShell(f)) return@map shell().fsDelete(f.path) + " (via Shizuku)"
                     when {
                         // The storage root, anything above it (/storage, /storage/emulated) and volume roots (SD cards).
                         path == rootPath || rootPath.startsWith("$path/") || f.parentFile?.canonicalPath == "/storage" || path == "/storage" ->
@@ -317,17 +432,16 @@ class FileTools @Inject constructor(@ApplicationContext private val context: Con
                         f.deleteRecursively() -> "deleted ${f.path}"
                         else -> "partially deleted ${f.path}: ${f.walkTopDown().count()} item(s) could not be removed"
                     }
-                })
+                }.joinToString("\n"))
             }
         },
         object : Tool("archive_create", ToolGroup.Files, Risk.write, false, "Zip files/folders into an archive.", {
             strings("paths", "Inputs", required = true)
             string("output", "Output .zip path", required = true)
         }) {
-            override suspend fun invoke(args: JsonObject, call: CallContext) = withContext(Dispatchers.IO) {
-                need()
-                val out = resolve(args.reqStr("output"))
-                val inputs = args.strs("paths").map(::resolve)
+            override suspend fun invoke(args: JsonObject, call: CallContext) = io {
+                val out = localOnly(resolve(args.reqStr("output")), name)
+                val inputs = args.strs("paths").map { localOnly(resolve(it), name) }
                 if (inputs.isEmpty()) throw InvalidArgsException("no paths")
                 inputs.firstOrNull { !it.exists() }?.let { throw InvalidArgsException("Not found: ${it.path}") }
                 out.parentFile?.mkdirs()
@@ -361,10 +475,9 @@ class FileTools @Inject constructor(@ApplicationContext private val context: Con
             string("dest", "Destination folder, default next to the archive")
             bool("overwrite", "Replace files that already exist (default: skip them)")
         }) {
-            override suspend fun invoke(args: JsonObject, call: CallContext) = withContext(Dispatchers.IO) {
-                need()
-                val zipFile = resolve(args.reqStr("archive"))
-                val dest = resolve(args.str("dest") ?: File(zipFile.parentFile, zipFile.nameWithoutExtension).path).apply { mkdirs() }
+            override suspend fun invoke(args: JsonObject, call: CallContext) = io {
+                val zipFile = localOnly(resolve(args.reqStr("archive")), name)
+                val dest = localOnly(resolve(args.str("dest") ?: File(zipFile.parentFile, zipFile.nameWithoutExtension).path), name).apply { mkdirs() }
                 val overwrite = args.bool("overwrite") == true
                 var n = 0; var skippedUnsafe = 0; var skippedExisting = 0; var replaced = 0
                 // Names are UTF-8 when the archive says so; Windows tools (Explorer, WinRAR, 360压缩) write GBK

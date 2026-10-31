@@ -65,6 +65,8 @@ data class DiagnosticsInput(
     /** null = supported, else why not. */
     val agentScreenUnavailable: String?,
     val agentScreenSetting: Boolean,
+    /** Why the latest agent screen could not be created (AgentScreen.lastCreateError), null when none failed. */
+    val agentScreenError: String? = null,
     /** "api key" / "account" / "none" (never the credential). */
     val deepseekCredential: String,
     /** Role → "route / model …" (main model, effort). */
@@ -103,6 +105,7 @@ object DiagnosticsReport {
         line("battery optimization", yes(input.batteryExempt, "unrestricted", "restricted"))
         line("notifications", yes(input.notifications, "allowed", "not allowed"))
         line("agent screen", (input.agentScreenUnavailable?.let { "unavailable ($it)" } ?: "supported") + ", setting " + yes(input.agentScreenSetting, "on", "off"))
+        input.agentScreenError?.let { line("agent screen last failure", oneLine(it, 400)) }
         section("Models")
         line("deepseek sign-in", input.deepseekCredential)
         input.roles.forEach { (role, v) -> line(role, v) }

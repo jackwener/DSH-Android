@@ -106,6 +106,10 @@ class AgentScreen @Inject constructor(
         }
     }
 
+    /** Why the latest attempt to create an agent screen failed ("SecurityException: …"); null once one was created. For Doctor and diagnostics. */
+    @Volatile var lastCreateError: String? = null
+        private set
+
     private fun key(sessionId: String) = sessionId.substringBefore('/')
     private fun alive(displayId: Int) = context.getSystemService(DisplayManager::class.java).getDisplay(displayId) != null
 
@@ -139,7 +143,7 @@ class AgentScreen @Inject constructor(
             if (screen == "agent") "There is no agent screen in this conversation yet (app_launch / app_open_link open one); this is the user's screen." else null)
         val why = unavailableReason()
             ?: return ensure(sessionId)?.let { ScreenTarget(it, true) }
-                ?: ScreenTarget(Display.DEFAULT_DISPLAY, false, "Working on the user's screen: the agent screen could not be created on this device.")
+                ?: ScreenTarget(Display.DEFAULT_DISPLAY, false, failureNote(lastCreateError))
         return ScreenTarget(Display.DEFAULT_DISPLAY, false, "Working on the user's own screen ($why).")
     }
 
@@ -148,8 +152,21 @@ class AgentScreen @Inject constructor(
         val m = DisplayMetrics().also {
             @Suppress("DEPRECATION") context.getSystemService(DisplayManager::class.java).getDisplay(Display.DEFAULT_DISPLAY).getRealMetrics(it)
         }
-        val id = runCatching { withContext(Dispatchers.IO) { shizuku.service().createDisplay(m.widthPixels, m.heightPixels, m.densityDpi) } }
-            .onFailure { Log.w(TAG, "createDisplay failed", it) }.getOrNull()?.takeIf { it >= 0 } ?: return null
+        val created = runCatching {
+            withContext(Dispatchers.IO) {
+                val svc = shizuku.service()
+                val id = svc.createDisplay(m.widthPixels, m.heightPixels, m.densityDpi)
+                // An older service process (before lastDisplayError) answers without a reason.
+                id to if (id < 0) runCatching { svc.lastDisplayError() }.getOrNull() else null
+            }
+        }.onFailure { Log.w(TAG, "createDisplay failed", it) }
+        val id = created.getOrNull()?.first?.takeIf { it >= 0 }
+        if (id == null) {
+            lastCreateError = createFailure(created.getOrNull()?.second, created.exceptionOrNull())
+            Log.w(TAG, "agent screen not created: $lastCreateError")
+            return null
+        }
+        lastCreateError = null
         slots[key(sessionId)] = Slot(id)
         publish()
         id
@@ -310,12 +327,23 @@ class AgentScreen @Inject constructor(
         return blank()
     }
 
-    private companion object {
+    internal companion object {
         const val TAG = "AgentScreen"
         const val IDLE_MS = 10 * 60_000L
         const val TICK_MS = 5_000L
         const val MUTE_PENDING = "mute_pending"
         const val SPILL_WINDOW_MS = 3_000L
         const val SYSTEM_UI = "com.android.systemui"
+
+        /** The reason for the app (Doctor, diagnostics, logs): the service's own, else the call's exception. */
+        fun createFailure(serviceReason: String?, callError: Throwable?): String = when {
+            !serviceReason.isNullOrBlank() -> serviceReason
+            callError != null -> io.github.jackwener.dsh.core.platform.ShellIdentity.describe(callError)
+            else -> "the Shizuku service returned no display and no reason"
+        }
+
+        /** Model-facing note when the call falls back to the user's screen. */
+        fun failureNote(reason: String?): String = "Working on the user's screen: the agent screen could not be created on this device" +
+            (reason?.let { " (后台屏创建失败：$it). Mention this reason to the user once if they wonder why their own screen is used" } ?: "") + "."
     }
 }

@@ -276,6 +276,7 @@
     <string name="tool_bluetooth">蓝牙</string>
     <string name="tool_mobile_data">移动数据</string>
     <string name="tool_setting_put">修改系统设置</string>
+    <string name="tool_adb_shell">以 Shell 身份运行命令</string>
     <string name="tool_notif_list">读取通知</string>
     <string name="tool_notif_dismiss">清除通知</string>
     <string name="tool_contacts">查找联系人</string>

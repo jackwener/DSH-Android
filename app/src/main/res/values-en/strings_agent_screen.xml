@@ -22,4 +22,6 @@
     <string name="agent_preview_take_over">Take over</string>
     <string name="agent_preview_taken">Moved to your screen</string>
     <string name="agent_preview_close">Close</string>
+    <string name="agent_screen_doctor">Agent screen</string>
+    <string name="agent_screen_create_failed">Agent screen could not be created: %1$s</string>
 </resources>

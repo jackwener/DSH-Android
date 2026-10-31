@@ -96,6 +96,8 @@ class CallContext(
     val callId: String,
     val unattended: Boolean,
     val deadlineMs: Long = Long.MAX_VALUE,
+    /** From the engine (its hardline and approvals ran); false for rule "steps", which call tools directly. */
+    val viaEngine: Boolean = false,
 ) {
     @Volatile var waitingFor: String? = null
 

@@ -33,6 +33,13 @@ export const inject = ['tools']
 const SHELL_TOOLS = new Map([
   ['bash', 'command'], ['pwsh', 'command'], ['terminal_send', 'text'], ['terminal_open', 'command'],
 ])
+/**
+ * Device tools that run a shell command line as the Android shell user (uid 2000, through Shizuku):
+ * the same hardline floor applies, judged from the directory they run in ("/", like `adb shell`)
+ * and with an unknown HOME treated as "/". They keep the device tool's risk-based approval.
+ */
+const DEVICE_SHELL_TOOLS = new Map([['adb_shell', 'command']])
+const DEVICE_SHELL_CWD = '/'
 /** Built-in file tools whose `file_path` may be auto-allowed inside the app's own directories. */
 const FILE_WRITE_TOOLS = new Set(['write', 'edit'])
 
@@ -211,7 +218,7 @@ You run inside the DSH app on the user's own Android phone, not on a server or d
 Tool priority — always prefer the most direct, least fragile path:
 1. ${tier1}
 2. Intents and deep links (app_open_link, app_send_intent, share_to_app).
-3. Shizuku-backed tools (wifi_toggle, bluetooth_toggle, setting_put) when available.
+3. Shizuku-backed tools (wifi_toggle, bluetooth_toggle, setting_put; adb_shell for pm, am, cmd, dumpsys, logcat or Android/data when no dedicated tool fits) when available.
 4. Screen automation (screen_read, screen_tap, screen_type, …) only when nothing above can do the job; it needs the phone unlocked and is slow and brittle.
 Each device tool's description ends with its policy line. A tool marked "needs the phone unlocked" waits until the user unlocks the phone; tell the user when that happens instead of reporting the task as done.` : 'This conversation has no device tools: you cannot act on the phone here.'}
 
@@ -219,7 +226,7 @@ Approvals and safety:
 - Read-only tools and read-only shell commands run directly${homeWrites ? ', and so do file writes inside your private home and temp folders (except in 仅可查看 mode)' : ''}. Other actions that change the phone ask the user, depending on the permission mode the user picked for this conversation; a read of private data (messages, contacts, notifications, clipboard, …) asks once per conversation.
 - If the user rejects a call, do not retry it — ask what they want instead. If a call is refused because the conversation is in 仅可查看 (read-only) mode, tell the user and ask them to switch the permission mode if they want the change made.
 - Before deleting, moving or overwriting files, state exactly which files and folders are affected (list them, or give the count and paths) and confirm the scope with the user unless they already named the exact items. Prefer the narrowest scope; never act on whole storage roots.
-- The app hard-blocks some shell commands (wiping storage roots or system directories, formatting or writing block devices, reboot/shutdown, fork bombs, executing decoded payloads, uninstalling system packages, deleting system settings): such a call is refused before it runs and returns HARDLINE_BLOCKED. Never try to work around a block.
+- The app hard-blocks some shell commands, in bash and adb_shell alike (wiping storage roots or system directories, formatting or writing block devices, reboot/shutdown, fork bombs, executing decoded payloads, uninstalling system packages, deleting system settings): such a call is refused before it runs and returns HARDLINE_BLOCKED. Never try to work around a block.
 
 ${screenSection(descriptors)}${shell ? "Shell: the bash tool runs Android's /system/bin/sh (mksh) with toybox utilities, not GNU bash/coreutils; there is no root. " : ''}The user's shared storage is /sdcard (= /storage/emulated/0). Your working directory is the app's private home folder.
 
@@ -333,6 +340,11 @@ export function apply(ctx, config = {}) {
 
   // ── 1. Hardline floor ──────────────────────────────────────────────────────
   const hardlineVerdict = exec => {
+    const device = DEVICE_SHELL_TOOLS.get(exec.name)
+    if (device !== undefined) {
+      const text = exec.arguments?.[device]
+      return typeof text === 'string' ? checkCommand(text, { cwd: DEVICE_SHELL_CWD, env: { HOME: DEVICE_SHELL_CWD } }) : undefined
+    }
     const field = SHELL_TOOLS.get(exec.name)
     if (field === undefined) return undefined
     const text = exec.arguments?.[field]

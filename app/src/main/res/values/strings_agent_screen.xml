@@ -22,4 +22,6 @@
     <string name="agent_preview_take_over">我来接管</string>
     <string name="agent_preview_taken">已放到你的屏幕上</string>
     <string name="agent_preview_close">关闭</string>
+    <string name="agent_screen_doctor">后台屏</string>
+    <string name="agent_screen_create_failed">后台屏创建失败：%1$s</string>
 </resources>

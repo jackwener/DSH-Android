@@ -172,7 +172,7 @@ class CapabilityHub @Inject constructor(
         val key = callKey(sessionId, callId)
         // Own job (so capability/cancel can target this call), linked both ways to the engine request:
         // the request's cancellation (EngineCalls: teardown / EOF) cancels it below, and it keeps the Call element.
-        val job = scope.async(currentCoroutineContext()[io.github.jackwener.dsh.core.engine.EngineCalls.Call] ?: kotlin.coroutines.EmptyCoroutineContext) { invoke(params) }
+        val job = scope.async(currentCoroutineContext()[io.github.jackwener.dsh.core.engine.EngineCalls.Call] ?: kotlin.coroutines.EmptyCoroutineContext) { invoke(params, viaEngine = true) }
         inFlight.put(key, job)?.cancel(CancellationException("superseded by a new call with the same id"))
         return try {
             job.await()
@@ -188,9 +188,10 @@ class CapabilityHub @Inject constructor(
      * Executes one call. Also used directly by rule "steps" actions (no engine involved). Every wait
      * for the user (unlock, permission card, Shizuku card, takeover) is bounded by the call's deadline
      * (`timeoutMs` from the request, else the tool's descriptor) and is cancelled with the call; the
-     * tool itself only starts once those waits are over and the call is still live.
+     * tool itself only starts once those waits are over and the call is still live. [viaEngine]: the
+     * call came over the bridge, so the engine's policy (plugin-guard hardline, approvals) saw it first.
      */
-    suspend fun invoke(params: JsonObject): ToolResult {
+    suspend fun invoke(params: JsonObject, viaEngine: Boolean = false): ToolResult {
         val name = params["tool"]?.jsonPrimitive?.contentOrNull ?: return ToolResult.error("invalid_args", "missing tool")
         val sessionId = params["sessionId"]?.jsonPrimitive?.contentOrNull ?: ""
         val callId = params["callId"]?.jsonPrimitive?.contentOrNull ?: ""
@@ -214,7 +215,7 @@ class CapabilityHub @Inject constructor(
         val budget = requested ?: if (sessionId.isEmpty() || unattended && tool.needsUnlock) UNATTENDED_UNLOCK_WAIT_MS else tool.descriptor.timeoutMs
         // Answer a little before the engine gives up, so the model gets a clear result instead of a bare timeout.
         val budgetMs = (budget - ANSWER_MARGIN_MS).coerceAtLeast(budget / 2)
-        val call = CallContext(sessionId, callId, unattended, SystemClock.elapsedRealtime() + budgetMs)
+        val call = CallContext(sessionId, callId, unattended, SystemClock.elapsedRealtime() + budgetMs, viaEngine)
         val liveKey = liveSeq.incrementAndGet()
         // A screen call without an agent screen to act on works on the user's own screen (AgentScreen.target).
         val mainScreen = name.startsWith("screen_") && (args.str("screen") == "main" || agentScreen.current(sessionId) == null)

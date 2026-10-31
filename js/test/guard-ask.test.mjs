@@ -41,3 +41,26 @@ test('ask-before-call turns an allowed plugin tool call into an approval request
   assert.deepEqual((await run('other_plugin_tool')), { kind: 'allow' })
   assert.deepEqual(requests, ['hello_world', 'mcp__gh__create_issue'])
 })
+
+test('adb_shell (shell user through Shizuku) gets the same hardline floor as bash, judged from "/"', async () => {
+  process.env.DSH_HOME = mkdtempSync(join(tmpdir(), 'guard-adb-'))
+  const agent = { id: 'a1', session: { id: 's1', header: {} } }
+  const guards = []
+  const { ctx, listeners } = fakeContext({ agents: { list: () => [agent] } })
+  ctx.tools.guard = fn => { guards.push(fn); return () => {} }
+  apply(ctx, { ledgerPath: join(process.env.DSH_HOME, 'budget.json') })
+  const pre = listeners.get('tools/pre-execute')[0]
+  const ask = async () => ({ kind: 'ask', reason: 'device tool' })
+  const run = command => pre({ name: 'adb_shell', arguments: { command }, agent, callId: 'c' }, ask)
+  for (const blocked of ['reboot', 'pm uninstall com.android.settings', 'rm -rf /sdcard', 'cd /sdcard && rm -rf *', 'rm -rf $HOME/*', 'settings delete global adb_enabled']) {
+    const d = await run(blocked)
+    assert.equal(d.kind, 'deny', blocked)
+    assert.equal(d.info?.code, 'HARDLINE_BLOCKED', blocked)
+    assert.match(guards[0]({ name: 'adb_shell', arguments: { command: blocked } }) ?? '', /HARDLINE_BLOCKED/, blocked)
+  }
+  // Ordinary commands are not blocked: they reach the device tool's approval (no approval service here → its ask comes back).
+  for (const ok of ['dumpsys battery', 'pm list packages -3', 'ls /sdcard/Android/data', 'rm -rf /sdcard/Android/data/com.example.app/cache']) {
+    assert.notEqual((await run(ok)).kind, 'deny', ok)
+    assert.equal(guards[0]({ name: 'adb_shell', arguments: { command: ok } }), undefined, ok)
+  }
+})
