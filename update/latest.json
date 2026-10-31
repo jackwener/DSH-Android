@@ -1,0 +1,21 @@
+{
+  "format": 1,
+  "packageName": "io.github.jackwener.dsh",
+  "versionCode": 21,
+  "versionName": "0.3.3",
+  "minSdk": 29,
+  "apk": {
+    "name": "DSH-Android-v0.3.3-arm64.apk",
+    "size": 100217368,
+    "sha256": "aa1b6d28eeed618be26a6dd35c247f4be8378dfbc5ba5f56f1454f0faf0b796a",
+    "urls": [
+      "https://github.com/jackwener/DSH-Android/releases/download/v0.3.3/DSH-Android-v0.3.3-arm64.apk"
+    ]
+  },
+  "signerSha256": "2b37a375ead19476e5d0d9e38920032ea9822e880dcc7540a14e5ab6ac1f4f69",
+  "notes": {
+    "zh": "- **从链接导入技能、插件更稳**（#17）：所有用户贴的链接统一走带镜像切换的下载路径，慢但能连上的源不会被提前放弃；github.com 的 blob/tree 链接会自动换成文件本身，导入 SKILL.md 时会带上整个技能目录。失败时列出试过的每个源和具体错误\n- **安全模式的提示不再残留**：已安装的插件里没有被暂停的，安全模式就自动结束。旧版本误进的安全模式在升级后清除一次，插件重新启用\n- 返回键、插件安装、技能导入、诊断导出已在真机上测过（v0.3.2 基础上）；本版改动只在电脑上测试过\n- 仅支持 arm64-v8a，Android 10 及以上；正式签名，可直接覆盖安装 v0.1.1 及以后版本",
+    "en": "- **More reliable skill and plugin imports from links** (#17): every link you paste now goes through the same download path with mirror fallback, and a slow source that does connect is no longer given up early. github.com blob/tree links are turned into the file itself, and importing a SKILL.md brings its whole skill folder. On failure, every source tried and its error are listed\n- **No leftover safe-mode notice**: safe mode ends by itself once no installed plugin is paused. A safe mode an older version entered by mistake is cleared once after the update and plugins are re-enabled\n- Back navigation, plugin install, skill import and diagnostics export were tested on a real device (on top of v0.3.2); this version's changes were tested on a computer only\n- arm64-v8a only, Android 10 or later; release-signed, installs over v0.1.1 and later"
+  },
+  "publishedAt": "2026-10-31T08:44:43Z"
+}

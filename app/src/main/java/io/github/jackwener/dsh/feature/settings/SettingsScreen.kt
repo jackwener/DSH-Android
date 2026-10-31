@@ -465,6 +465,8 @@ private fun AboutSection(vm: SettingsViewModel) {
     SettingsCard {
         SettingsRow("DSH", stringResource(R.string.version, BuildConfig.VERSION_NAME), divider = false,
             leading = { io.github.jackwener.dsh.core.designsystem.Whale(width = 22.dp) })
+        val s by vm.settings.collectAsStateWithLifecycle()
+        io.github.jackwener.dsh.feature.update.UpdateSettingsRows(vm.updater, s.autoUpdateCheck, { vm.setAutoUpdateCheck(it) })
         SettingsRow(stringResource(R.string.engine), when (val e = engine) {
             EngineState.Ready -> stringResource(R.string.engine_ready); EngineState.Starting -> stringResource(R.string.starting_engine)
             EngineState.Stopped -> stringResource(R.string.engine_idle); is EngineState.Failed -> e.message.take(300)

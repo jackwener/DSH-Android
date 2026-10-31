@@ -80,6 +80,8 @@ data class Settings(
     val mcpServers: List<McpServer> = emptyList(),
     /** Plugin updates found by the last check: the 扩展 entry's badge. */
     val extUpdateBadge: Int = 0,
+    /** 自动检查更新: a background check for a new DSH release at most once a day (core/update/AppUpdater). */
+    val autoUpdateCheck: Boolean = true,
 ) {
     /** Built-in then user modes, in display order. */
     val allModes: List<SessionMode> get() = SessionModes.all(modes)
@@ -123,6 +125,7 @@ class SettingsRepository @Inject constructor(@ApplicationContext private val con
         val pluginRegistryCustom = stringPreferencesKey("plugin_registry_custom")
         val mcpServers = stringPreferencesKey("mcp_servers_json")
         val extUpdateBadge = intPreferencesKey("ext_update_badge")
+        val autoUpdateCheck = booleanPreferencesKey("auto_update_check")
     }
 
     val settings: Flow<Settings> = context.store.data.map { it.toSettings() }
@@ -153,6 +156,7 @@ class SettingsRepository @Inject constructor(@ApplicationContext private val con
         pluginRegistryCustom = this[K.pluginRegistryCustom] ?: "",
         mcpServers = decodeMcp(this[K.mcpServers]),
         extUpdateBadge = this[K.extUpdateBadge] ?: 0,
+        autoUpdateCheck = this[K.autoUpdateCheck] ?: true,
     )
 
     /** [provider] "" = DeepSeek. */
@@ -204,6 +208,7 @@ class SettingsRepository @Inject constructor(@ApplicationContext private val con
     suspend fun setAgentScreen(on: Boolean) = context.store.edit { it[K.agentScreen] = on }
     suspend fun setReflectExperience(on: Boolean) = context.store.edit { it[K.reflect] = on }
     suspend fun setVoiceOnAssist(on: Boolean) = context.store.edit { it[K.voiceOnAssist] = on }
+    suspend fun setAutoUpdateCheck(on: Boolean) = context.store.edit { it[K.autoUpdateCheck] = on }
 
     // ── 扩展 ──
     suspend fun setPluginRegistry(mode: RegistryMode, custom: String) = context.store.edit {

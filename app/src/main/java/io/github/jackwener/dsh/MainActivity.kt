@@ -74,6 +74,7 @@ class MainViewModel @Inject constructor(settings: SettingsRepository, secrets: S
 class MainActivity : ComponentActivity() {
     @Inject lateinit var account: AccountRepository
     @Inject lateinit var extensions: io.github.jackwener.dsh.core.extensions.ExtensionsRepository
+    @Inject lateinit var updater: io.github.jackwener.dsh.core.update.AppUpdater
     private var pendingSession by mutableStateOf<String?>(null)
     /** Settings section to open (EXTRA_SECTION, e.g. the quick panel's 登录 / 添加 API Key / 打开自检). */
     private var pendingSection by mutableStateOf<String?>(null)
@@ -105,6 +106,8 @@ class MainActivity : ComponentActivity() {
                     Box(Modifier.fillMaxSize().background(c.bgBase)) {
                         boot?.let { AppNav(it.second, platformPage) }
                         AccountToastHost(account)
+                        // The update prompt (AppUpdater), over whatever page is showing.
+                        io.github.jackwener.dsh.feature.update.UpdateHost(updater)
                     }
                 }
             }

@@ -157,6 +157,12 @@ dsh-base 自带 DeepSeek 账号 provider（OAuth + PKCE，凭据存在 `DSH_HOME
 - **选择回退**：所选服务商被删除、停用或模型不在列表里时回到 DeepSeek（`resolveChoice`）。第三方路由 `initialize` 失败时引擎改用 DeepSeek 路由启动，对话报出该路由的错误。
 - **联网搜索**：`web_search` 由 DeepSeek 提供，需要 DeepSeek API key（或账号路由下的账号登录）。选用第三方模型且没有 API key 时，patch 层关掉 `tool-web.search`，设置页显示“需要 DeepSeek API Key”；`web_fetch` 不受影响。
 
+## 应用内更新（core/update/）
+
+- 不在 Google Play 上分发，更新走 GitHub Releases：每个版本附带 `update.json`（`tools/make-update-manifest.py` 从 APK 生成，同一份提交为 `update/latest.json`），发布步骤见 [发布流程](RELEASE.md)。
+- `AppUpdater`（单例，`DshApp` 启动时 `start()`）：从 GitHub Release、raw.githubusercontent.com 和 jsDelivr 依次错开请求清单（`firstSuccess`，先到的有效清单生效），自动检查每天最多一次；`ApkDownloader` 断点续传到 `cacheDir/update/`，SHA-256 不符换下一个地址；`ApkCheck` 用 `getPackageArchiveInfo` 核对包名、versionCode 和签名证书（与已安装的 App 比，不只看清单）；最后像 `ShizukuInstaller` 一样用 `PackageInstaller` 会话安装。
+- 界面：`feature/update/UpdateUi.kt` 的提示弹窗挂在 `MainActivity` 上（对话框自带返回处理，不加 BackHandler），设置 → 关于有“检查更新”和“自动检查更新”。
+
 ## 存储
 
 第三方服务商列表存在 DataStore（JSON），密钥存在 `SecretStore`。用户的会话模式也存在 DataStore（JSON）。Room（`core/data/Database.kt`，版本 3）：`sessions`（含 `preset`、`modeId`）、`events`（原样的 dsh 事件，加上 App 本地记录 `app/*`，后者用负序号）、`rules`、`rule_runs`、`usage`（按天的 token 数）。设置存在 DataStore。dsh 自己在 `DSH_HOME` 里持久化会话，以便 resume。

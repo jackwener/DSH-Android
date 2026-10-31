@@ -133,7 +133,8 @@ app/        Android App（Kotlin · Compose · Hilt · Room）
   feature/           界面：对话、轨迹、快捷面板、自动化、设置、登录
 js/         dsh 的 android profile、插件、补丁，build-engine.sh → engine.zip
 native/     Node 24 安卓构建、JNI 包装、原生插件、预编译产物脚本
-tools/      字符串、图标、README 首图（tools/ui/hero.py）等生成脚本
+tools/      字符串、图标、README 首图（tools/ui/hero.py）、App 内更新清单（make-update-manifest.py）等生成脚本
+update/     latest.json：App 内更新读取的最新版本清单（docs/RELEASE.md）
 docs/       架构说明、引擎契约、设计 token、截图
 ```
 
@@ -145,6 +146,7 @@ docs/       架构说明、引擎契约、设计 token、截图
 - [架构](docs/ARCHITECTURE.md)
 - [引擎契约（App ↔ dsh）](docs/ENGINE-CONTRACT.md)
 - [设计 token](docs/design-tokens.md)
+- [发布流程（含 App 内更新的 update.json）](docs/RELEASE.md)
 
 </details>
 

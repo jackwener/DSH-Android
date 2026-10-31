@@ -66,6 +66,7 @@ class SettingsViewModel @Inject constructor(
     usage: UsageDao,
     private val sessionDao: io.github.jackwener.dsh.core.data.SessionDao,
     private val agentScreen: io.github.jackwener.dsh.core.capability.AgentScreen,
+    val updater: io.github.jackwener.dsh.core.update.AppUpdater,
 ) : ViewModel() {
     val settings: StateFlow<DshSettings> = repo.settings.stateIn(viewModelScope, SharingStarted.Eagerly, DshSettings())
     val usage: StateFlow<List<UsageEntity>> = usage.observe().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -171,6 +172,7 @@ class SettingsViewModel @Inject constructor(
     fun setDefaultPreset(p: PermissionPreset) = viewModelScope.launch { repo.setDefaultPreset(p) }
     fun setAllowExternalApps(on: Boolean) = viewModelScope.launch { repo.setAllowExternalApps(on) }
     fun setVoiceOnAssist(on: Boolean) = viewModelScope.launch { repo.setVoiceOnAssist(on) }
+    fun setAutoUpdateCheck(on: Boolean) = viewModelScope.launch { repo.setAutoUpdateCheck(on) }
     fun setAgentScreen(on: Boolean) { viewModelScope.launch { repo.setAgentScreen(on) } }
     fun restartEngine() = viewModelScope.launch { sessions.restartEngine() }
     val engineLog: String? get() = io.github.jackwener.dsh.core.engine.EngineDiagnostics.logTail(context, 4000)

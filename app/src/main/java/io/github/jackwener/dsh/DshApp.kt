@@ -21,6 +21,7 @@ class DshApp : Application() {
     @Inject lateinit var settings: dagger.Lazy<SettingsRepository>
     @Inject lateinit var secrets: dagger.Lazy<io.github.jackwener.dsh.core.data.SecretStore>
     @Inject lateinit var agentScreen: dagger.Lazy<AgentScreen>
+    @Inject lateinit var updater: dagger.Lazy<io.github.jackwener.dsh.core.update.AppUpdater>
 
     override fun onCreate() {
         super.onCreate()
@@ -28,6 +29,8 @@ class DshApp : Application() {
         Notifications.createChannels(this)
         importDebugKey()
         TriggerEvents.init(this)
+        // Known update, post-install cleanup, the daily 自动检查更新 (network work runs in the background).
+        runCatching { updater.get().start() }.onFailure { android.util.Log.e("DshApp", "updater start failed", it) }
         // Startup work must never crash the process (a bad stored rule used to kill every app start).
         val guard = CoroutineExceptionHandler { _, e -> android.util.Log.e("DshApp", "startup task failed", e) }
         CoroutineScope(SupervisorJob() + Dispatchers.Default + guard).launch {

@@ -15,9 +15,11 @@ object Notifications {
     const val CHANNEL_TASKS = "tasks"
     const val CHANNEL_ATTENTION = "attention"
     const val CHANNEL_MONITOR = "monitor"
+    const val CHANNEL_UPDATES = "updates"
     const val ID_ENGINE = 1
     const val ID_MONITOR = 2
     const val ID_BALL = 3
+    const val ID_UPDATE = 4
 
     fun createChannels(context: Context) {
         val nm = context.getSystemService(NotificationManager::class.java)
@@ -26,6 +28,7 @@ object Notifications {
             NotificationChannel(CHANNEL_TASKS, context.getString(R.string.channel_tasks), NotificationManager.IMPORTANCE_DEFAULT),
             NotificationChannel(CHANNEL_ATTENTION, context.getString(R.string.channel_attention), NotificationManager.IMPORTANCE_HIGH),
             NotificationChannel(CHANNEL_MONITOR, context.getString(R.string.channel_monitor), NotificationManager.IMPORTANCE_MIN),
+            NotificationChannel(CHANNEL_UPDATES, context.getString(R.string.channel_updates), NotificationManager.IMPORTANCE_LOW),
         ))
     }
 
@@ -35,7 +38,15 @@ object Notifications {
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
 
-    fun post(context: Context, channel: String, id: Int, title: String, text: String, sessionId: String?) {
+    /** 设置 at [section] (a SettingsSection name), e.g. 关于 for an app update. */
+    fun openSection(context: Context, section: String): PendingIntent =
+        PendingIntent.getActivity(context, "section:$section".hashCode(),
+            Intent(context, MainActivity::class.java).putExtra(MainActivity.EXTRA_SECTION, section)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+
+    /** [open] overrides the tap target ([sessionId]'s conversation otherwise). */
+    fun post(context: Context, channel: String, id: Int, title: String, text: String, sessionId: String?, open: PendingIntent? = null) {
         if (!NotificationManagerCompat.from(context).areNotificationsEnabled()) return
         val b = NotificationCompat.Builder(context, channel)
             .setSmallIcon(R.drawable.ic_stat_dsh)
@@ -43,7 +54,7 @@ object Notifications {
             .setContentText(text)
             .setStyle(NotificationCompat.BigTextStyle().bigText(text))
             .setAutoCancel(true)
-        if (sessionId != null) b.setContentIntent(openSession(context, sessionId))
+        (open ?: sessionId?.let { openSession(context, it) })?.let(b::setContentIntent)
         @Suppress("MissingPermission")
         NotificationManagerCompat.from(context).notify(id, b.build())
     }
