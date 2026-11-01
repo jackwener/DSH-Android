@@ -23,8 +23,8 @@ android {
         applicationId = "io.github.jackwener.dsh"
         minSdk = 29
         targetSdk = 36
-        versionCode = 23
-        versionName = "0.3.5"
+        versionCode = 24
+        versionName = "0.3.6"
         ndk { abiFilters += "arm64-v8a" }
         // Bundled official Shizuku APK (in-app install/update); pinned in tools/fetch-shizuku.sh.
         buildConfigField("String", "SHIZUKU_VERSION", "\"${shizukuPin("VERSION")}\"")
