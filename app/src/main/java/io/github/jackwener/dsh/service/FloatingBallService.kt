@@ -39,6 +39,7 @@ import io.github.jackwener.dsh.core.capability.AgentScreen
 import io.github.jackwener.dsh.core.capability.CapabilityHub
 import io.github.jackwener.dsh.core.capability.LiveCall
 import io.github.jackwener.dsh.core.data.SettingsRepository
+import io.github.jackwener.dsh.core.platform.ActivityStarts
 import io.github.jackwener.dsh.core.platform.Notifications
 import io.github.jackwener.dsh.core.session.Block
 import io.github.jackwener.dsh.core.session.RowStatus
@@ -64,7 +65,8 @@ import kotlin.math.abs
 
 /**
  * Edge-docked floating button that opens the quick panel from any app. Hidden while our own UI is in front.
- * Pulses while a turn runs and turns orange when a conversation waits for the user (tap opens it);
+ * Pulses while a turn runs and turns orange when a conversation waits for the user; a tap then opens that
+ * conversation (TapTargets), otherwise the quick panel;
  * a double tap sends the current screen to the quick panel.
  *
  * With 操作时显示状态 on, a one-line capsule beside it says what the running turn does (or that it
@@ -81,8 +83,6 @@ class FloatingBallService : Service() {
     private lateinit var wm: WindowManager
     private var view: ImageView? = null
     private var pulse: ObjectAnimator? = null
-    /** The conversation waiting for the user (approval, question, permission or takeover card), if any. */
-    private var needsYou: String? = null
     private var capsule: TextView? = null
     /** The conversation the capsule speaks for (tap opens it). */
     private var capsuleSession: String? = null
@@ -105,7 +105,8 @@ class FloatingBallService : Service() {
     override fun onCreate() {
         super.onCreate()
         startForeground(Notifications.ID_BALL, NotificationCompat.Builder(this, Notifications.CHANNEL_MONITOR)
-            .setSmallIcon(R.drawable.ic_stat_dsh).setContentTitle(getString(R.string.ball_running)).setOngoing(true).setSilent(true).build(),
+            .setSmallIcon(R.drawable.ic_stat_dsh).setContentTitle(getString(R.string.ball_running)).setOngoing(true).setSilent(true)
+            .setContentIntent(Notifications.openRunning(this)).build(),
             ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
         if (!Settings.canDrawOverlays(this)) { stopSelf(); return }
         wm = getSystemService(WindowManager::class.java)
@@ -200,10 +201,7 @@ class FloatingBallService : Service() {
             setPadding(dp(12), 0, dp(12), 0)
             background = GradientDrawable().apply { cornerRadius = dp(16).toFloat(); setColor(CAPSULE_FILL) }
             visibility = View.GONE
-            setOnClickListener {
-                capsuleSession?.let { id -> startActivity(Intent(this@FloatingBallService, MainActivity::class.java)
-                    .putExtra(MainActivity.EXTRA_SESSION, id).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
-            }
+            setOnClickListener { capsuleSession?.let { id -> go(TapTargets.capsule(id, QuickActivity.panelSession(this@FloatingBallService))) } }
         }
         val lp = WindowManager.LayoutParams(WindowManager.LayoutParams.WRAP_CONTENT, dp(32), WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE, PixelFormat.TRANSLUCENT).apply { gravity = Gravity.TOP or Gravity.START }
@@ -355,7 +353,6 @@ class FloatingBallService : Service() {
 
     private fun show(waiting: String?, running: Boolean) {
         val v = view ?: return
-        needsYou = waiting
         v.setImageResource(when { waiting != null -> R.drawable.ic_ball_attention; running -> R.drawable.ic_ball_working; else -> R.drawable.ic_ball })
         v.contentDescription = getString(when { waiting != null -> R.string.ball_needs_you; running -> R.string.ball_working; else -> R.string.app_name })
         if (running && waiting == null) {
@@ -382,8 +379,7 @@ class FloatingBallService : Service() {
                 // Android 10 has no accessibility screenshot, and secure pages refuse one: the screen text still goes along.
                 ScreenContext.attachShot(runCatching { a11y.capture().bitmap }.getOrNull())
             }
-            startActivity(Intent(this@FloatingBallService, QuickActivity::class.java).putExtra(QuickActivity.EXTRA_SCREEN, true)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            ActivityStarts.start(this@FloatingBallService, Intent(this@FloatingBallService, QuickActivity::class.java).putExtra(QuickActivity.EXTRA_SCREEN, true))
         }
     }
 
@@ -406,14 +402,15 @@ class FloatingBallService : Service() {
         border?.let { b -> (b.layoutParams as? WindowManager.LayoutParams)?.let { blp -> blp.width = w; blp.height = h; runCatching { wm.updateViewLayout(b, blp) } } }
     }
 
-    private fun open() {
-        val waiting = needsYou
-        if (waiting != null) startActivity(Intent(this, MainActivity::class.java).putExtra(MainActivity.EXTRA_SESSION, waiting).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-        else startActivity(Intent(this, QuickActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-    }
+    /** A tap: the conversation waiting for the user or running (never a new one while a task runs, #39), else the quick panel. */
+    private fun open() = go(TapTargets.ball(store.status.value, capsuleSession, QuickActivity.panelSession(this)))
 
-    private fun openVoice() =
-        startActivity(Intent(this, QuickActivity::class.java).putExtra(QuickActivity.EXTRA_VOICE, true).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+    private fun go(target: TapTarget) = ActivityStarts.start(this, when (target) {
+        is TapTarget.Conversation -> Intent(this, MainActivity::class.java).putExtra(MainActivity.EXTRA_SESSION, target.sessionId)
+        is TapTarget.Panel -> Intent(this, QuickActivity::class.java).apply { target.sessionId?.let { putExtra(QuickActivity.EXTRA_SESSION, it) } }
+    })
+
+    private fun openVoice() = ActivityStarts.start(this, Intent(this, QuickActivity::class.java).putExtra(QuickActivity.EXTRA_VOICE, true))
 
     override fun onDestroy() {
         destroyed = true

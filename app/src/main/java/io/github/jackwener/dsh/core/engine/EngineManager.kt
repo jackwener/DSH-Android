@@ -113,6 +113,8 @@ class EngineManager @Inject constructor(
         set(v) { _route.value = v }
     /** Device time zone the running engine was started with (TZ is read once, at process start). */
     @Volatile private var startedTz: String = TimeZone.getDefault().id
+    /** DSH_ANDROID_LOCALE the running process got (approval texts, account pages, extension labels follow the app language). */
+    @Volatile private var startedLocale: String = Locale.getDefault().toLanguageTag()
     /** Whether an SDK session was opened in this generation (then a route change needs a restart). */
     @Volatile private var sessionsOpened = false
     private var death: CompletableDeferred<Unit>? = null
@@ -174,6 +176,8 @@ class EngineManager @Inject constructor(
                 sessions.get().hasEngineRuns() -> peer
                 // The device time zone changed since start: a new process picks it up (when idle, like a route change).
                 TimeZone.getDefault().id != startedTz -> { Log.i(TAG, "time zone changed: restarting engine"); shutdownLocked(); null }
+                // The app language changed (设置 → 语言, or the system's per-app language): same, when idle.
+                Locale.getDefault().toLanguageTag() != startedLocale -> { Log.i(TAG, "language changed: restarting engine"); shutdownLocked(); null }
                 // Providers / keys / web search changed: only a new process reads them.
                 profileFingerprint(st, hasKey) != activeFingerprint -> { Log.i(TAG, "model providers changed: restarting engine"); shutdownLocked(); null }
                 want == activeRoute -> peer
@@ -420,6 +424,7 @@ class EngineManager @Inject constructor(
 
     private fun environment(apiKey: String?, providerKeys: Map<String, String>) = Bundle().apply {
         startedTz = TimeZone.getDefault().id
+        startedLocale = Locale.getDefault().toLanguageTag()
         val files = context.filesDir
         putString("DSH_HOME", File(files, "dsh-home").path)
         putString("HOME", File(files, "home").path)
@@ -432,7 +437,7 @@ class EngineManager @Inject constructor(
         apiKey?.let { putString("DEEPSEEK_API_KEY", it) }
         providerKeys.forEach { (env, key) -> putString(env, key) }
         putString("DSH_ANDROID_PACKAGE", context.packageName)
-        putString("DSH_ANDROID_LOCALE", Locale.getDefault().toLanguageTag())
+        putString("DSH_ANDROID_LOCALE", startedLocale)
         // Node otherwise runs in UTC (local time for the model, daily budget at local midnight).
         // DSH_ANDROID_TZ lets the bundle's preload re-apply it where AT_SECURE makes Node drop TZ.
         putString("TZ", startedTz)

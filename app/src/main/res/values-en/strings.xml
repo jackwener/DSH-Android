@@ -426,7 +426,8 @@
     <string name="theme_dark">Dark</string>
     <string name="theme_system">System</string>
     <string name="set_language">Language</string>
-    <string name="set_language_desc">Choose DSH\'s language in system settings</string>
+    <string name="set_language_desc">DSH\'s interface language: follow the system or pick one</string>
+    <string name="language_system">System</string>
     <string name="set_work_details">Work details</string>
     <string name="set_work_details_desc">How much process detail completed turns keep open</string>
     <string name="details_compact">Compact</string>
@@ -690,6 +691,15 @@
     <string name="prov_model_missing">Not returned by endpoint</string>
     <string name="prov_model_limits">Set this model\'s context and output</string>
     <string name="prov_model_limits_hint">This model only; blank falls back to the setting above / endpoint value / default</string>
+    <string name="prov_images">Image input</string>
+    <string name="prov_images_on">Images</string>
+    <string name="prov_images_off">Text only</string>
+    <string name="prov_images_auto">Auto: %1$s</string>
+    <string name="prov_images_line">%1$s (%2$s)</string>
+    <string name="prov_images_by_name">by model name</string>
+    <string name="prov_images_hint">A text-only model never receives images, only an \"image omitted\" line, so it answers that it cannot see them. Auto uses the provider\'s model list when it says, else the model name; change it here if that is wrong.</string>
+    <string name="images_text_only">%1$s is not marked as accepting images: they will not be sent, the model only sees \"image omitted\". If it can see images, turn on Settings → Model services → this model → Image input.</string>
+    <string name="images_text_only_deepseek">%1$s does not accept images: they will not be sent. Switch to DeepSeek-V4.1-Flash for the model to see them.</string>
     <string name="prov_err_limits">Context window and max output must be positive whole numbers</string>
     <string name="limit_src_detected">from endpoint</string>
     <string name="limit_src_manual">set manually</string>

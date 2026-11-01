@@ -52,6 +52,7 @@ import io.github.jackwener.dsh.core.provider.DEEPSEEK_MODELS
 import io.github.jackwener.dsh.core.provider.EffectiveLimits
 import io.github.jackwener.dsh.core.provider.FetchedModels
 import io.github.jackwener.dsh.core.provider.HeaderRow
+import io.github.jackwener.dsh.core.provider.ModelVision
 import io.github.jackwener.dsh.core.provider.headerRowsOf
 import io.github.jackwener.dsh.core.provider.isUsableHeaderName
 import io.github.jackwener.dsh.core.provider.isUsableHeaderValue
@@ -214,14 +215,17 @@ private fun ProviderEditor(vm: SettingsViewModel, existing: ProviderConfig?, pre
     }
     val detected = remember {
         mutableStateMapOf<String, RemoteModel>().apply {
-            existing?.limits?.forEach { (m, l) -> put(m, RemoteModel(m, l.detectedContextWindow, l.detectedMaxTokens)) }
+            existing?.limits?.forEach { (m, l) -> put(m, RemoteModel(m, l.detectedContextWindow, l.detectedMaxTokens, images = l.detectedImages)) }
         }
     }
+    // 图片输入 per model: the user's choice (absent = automatic: listing, then the name; ModelVision).
+    val imageOverrides = remember { mutableStateMapOf<String, Boolean>().apply { existing?.limits?.forEach { (m, l) -> l.images?.let { put(m, it) } } } }
     var editing by remember { mutableStateOf<String?>(null) }
     fun stored(m: String, withOverride: Boolean = true): ModelLimits {
         val o = overrides[m].takeIf { withOverride }
         val d = detected[m]
-        return ModelLimits(o?.first?.let(::tokensOrNull), o?.second?.let(::tokensOrNull)?.toIntSat(), d?.contextWindow, d?.maxTokens)
+        return ModelLimits(o?.first?.let(::tokensOrNull), o?.second?.let(::tokensOrNull)?.toIntSat(), d?.contextWindow, d?.maxTokens,
+            images = imageOverrides[m].takeIf { withOverride }, detectedImages = d?.images)
     }
     fun live(m: String, withOverride: Boolean = true): EffectiveLimits =
         ThirdParty.resolve(stored(m, withOverride), tokensOrNull(ctxText), tokensOrNull(maxText)?.toIntSat())
@@ -390,14 +394,16 @@ private fun ProviderEditor(vm: SettingsViewModel, existing: ProviderConfig?, pre
         offered.forEachIndexed { i, m ->
             val on = m in selected
             val l = live(m)
+            val (images, imagesSrc) = ModelVision.resolve(m, stored(m))
             val line = stringResource(R.string.prov_limits_line, Fmt.tokens(l.contextWindow), stringResource(limitSourceLabel(l.contextSource)),
-                Fmt.tokens(l.maxTokens.toLong()), stringResource(limitSourceLabel(l.maxTokensSource)))
+                Fmt.tokens(l.maxTokens.toLong()), stringResource(limitSourceLabel(l.maxTokensSource))) + " · " +
+                stringResource(R.string.prov_images_line, stringResource(if (images) R.string.prov_images_on else R.string.prov_images_off), stringResource(if (imagesSrc == LimitSource.DEFAULT) R.string.prov_images_by_name else limitSourceLabel(imagesSrc)))
             SettingsRow(m, if (m in missing) stringResource(R.string.prov_model_missing) + " · " + line else line,
                 onClick = { if (on) selected.remove(m) else selected.add(m) }, divider = i > 0,
                 trailing = {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         IconBtn(R.drawable.dsw_edit_outline, { editing = if (editing == m) null else m }, size = 32.dp, iconSize = 14.dp,
-                            tint = if (m in overrides) c.link else c.labelTertiary, contentDescription = stringResource(R.string.prov_model_limits))
+                            tint = if (m in overrides || m in imageOverrides) c.link else c.labelTertiary, contentDescription = stringResource(R.string.prov_model_limits))
                         DCheckbox(on, { if (it) selected.add(m) else selected.remove(m) })
                     }
                 })
@@ -417,6 +423,14 @@ private fun ProviderEditor(vm: SettingsViewModel, existing: ProviderConfig?, pre
                         }
                     }
                     Text(stringResource(R.string.prov_model_limits_hint), style = DshType.xxs12, color = c.labelTertiary)
+                    // 图片输入: 自动 (listing / name) · 支持 · 不支持. A text-only model gets a placeholder instead of the image.
+                    val auto = ModelVision.resolve(m, stored(m, withOverride = false)).first
+                    Text(stringResource(R.string.prov_images), style = DshType.xxs12, color = c.labelSecondary)
+                    Segmented(listOf(stringResource(R.string.prov_images_auto, stringResource(if (auto) R.string.prov_images_on else R.string.prov_images_off)),
+                        stringResource(R.string.prov_images_on), stringResource(R.string.prov_images_off)),
+                        when (imageOverrides[m]) { null -> 0; true -> 1; false -> 2 },
+                        { i -> if (i == 0) imageOverrides.remove(m) else imageOverrides[m] = i == 1 }, compact = true)
+                    Text(stringResource(R.string.prov_images_hint), style = DshType.xxs12, color = c.labelTertiary)
                 }
             }
         }

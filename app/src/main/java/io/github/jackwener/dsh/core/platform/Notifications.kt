@@ -38,6 +38,18 @@ object Notifications {
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
 
+    /**
+     * The ongoing notifications (engine running, floating ball): tapping one brings the app to the front on the
+     * conversation that needs the user or is running (MainActivity resolves it at tap time, so the
+     * PendingIntent can be built once, even in the `:engine` process); nothing running = the app as it was.
+     * A notification tap is a user interaction, so this start is allowed from the background (HyperOS included).
+     */
+    fun openRunning(context: Context): PendingIntent =
+        PendingIntent.getActivity(context, "running".hashCode(),
+            Intent(context, MainActivity::class.java).putExtra(MainActivity.EXTRA_OPEN_RUNNING, true)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+
     /** 设置 at [section] (a SettingsSection name), e.g. 关于 for an app update. */
     fun openSection(context: Context, section: String): PendingIntent =
         PendingIntent.getActivity(context, "section:$section".hashCode(),

@@ -1,8 +1,8 @@
 package io.github.jackwener.dsh.feature.settings
 
 import android.content.Intent
+import io.github.jackwener.dsh.core.platform.AppLanguage
 import android.net.Uri
-import android.os.Build
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -59,6 +59,7 @@ import io.github.jackwener.dsh.core.data.Effort
 import io.github.jackwener.dsh.core.data.ThemeMode
 import io.github.jackwener.dsh.core.data.WorkDetails
 import io.github.jackwener.dsh.core.designsystem.BtnSize
+import io.github.jackwener.dsh.core.designsystem.findActivity
 import io.github.jackwener.dsh.core.designsystem.BtnVariant
 import io.github.jackwener.dsh.core.designsystem.CodeCard
 import io.github.jackwener.dsh.core.designsystem.DButton
@@ -228,11 +229,14 @@ private fun GeneralSection(vm: SettingsViewModel) {
                 when (s.theme) { ThemeMode.Light -> 0; ThemeMode.Dark -> 1; ThemeMode.System -> 2 },
                 { vm.setTheme(listOf(ThemeMode.Light, ThemeMode.Dark, ThemeMode.System)[it]) })
         }
-        SettingsRow(stringResource(R.string.set_language), stringResource(R.string.set_language_desc), onClick = {
-            val i = if (Build.VERSION.SDK_INT >= 33) Intent(Settings.ACTION_APP_LOCALE_SETTINGS, Uri.parse("package:${context.packageName}"))
-            else PermissionCatalog.appDetails(context)
-            runCatching { context.startActivity(i) }.onFailure { runCatching { context.startActivity(PermissionCatalog.appDetails(context)) } }
-        }, trailing = { DIcon(R.drawable.dsw_chevron_right_outline, size = 14.dp, tint = Dsh.colors.labelTertiary) })
+        // In-app language picker (#40): 跟随系统 + the languages in locales_config (AppLanguage).
+        val languages = remember { AppLanguage.supported(context) }
+        val language = remember(tick) { AppLanguage.current(context) }
+        SettingsRow(stringResource(R.string.set_language), stringResource(R.string.set_language_desc), stacked = true) {
+            Segmented(listOf(stringResource(R.string.language_system)) + languages.map(AppLanguage::displayName), AppLanguage.selectedIndex(language, languages), { i ->
+                context.findActivity()?.let { AppLanguage.set(it, if (i == 0) null else languages[i - 1]) }
+            })
+        }
         SettingsRow(stringResource(R.string.set_work_details), stringResource(R.string.set_work_details_desc), stacked = true) {
             Segmented(listOf(stringResource(R.string.details_compact), stringResource(R.string.details_standard), stringResource(R.string.details_detailed)),
                 s.workDetails.ordinal, { vm.setWorkDetails(WorkDetails.entries[it]) })

@@ -89,6 +89,20 @@ class BackNavigationTest {
         }
     }
 
+    /** A conversation link (EXTRA_SESSION: the floating ball, its capsule, a notification, #39) from any page: home as the root. */
+    @Test fun conversationLinksLandOnHomeAsTheRoot() {
+        for (path in hierarchy) {
+            nav.toHome()
+            path.drop(1).forEach { nav.navigate(it) }
+            nav.toHome()
+            assertEquals(home, pages())
+            assertFalse("Back on the conversation leaves the app", back())
+        }
+        // During onboarding the link does not skip it (home is not on the stack yet).
+        nav.startOnboarding(); nav.toHome()
+        assertEquals(listOf<Any>(OnboardingRoute), pages())
+    }
+
     @Test fun toolbarUpIsBackAndIgnoresStaleEntries() {
         nav.openSettings("Model")
         nav.navigate(ProviderRoute())

@@ -273,6 +273,10 @@ fun Composer(
                 }
             }
         }
+        // #39: a text-only model gets "[image omitted …]" instead of the picture; say so before it is sent.
+        if ((state.images.isNotEmpty() || state.pending > 0) && !model.acceptsImages) Text(
+            stringResource(if (model.isDeepSeek) R.string.images_text_only_deepseek else R.string.images_text_only, modelLabel(model.model)),
+            Modifier.padding(horizontal = 14.dp, vertical = 4.dp), style = DshType.xxs12, color = c.amber)
         BasicTextField(
             state.text,
             { v ->

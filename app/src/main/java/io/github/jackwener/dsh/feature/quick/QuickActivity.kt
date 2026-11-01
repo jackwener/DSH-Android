@@ -1,5 +1,6 @@
 package io.github.jackwener.dsh.feature.quick
 
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
@@ -84,7 +85,10 @@ class QuickActivity : ComponentActivity() {
     private var useContext by mutableStateOf(false)
     /** Bumped when a summon asks to start listening (not saved: a rotation does not listen again). */
     private var listenRequest by mutableIntStateOf(0)
-    private val prefs by lazy { getSharedPreferences("quick_panel", MODE_PRIVATE) }
+    private val prefs by lazy { getSharedPreferences(PREFS, MODE_PRIVATE) }
+
+    /** Android 10–12: the in-app language (AppLanguage); 13+ does it itself. */
+    override fun attachBaseContext(newBase: android.content.Context) = super.attachBaseContext(io.github.jackwener.dsh.core.platform.AppLanguage.wrap(newBase))
 
     override fun onCreate(savedInstanceState: Bundle?) {
         val fresh = savedInstanceState == null
@@ -94,7 +98,7 @@ class QuickActivity : ComponentActivity() {
         enableEdgeToEdge()
         if (fresh) {
             useContext = ScreenContext.text != null
-            val reopened = !isShareOrTask(intent) && reopenRecent()
+            val reopened = !isShareOrTask(intent) && (intent.hasExtra(EXTRA_SESSION) || reopenRecent())
             handleIntent(intent, freshPanel = true, reopened)
         } else useContext = ScreenContext.text != null && savedInstanceState.getBoolean(STATE_USE_CONTEXT, false)
         setContent {
@@ -204,6 +208,8 @@ class QuickActivity : ComponentActivity() {
     }
 
     private fun handleIntent(i: Intent, freshPanel: Boolean, reopened: Boolean) {
+        // The floating ball / capsule during a run started here: exactly that conversation (#39).
+        i.getStringExtra(EXTRA_SESSION)?.let { id -> if (id != vm.id) vm.open(id); return }
         if (i.getBooleanExtra(EXTRA_VOICE, false)) listenRequest++
         else if (i.getBooleanExtra(EXTRA_FROM_ASSIST, false)) lifecycleScope.launch { if (settingsRepo.current().voiceOnAssist) listenRequest++ }
         if (i.getBooleanExtra(EXTRA_SCREEN, false)) return attachScreen(reopened)
@@ -262,9 +268,15 @@ class QuickActivity : ComponentActivity() {
         const val EXTRA_VOICE = "voice"
         const val ACTION_RUN_TASK = "io.github.jackwener.dsh.RUN_TASK"
         const val EXTRA_TASK = "task"
+        /** Open this panel conversation (the floating ball while a run started here goes on). */
+        const val EXTRA_SESSION = "session"
         private const val STATE_USE_CONTEXT = "use_context"
         private const val KEY_LAST = "last_session"
         private const val KEY_AT = "last_at"
         private const val RECENT_MS = 10 * 60_000L
+
+        /** The conversation last used in the panel (a run started there reopens in the panel, not the app). */
+        fun panelSession(context: Context): String? = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY_LAST, null)
+        private const val PREFS = "quick_panel"
     }
 }

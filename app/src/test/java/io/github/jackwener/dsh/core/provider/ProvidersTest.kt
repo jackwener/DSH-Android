@@ -151,13 +151,13 @@ class ProvidersTest {
     @Test fun patchCarriesPerModelLimits() {
         val p = custom.copy(maxTokens = 32_768, limits = mapOf("a" to ModelLimits(detectedContextWindow = 262_144), "b" to ModelLimits(contextWindow = 8_192)))
         val yml = renderProfilePatch(listOf(p), webSearch = true)
-        assertTrue(yml, yml.contains("{\"id\":\"a\",\"contextWindow\":262144,\"maxTokens\":32768,\"defaults\":{\"maxTokens\":32768}}"))
+        assertTrue(yml, yml.contains("{\"id\":\"a\",\"contextWindow\":262144,\"maxTokens\":32768,\"defaults\":{\"maxTokens\":32768},\"capabilities\":{\"modalities\":[\"text\"]}}"))
         // b: 8K window → manual cap is half the window, headroom an eighth.
-        assertTrue(yml, yml.contains("{\"id\":\"b\",\"contextWindow\":8192,\"maxTokens\":4096,\"defaults\":{\"maxTokens\":4096}}"))
+        assertTrue(yml, yml.contains("{\"id\":\"b\",\"contextWindow\":8192,\"maxTokens\":4096,\"defaults\":{\"maxTokens\":4096},\"capabilities\":{\"modalities\":[\"text\"]}}"))
         assertTrue(yml, yml.contains("{\"provider\":\"custom\",\"model\":\"a\",\"headroomTokens\":16384}"))
         assertTrue(yml, yml.contains("{\"provider\":\"custom\",\"model\":\"b\",\"headroomTokens\":1024}"))
         // Unconfigured provider: the old defaults.
-        assertTrue(renderProfilePatch(listOf(kimi), true).contains("{\"id\":\"kimi-k3\",\"contextWindow\":131072,\"maxTokens\":16384,\"defaults\":{\"maxTokens\":16384}}"))
+        assertTrue(renderProfilePatch(listOf(kimi), true).contains("{\"id\":\"kimi-k3\",\"contextWindow\":131072,\"maxTokens\":16384,\"defaults\":{\"maxTokens\":16384},\"capabilities\":{\"modalities\":[\"text\",\"image\"]}}"))
     }
 
     @Test fun storedProvidersStayReadable() {

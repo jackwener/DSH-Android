@@ -4,6 +4,7 @@ import android.app.Application
 import dagger.hilt.android.HiltAndroidApp
 import io.github.jackwener.dsh.core.capability.AgentScreen
 import io.github.jackwener.dsh.core.data.SettingsRepository
+import io.github.jackwener.dsh.core.platform.AppLanguage
 import io.github.jackwener.dsh.core.platform.Notifications
 import io.github.jackwener.dsh.core.trigger.TriggerEvents
 import io.github.jackwener.dsh.core.trigger.TriggerHub
@@ -25,6 +26,8 @@ class DshApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        // Every process (the :engine one posts its notification too): the in-app language choice.
+        AppLanguage.applyToProcess(this)
         if (!isMainProcess()) return
         Notifications.createChannels(this)
         importDebugKey()
@@ -40,6 +43,12 @@ class DshApp : Application() {
             if (settings.get().current().floatingBall) runCatching { FloatingBallService.setEnabled(this@DshApp, true) }
             runCatching { agentScreen.get().restoreLeftoverMutes() }
         }
+    }
+
+    override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
+        super.onConfigurationChanged(newConfig)
+        // Android 10–12: a configuration change resets the process locale to the system's.
+        AppLanguage.applyToProcess(this)
     }
 
     /** Debug builds only: device tests provision the key with `run-as <pkg> sh -c 'cat > files/debug.key'`. */

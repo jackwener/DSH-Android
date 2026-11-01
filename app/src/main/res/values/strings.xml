@@ -426,7 +426,8 @@
     <string name="theme_dark">深色</string>
     <string name="theme_system">跟随系统</string>
     <string name="set_language">语言</string>
-    <string name="set_language_desc">在系统设置中为 DSH 选择语言</string>
+    <string name="set_language_desc">DSH 的界面语言，跟随系统或固定为某种语言</string>
+    <string name="language_system">跟随系统</string>
     <string name="set_work_details">工作步骤展示</string>
     <string name="set_work_details_desc">已完成的轮次保留多少过程细节</string>
     <string name="details_compact">简洁</string>
@@ -690,6 +691,15 @@
     <string name="prov_model_missing">接口未返回</string>
     <string name="prov_model_limits">设置该模型的上下文与输出</string>
     <string name="prov_model_limits_hint">仅对该模型生效，留空则沿用上方设置 / 接口返回值 / 默认值</string>
+    <string name="prov_images">图片输入</string>
+    <string name="prov_images_on">支持图片</string>
+    <string name="prov_images_off">仅文本</string>
+    <string name="prov_images_auto">自动：%1$s</string>
+    <string name="prov_images_line">%1$s（%2$s）</string>
+    <string name="prov_images_by_name">按模型名判断</string>
+    <string name="prov_images_hint">仅文本的模型收不到图片，只会看到一行“图片已省略”，于是回答看不到图片。自动 = 接口的模型列表说明了就用它，否则按模型名判断；判断错了就在这里改。</string>
+    <string name="images_text_only">%1$s 未标记为支持图片：图片不会发给模型，它只会看到“图片已省略”。如果它其实能看图，请在 设置 → 模型服务 → 该模型 → 图片输入 中改为支持。</string>
+    <string name="images_text_only_deepseek">%1$s 不支持图片：图片不会发给模型。要让模型看图，请切换到 DeepSeek-V4.1-Flash。</string>
     <string name="prov_err_limits">上下文窗口和最大输出只能填正整数</string>
     <string name="limit_src_detected">接口返回</string>
     <string name="limit_src_manual">手动设置</string>
