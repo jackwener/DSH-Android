@@ -44,6 +44,7 @@ DSH-Android 只通过 GitHub Releases 分发。App 内更新（`core/update/`）
 
 ## 约定
 
+- **v1+v2+v3 签名**：`app/build.gradle.kts` 的正式签名同时开了三种方案。minSdk 29 时构建工具默认不签 v1，而部分国内手机的安装器和应用商店只认 v1，会报“安装包没有签名文件”。`make-update-manifest.py` 会检查三种签名都在，缺一个就不生成清单。
 - **签名不能换**：App 只接受签名证书与已安装版本相同的安装包（同一证书，或 APK v3 轮换链里包含旧证书），否则拒绝并删除下载。调试版或自行构建的版本签名不同，只会提示到 GitHub 手动下载。
 - **预发布**不附 `update.json`，也不提交 `update/latest.json`：`releases/latest` 本来就跳过预发布，仓库里的副本也不能先指向它。
 - **撤回版本**：把 `update/latest.json` 和最新 Release 的 `update.json` 换回上一版即可停止推送。已经装上的版本不会被降级（App 只接受更大的 versionCode）。

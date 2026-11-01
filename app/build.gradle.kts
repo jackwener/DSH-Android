@@ -23,8 +23,8 @@ android {
         applicationId = "io.github.jackwener.dsh"
         minSdk = 29
         targetSdk = 36
-        versionCode = 22
-        versionName = "0.3.4"
+        versionCode = 23
+        versionName = "0.3.5"
         ndk { abiFilters += "arm64-v8a" }
         // Bundled official Shizuku APK (in-app install/update); pinned in tools/fetch-shizuku.sh.
         buildConfigField("String", "SHIZUKU_VERSION", "\"${shizukuPin("VERSION")}\"")
@@ -41,6 +41,11 @@ android {
             storePassword = signingProp("storePassword")
             keyAlias = signingProp("keyAlias")
             keyPassword = signingProp("keyPassword")
+            // minSdk 29 makes AGP drop v1 (JAR) signing, but some vendor installers, file managers and app stores
+            // only look for META-INF signature files and reject the APK as unsigned. Ship v1+v2+v3.
+            enableV1Signing = true
+            enableV2Signing = true
+            enableV3Signing = true
         }
     }
     buildTypes {

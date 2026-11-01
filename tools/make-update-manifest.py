@@ -77,6 +77,12 @@ def signer_sha256(apksigner, apk):
     certs = sorted(set(re.findall(r"certificate SHA-256 digest: ([0-9a-f]{64})", out)))
     if len(certs) != 1:
         die(f"expected exactly one signing certificate, found {len(certs)}")
+    # Some vendor installers, file managers and app stores only read v1 (JAR) signatures and call a
+    # v2/v3-only APK unsigned. apksigner skips schemes the APK's minSdk doesn't need, so ask as for API 21.
+    out = run([apksigner, "verify", "-v", "--min-sdk-version", "21", str(apk)])
+    missing = [v for v in ("v1", "v2", "v3") if not re.search(rf"^Verified using {v} scheme .*: true$", out, re.M)]
+    if missing:
+        die(f"APK is not signed with {', '.join(missing)}: enable v1+v2+v3 signing for release builds")
     return certs[0]
 
 
