@@ -14,6 +14,7 @@ import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
 import kotlinx.serialization.json.putJsonObject
 import kotlinx.serialization.json.addJsonObject
+import kotlinx.serialization.json.add
 import io.github.jackwener.dsh.R
 import java.net.HttpURLConnection
 import java.net.URI
@@ -232,8 +233,13 @@ data class ModelLimits(
     val maxTokens: Int? = null,
     val detectedContextWindow: Long? = null,
     val detectedMaxTokens: Int? = null,
+    /** The user's 图片输入 setting for this model (null = automatic, see ModelVision). */
+    val images: Boolean? = null,
+    /** Image input as the `/models` listing stated it. */
+    val detectedImages: Boolean? = null,
 ) {
-    val isEmpty get() = contextWindow == null && maxTokens == null && detectedContextWindow == null && detectedMaxTokens == null
+    val isEmpty get() = contextWindow == null && maxTokens == null && detectedContextWindow == null && detectedMaxTokens == null &&
+        images == null && detectedImages == null
 }
 
 /** Where an effective limit came from (shown next to the value). */
@@ -294,6 +300,9 @@ object ThirdParty {
 
 fun ProviderConfig.limitsOf(model: String): EffectiveLimits = ThirdParty.resolve(limits[model], contextWindow, maxTokens)
 
+/** Whether [model] gets images (the engine declaration in [renderProfilePatch]; the composer's notice). */
+fun ProviderConfig.acceptsImages(model: String): Boolean = ModelVision.resolve(model, limits[model]).first
+
 /** What the composer / engine route resolves to. `provider == null` is DeepSeek. */
 data class ModelChoice(val provider: ProviderConfig?, val model: String) {
     val isDeepSeek get() = provider == null
@@ -302,6 +311,8 @@ data class ModelChoice(val provider: ProviderConfig?, val model: String) {
     val contextWindow get() = limits?.contextWindow ?: DEEPSEEK_CONTEXT
     /** Where [contextWindow] came from; null for DeepSeek (a fixed fact). */
     val contextSource get() = limits?.contextSource
+    /** Images reach the model (else the engine sends a text placeholder): DeepSeek per model (V4.1-Flash sees, V4-Pro does not). */
+    val acceptsImages: Boolean get() = provider?.acceptsImages(model) ?: ModelVision.engineDefault(model)
     companion object { const val DEEPSEEK_CONTEXT = 1_000_000L }
 }
 
@@ -361,6 +372,8 @@ fun renderProfilePatch(providers: List<ProviderConfig>, webSearch: Boolean, user
                                     // Capacity and the per-request ask (sent as max_tokens) are the same value.
                                     put("maxTokens", l.maxTokens)
                                     putJsonObject("defaults") { put("maxTokens", l.maxTokens) }
+                                    // Always declared (#39): the engine's own table treats unknown ids as text only.
+                                    putJsonObject("capabilities") { putJsonArray("modalities") { add("text"); if (p.acceptsImages(m)) add("image") } }
                                 }
                             }
                         }
@@ -386,7 +399,9 @@ fun renderProfilePatch(providers: List<ProviderConfig>, webSearch: Boolean, user
  * says about its kind: [chat] false = clearly not a chat model (embedding, image, audio…), [tools]
  * true = marked as supporting tool calls. Null = the listing does not say.
  */
-data class RemoteModel(val id: String, val contextWindow: Long? = null, val maxTokens: Int? = null, val chat: Boolean? = null, val tools: Boolean? = null)
+data class RemoteModel(val id: String, val contextWindow: Long? = null, val maxTokens: Int? = null, val chat: Boolean? = null, val tools: Boolean? = null,
+    /** Image input as the listing marks it (ModelVision.listed). */
+    val images: Boolean? = null)
 
 /** A non-2xx answer: [status] and the (truncated) body. The message keeps the `HTTP <code> …` form. */
 class HttpStatusException(val status: Int, val body: String) : Exception("HTTP $status ${body.take(160).replace('\n', ' ')}".trim())
@@ -488,7 +503,7 @@ fun parseModels(body: String): List<RemoteModel> {
             val id = o?.let { (it["id"] ?: it["name"] ?: it["model"])?.jsonPrimitive?.content } ?: key ?: e.jsonPrimitive.content
             val ctx = o?.let { firstCount(it, CONTEXT_KEYS) }
             val out = o?.let { firstCount(it, OUTPUT_KEYS) }?.coerceAtMost(Int.MAX_VALUE.toLong())?.toInt()
-            RemoteModel(id.removePrefix("models/"), ctx, out, o?.let(::listedAsChat), o?.let(::listedWithTools))
+            RemoteModel(id.removePrefix("models/"), ctx, out, o?.let(::listedAsChat), o?.let(::listedWithTools), o?.let(ModelVision::listed))
         }.getOrNull()
     }.filter { it.id.isNotBlank() }.distinctBy { it.id }.sortedBy { it.id }
 }

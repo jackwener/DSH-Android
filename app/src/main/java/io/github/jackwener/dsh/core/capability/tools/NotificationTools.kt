@@ -1,12 +1,10 @@
 package io.github.jackwener.dsh.core.capability.tools
 
-import android.app.ActivityOptions
 import android.app.Notification
 import android.app.PendingIntent
 import android.app.RemoteInput
 import android.content.Context
 import android.content.Intent
-import android.os.Build
 import android.os.Bundle
 import android.service.notification.StatusBarNotification
 import androidx.core.app.NotificationCompat
@@ -22,6 +20,7 @@ import io.github.jackwener.dsh.core.capability.reqStr
 import io.github.jackwener.dsh.core.capability.str
 import io.github.jackwener.dsh.core.capability.strs
 import io.github.jackwener.dsh.core.data.SettingsRepository
+import io.github.jackwener.dsh.core.platform.ActivityStarts
 import io.github.jackwener.dsh.core.model.Risk
 import io.github.jackwener.dsh.core.model.ToolGroup
 import io.github.jackwener.dsh.service.DshNotificationListener
@@ -69,11 +68,8 @@ class NotificationTools @Inject constructor(
     }
 
     /** PendingIntents of other apps that start activities need the sender's background-start privilege on Android 14+. */
-    private fun sendOptions(): Bundle? = if (Build.VERSION.SDK_INT >= 34)
-        ActivityOptions.makeBasic().setPendingIntentBackgroundActivityStartMode(ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED).toBundle() else null
-
     private fun send(pi: PendingIntent, fill: Intent? = null) =
-        pi.send(context, 0, fill, null, null, null, sendOptions())
+        pi.send(context, 0, fill, null, null, null, ActivityStarts.sendOptions())
 
     override val tools = listOf(
         object : Tool("notification_list", ToolGroup.Notifications, Risk.sensitive, false,

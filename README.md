@@ -149,6 +149,18 @@ docs/       架构说明、引擎契约、设计 token、截图
 </details>
 
 <details>
+<summary><b>翻译 / 添加界面语言</b></summary>
+
+`app/src/main/res/values/` 是中文（默认），`values-en/` 是英文。添加一种语言只需两步：
+
+1. 新建 `app/src/main/res/values-<语言代码>/`，复制 `values-en/` 下的全部 `strings*.xml` 并翻译（lint 的 MissingTranslation 会报漏翻的条目）；
+2. 在 `app/src/main/res/xml/locales_config.xml` 里加一行 `<locale android:name="<语言代码>" />`。
+
+设置 → 通用 → 语言 的选项和 Android 13+ 系统设置里的“应用语言”都读这份列表，不用改代码；单元测试 `LocalesConfigTest` 会检查两者一致。引擎拿到的语言（`DSH_ANDROID_LOCALE`）跟随 App 语言。
+
+</details>
+
+<details>
 <summary><b>设计文档</b></summary>
 
 - [架构](docs/ARCHITECTURE.md)

@@ -47,6 +47,7 @@ import io.github.jackwener.dsh.nav.dshGraph
 import io.github.jackwener.dsh.nav.onboardingOnStack
 import io.github.jackwener.dsh.nav.startOnboarding
 import io.github.jackwener.dsh.nav.toHome
+import io.github.jackwener.dsh.service.TapTargets
 import io.github.jackwener.dsh.nav.openSettings
 import androidx.navigation.NavHostController
 import androidx.navigation.NavDestination.Companion.hasRoute
@@ -75,10 +76,14 @@ class MainActivity : ComponentActivity() {
     @Inject lateinit var account: AccountRepository
     @Inject lateinit var extensions: io.github.jackwener.dsh.core.extensions.ExtensionsRepository
     @Inject lateinit var updater: io.github.jackwener.dsh.core.update.AppUpdater
+    @Inject lateinit var sessions: io.github.jackwener.dsh.core.session.SessionStore
     private var pendingSession by mutableStateOf<String?>(null)
     /** Settings section to open (EXTRA_SECTION, e.g. the quick panel's 登录 / 添加 API Key / 打开自检). */
     private var pendingSection by mutableStateOf<String?>(null)
     private var navReady by mutableStateOf(false)
+
+    /** Android 10–12: the in-app language (AppLanguage); 13+ does it itself. */
+    override fun attachBaseContext(newBase: android.content.Context) = super.attachBaseContext(io.github.jackwener.dsh.core.platform.AppLanguage.wrap(newBase))
 
     override fun onCreate(savedInstanceState: Bundle?) {
         val splash = installSplashScreen()
@@ -86,7 +91,7 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         // Only for a fresh launch: after recreation (rotation, theme) the user may have moved on.
         if (savedInstanceState == null) {
-            pendingSession = intent.getStringExtra(EXTRA_SESSION)
+            pendingSession = sessionOf(intent)
             pendingSection = intent.getStringExtra(EXTRA_SECTION)
         }
         handleAppLink(intent)
@@ -117,11 +122,15 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        pendingSession = intent.getStringExtra(EXTRA_SESSION)
+        pendingSession = sessionOf(intent)
         pendingSection = intent.getStringExtra(EXTRA_SECTION)
         handleAppLink(intent)
         handleExtensionShare(intent)
     }
+
+    /** The conversation to show: EXTRA_SESSION, or for EXTRA_OPEN_RUNNING the one running / waiting now (null: leave the page as it is). */
+    private fun sessionOf(intent: Intent): String? =
+        intent.getStringExtra(EXTRA_SESSION) ?: if (intent.getBooleanExtra(EXTRA_OPEN_RUNNING, false)) TapTargets.running(sessions.status.value) else null
 
     /**
      * 分享 → 安装为 DSH 扩展 (the `.ExtensionInstall` alias): copy a shared file into the app (the
@@ -205,5 +214,7 @@ class MainActivity : ComponentActivity() {
         const val EXTRA_SESSION = "session"
         /** A SettingsSection name to open on arrival. */
         const val EXTRA_SECTION = "settings_section"
+        /** The ongoing notifications' tap (Notifications.openRunning): the conversation running at tap time. */
+        const val EXTRA_OPEN_RUNNING = "open_running"
     }
 }

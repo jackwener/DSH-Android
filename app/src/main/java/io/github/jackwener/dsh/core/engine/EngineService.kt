@@ -32,6 +32,8 @@ class EngineService : Service() {
             .setContentTitle(getString(R.string.engine_running))
             .setOngoing(true)
             .setSilent(true)
+            // Without a content intent a tap did nothing (#39): open the running conversation.
+            .setContentIntent(Notifications.openRunning(this))
             .build()
         // Background-start denials surface in EngineManager.bind(); never crash the process here.
         runCatching { startForeground(Notifications.ID_ENGINE, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE) }
