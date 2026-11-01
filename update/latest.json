@@ -1,21 +1,21 @@
 {
   "format": 1,
   "packageName": "io.github.jackwener.dsh",
-  "versionCode": 22,
-  "versionName": "0.3.4",
+  "versionCode": 23,
+  "versionName": "0.3.5",
   "minSdk": 29,
   "apk": {
-    "name": "DSH-Android-v0.3.4-arm64.apk",
-    "size": 100434272,
-    "sha256": "17549579a505c5af4b53f144eebc4c2586e7307e454d3077300d79ce3a32d5ea",
+    "name": "DSH-Android-v0.3.5-arm64.apk",
+    "size": 100508104,
+    "sha256": "94508b7be5f919b8ebd35cbdd9c67148df6afb5b1611f943d8d4f05a38035663",
     "urls": [
-      "https://github.com/jackwener/DSH-Android/releases/download/v0.3.4/DSH-Android-v0.3.4-arm64.apk"
+      "https://github.com/jackwener/DSH-Android/releases/download/v0.3.5/DSH-Android-v0.3.5-arm64.apk"
     ]
   },
   "signerSha256": "2b37a375ead19476e5d0d9e38920032ea9822e880dcc7540a14e5ab6ac1f4f69",
   "notes": {
-    "zh": "- **应用内更新**：设置 → 关于 可以检查更新，默认每天在后台自动检查一次。有新版时显示更新说明，可以选更新、稍后或跳过此版本；在 App 内下载（支持断点续传），先核对 SHA-256 和签名，再用系统安装器安装，会话、设置和插件都保留。从这个版本起，以后的版本都可以在 App 里直接更新\n- **长任务不再中途停下**（#37）：模型在待办还没做完时提前停下，会在同一轮里自动继续，界面保持运行状态；每轮结束都会说明原因。如果还有没做完的待办，会显示进度、下一项和“继续”按钮，继续时不会重复已经成功的操作。模型不会再说“下一轮会自动继续”。移除了手机上不可靠的 goal 自动轮次\n- **大幅减少输入 token**（#36）：不常用的工具改为用到时才加载。新会话发一句“你好”的输入从约 1.9 万 token 降到约 5400（手机操作模式约 1.7 万 → 4300），DeepSeek 的提示词缓存照常生效\n- 这版没有在真机上测试过\n- 仅支持 arm64-v8a，Android 10 及以上；正式签名，可直接覆盖安装 v0.1.1 及以后版本",
-    "en": "- **In-app updates**: check in Settings → About; checked automatically once a day by default. Shows the release notes with Update / Later / Skip this version; downloads in the app (resumable), verifies SHA-256 and the signature, then installs with the system installer, keeping sessions, settings and plugins\n- **Long tasks no longer stop halfway** (#37): if the model stops while todos are still open, it continues in the same turn; every turn end states its reason, and unfinished work shows progress, the next item and a Continue button that doesn't repeat completed actions\n- **Far fewer input tokens** (#36): rarely used tools load on demand. \"Hi\" in a new chat drops from ~18.8k to ~5.4k input tokens; DeepSeek prompt caching still applies\n- Not yet tested on a real device"
+    "zh": "- **修复部分手机提示“安装包没有签名文件”**：安装包同时带上 v1、v2、v3 三种签名。之前只有 v2，有些国内手机的安装器、文件管理器和应用商店只认 v1，会把它当成没签名。证书没有变\n- 其他功能和 v0.3.4 相同\n- 仅支持 arm64-v8a，Android 10 及以上；正式签名，可直接覆盖安装 v0.1.1 及以后版本，装了 v0.3.4 的可以在 设置 → 关于 里直接更新",
+    "en": "- **Fixed \"APK has no signature\" on some phones**: the APK is now signed with v1, v2 and v3 schemes. It used to carry only v2, which some vendor installers, file managers and app stores don't recognize. Same certificate\n- Otherwise identical to v0.3.4"
   },
-  "publishedAt": "2026-10-31T11:12:20Z"
+  "publishedAt": "2026-11-01T09:53:39Z"
 }
