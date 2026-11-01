@@ -99,6 +99,7 @@
     <string name="queue_edit">Edit queued message</string>
     <string name="queue_delete">Delete queued message</string>
     <string name="queue_steer">Steer</string>
+    <string name="steer_pending">Pending: the agent sees it at its next step</string>
     <string name="todos">To-dos</string>
     <string name="todo_progress">%1$d done · %2$d in progress · %3$d pending</string>
     <string name="view_chat">Chat</string>
@@ -116,6 +117,7 @@
     <string name="turn_done">Completed</string>
     <string name="turn_failed">This turn failed</string>
     <string name="turn_stopped">Stopped</string>
+    <string name="turn_steered">Before your message</string>
     <string name="stopped">Stopped</string>
     <string name="turn_error_title">This turn failed</string>
     <string name="net_title">Can\'t reach the model service</string>

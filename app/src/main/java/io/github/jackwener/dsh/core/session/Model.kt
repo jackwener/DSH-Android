@@ -67,6 +67,13 @@ enum class TakeoverAnswer { Start, Skip, Handled, DoneByUser, Abort }
 
 data class QueuedMessage(val id: String, val text: String)
 
+/**
+ * A message sent into the running turn (插话发送 / 立即发送, ENGINE-CONTRACT §2 `mode: 'steer'`). Shown
+ * as pending until dsh logs it as the turn's next `user/message` (`data.id` == [messageId], known
+ * once the engine accepted it); [images]: attached image count, for the pending bubble.
+ */
+data class SteerMessage(val id: String, val text: String, val images: Int = 0, val messageId: String? = null)
+
 /** Live state of one session: the persisted log plus everything that only exists while the app runs. */
 data class SessionLive(
     val sessionId: String,
@@ -93,6 +100,8 @@ data class SessionLive(
     /** The turn failed for lack of network; the session waits to be continued once the phone is back online (SessionStore.waitForNetwork). */
     val waitingForNetwork: Boolean = false,
     val queue: List<QueuedMessage> = emptyList(),
+    /** Sent into the running turn, not yet logged by dsh (shown as pending bubbles under the stream). */
+    val steers: List<SteerMessage> = emptyList(),
     /** Queued messages handed back to the composer after the run ended without sending them (stop / failure). */
     val restoredDraft: String? = null,
     val preset: PermissionPreset = PermissionPreset.Full,
@@ -130,12 +139,39 @@ data class SessionLive(
     /**
      * The run is over without having sent its queued messages (stop, failure, engine loss): the
      * session goes idle and the queue moves back into the composer instead of firing later, after
-     * whatever the user sends next.
+     * whatever the user sends next. Steers the model never saw go back first (the resumed engine
+     * drops them, ENGINE-CONTRACT §2).
      */
     fun idle(): SessionLive = copy(
-        running = false, startingEngine = false, runStartedAt = null, waitingForUnlock = false, waitingForNetwork = false, queue = emptyList(),
-        restoredDraft = (listOfNotNull(restoredDraft) + queue.map { it.text }).joinToString("\n\n").ifEmpty { null },
+        running = false, startingEngine = false, runStartedAt = null, waitingForUnlock = false, waitingForNetwork = false, queue = emptyList(), steers = emptyList(),
+        restoredDraft = (listOfNotNull(restoredDraft) + steers.map { it.text } + queue.map { it.text }).joinToString("\n\n").ifEmpty { null },
     )
+
+    fun withSteer(s: SteerMessage): SessionLive = copy(steers = steers + s)
+
+    /** The engine accepted steer [id] as [messageId]; already logged (its `user/message` came first) means delivered. */
+    fun steerAccepted(id: String, messageId: String?): SessionLive =
+        if (messageId != null && events.any { it.isUserMessage(messageId) }) copy(steers = steers.filterNot { it.id == id })
+        else copy(steers = steers.map { if (it.id == id) it.copy(messageId = messageId) else it })
+
+    /** [e] was just logged: a steer it carries is now part of the conversation (no second bubble). */
+    fun withLogged(e: LoggedEvent): SessionLive {
+        if (e.type != "user/message" || steers.isEmpty()) return this
+        val id = e.data.s("id") ?: return this
+        return if (steers.none { it.messageId == id }) this else copy(steers = steers.filterNot { it.messageId == id })
+    }
+
+    /**
+     * Steers [ids] will not reach the running turn (the engine refused one, or was lost): they move
+     * to the front of the queue, still visible, and go out as the next turn.
+     */
+    fun steersQueued(ids: Collection<String> = steers.map { it.id }): SessionLive {
+        val moved = steers.filter { it.id in ids }
+        if (moved.isEmpty()) return this
+        return copy(steers = steers - moved.toSet(), queue = moved.map { QueuedMessage(it.id, it.text) } + queue)
+    }
+
+    private fun LoggedEvent.isUserMessage(messageId: String) = type == "user/message" && data.s("id") == messageId
 
     private fun synced() = copy(approval = approvals.firstOrNull(), question = questions.firstOrNull(),
         permission = permissions.firstOrNull(), takeover = takeovers.firstOrNull())

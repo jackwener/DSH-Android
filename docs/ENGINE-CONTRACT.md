@@ -124,6 +124,16 @@ an offset past its log (`LogSeqs`), never treating a seq as a cross-generation i
   `session/prompt` also accepts an optional `clientTimeZone` (IANA); the app does not send it, so the engine uses its
   process `TZ` (patch 11). Each request carries a
   `dsh-time-context` reading (date, time, zone, elapsed time) so relative requests ("tomorrow 7:00") resolve.
+  `session/prompt` takes an optional `mode: 'followup' | 'steer'` (patch 21; default `followup`, dsh's own: a new turn
+  after the running one). **插话发送 / 立即发送 send `mode: 'steer'` while the session runs**: dsh's `Agent.steer` puts
+  the message into the running turn, claimed at its next step boundary (after the current tool calls finish, before
+  the next model request), where it is logged as the turn's next `user/message` (`data.id` = the returned
+  `messageId`). The result is `{ messageId, delivery: 'step' | 'turn' }`: `turn` when the session was idle (a new
+  turn, as `followup`). A steer that arrives as the turn is ending runs as the next turn, with no idle gap; one left
+  unclaimed by a failed turn runs right after it as a turn of its own. The app
+  shows the message at once as pending and replaces it with the logged `user/message`; if the request fails it
+  moves to the app-side queue (sent after the turn). `session/resume` drops input the dead process never claimed;
+  the app hands undelivered steers back to the composer (stop, failure) or queues them (engine-loss continuation).
 - `android/session/permission { sessionId, preset: 'read-only' | 'workspace-write' | 'danger-full-access' | null }` → `{}`
   (plugin-guard, through patch 10). **The app sends it before each `session/prompt` and whenever the user changes the
   conversation's permission mode** (`PermissionPreset.id`; `null` forgets it). With it the engine refuses actions that

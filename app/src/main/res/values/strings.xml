@@ -99,6 +99,7 @@
     <string name="queue_edit">编辑排队消息</string>
     <string name="queue_delete">删除排队消息</string>
     <string name="queue_steer">插话发送</string>
+    <string name="steer_pending">等待插入当前任务</string>
     <string name="todos">任务</string>
     <string name="todo_progress">%1$d 已完成 · %2$d 进行中 · %3$d 待处理</string>
     <string name="view_chat">对话</string>
@@ -116,6 +117,7 @@
     <string name="turn_done">已完成</string>
     <string name="turn_failed">本轮运行失败</string>
     <string name="turn_stopped">已停止</string>
+    <string name="turn_steered">插话前的处理</string>
     <string name="stopped">已停止</string>
     <string name="turn_error_title">本轮运行失败</string>
     <string name="net_title">连不上模型服务</string>

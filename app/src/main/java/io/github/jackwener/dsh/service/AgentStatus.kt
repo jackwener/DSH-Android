@@ -59,7 +59,7 @@ object AgentStatus {
         live.approval?.let { return CapsuleStatus.NeedsYou(CapsuleStatus.Need.Approval, it.toolName) }
         val turn = lastTurn(live.events, live.running)
         if (!live.running) return when (turn?.status) {
-            null, TurnStatus.Running -> null
+            null, TurnStatus.Running, TurnStatus.Steered -> null
             // Work left (open todos, the continuation cap): not "done".
             TurnStatus.Completed -> CapsuleStatus.Ended(if (turn.endReason?.continuable == true) CapsuleStatus.End.Stopped else CapsuleStatus.End.Done)
             TurnStatus.Stopped -> CapsuleStatus.Ended(CapsuleStatus.End.Stopped)

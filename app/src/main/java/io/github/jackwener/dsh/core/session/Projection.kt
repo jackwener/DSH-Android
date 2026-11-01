@@ -141,14 +141,15 @@ sealed interface Block {
 
 data class UserMsg(val seq: Long, val time: Long, val text: String, val images: Int, val files: Int)
 
-enum class TurnStatus { Running, Completed, Failed, Stopped, MaxTokens }
+/** [Steered]: the part of a running turn before a message the user steered into it; the turn goes on in the next [Turn]. */
+enum class TurnStatus { Running, Completed, Failed, Stopped, MaxTokens, Steered }
 
 /**
  * [Turn.endReason]: from the turn's status, plugin-guard's outcome record and (for an engine without
  * the record) the turn's own todo list. Null while the turn runs.
  */
 fun endReasonOf(status: TurnStatus, outcome: TurnOutcome?, todos: TodoCounts?): EndReason? = when (status) {
-    TurnStatus.Running -> null
+    TurnStatus.Running, TurnStatus.Steered -> null
     TurnStatus.Failed -> EndReason.Error
     TurnStatus.MaxTokens -> EndReason.MaxTokens
     TurnStatus.Stopped -> if (outcome?.reason == "budget") EndReason.Budget else EndReason.Stopped
@@ -221,7 +222,7 @@ object Projector {
         fun open(): TurnB? = turns.lastOrNull()?.takeIf { it.end == null }
         fun close(t: TurnB, time: Long, status: TurnStatus) {
             t.end = time; t.status = status
-            if (status != TurnStatus.Completed) t.blocks.replaceAll { b ->
+            if (status != TurnStatus.Completed && status != TurnStatus.Steered) t.blocks.replaceAll { b ->
                 if (b is Block.Tool && b.state == ToolState.Running) b.copy(state = ToolState.Stopped, endTime = time) else b
             }
         }
@@ -264,8 +265,14 @@ object Projector {
                     }
                     val msg = UserMsg(e.seq, e.time, textOf(content), countOf(content, "image"), countOf(content, "file"))
                     val t = open()
-                    if (t != null && t.user == null && t.blocks.isEmpty()) t.user = msg
-                    else turns += TurnB("t${e.seq}", null, e.time).also { it.user = msg }
+                    // A turn's own prompt: nothing of the model's yet (a compaction or a notice may precede it).
+                    if (t != null && t.user == null && t.blocks.all { it is Block.Compaction || it is Block.Notice }) t.user = msg
+                    else {
+                        // Steered into the running turn (dsh logs it at the turn's next step): the turn
+                        // goes on under the user's message, as the same turn number.
+                        t?.let { close(it, e.time, TurnStatus.Steered) }
+                        turns += TurnB("t${e.seq}", t?.number, e.time).also { it.user = msg }
+                    }
                 }
                 "assistant/message" -> {
                     val t = current(e.time, e.seq)

@@ -37,6 +37,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
@@ -70,6 +71,7 @@ import io.github.jackwener.dsh.core.session.Block
 import io.github.jackwener.dsh.core.session.Conversation
 import io.github.jackwener.dsh.core.session.EndReason
 import io.github.jackwener.dsh.core.session.SessionLive
+import io.github.jackwener.dsh.core.session.SteerMessage
 import io.github.jackwener.dsh.core.session.Turn
 import io.github.jackwener.dsh.core.provider.NetDiagnose
 import io.github.jackwener.dsh.core.session.TurnError
@@ -101,8 +103,8 @@ fun ChatStream(
     val atBottom by remember { derivedStateOf { !listState.canScrollForward } }
     LaunchedEffect(listState.isScrollInProgress) { if (listState.isScrollInProgress) follow = atBottom }
     LaunchedEffect(atBottom) { if (atBottom) follow = true }
-    val lastIndex = conv.turns.size
-    val tailKey = conv.turns.lastOrNull()?.let { it.blocks.size to it.status } to live.running
+    val lastIndex = conv.turns.size + live.steers.size
+    val tailKey = conv.turns.lastOrNull()?.let { it.blocks.size to it.status } to (live.running to live.steers.size)
     LaunchedEffect(tailKey, live.sessionId) { if (follow && lastIndex >= 0) listState.scrollToItem(lastIndex, Int.MAX_VALUE / 2) }
 
     Box(modifier) {
@@ -111,6 +113,8 @@ fun ChatStream(
                 val isLast = turn === conv.turns.last()
                 TurnView(turn, isLast, live, details, onInspect, onRetry, onOpenSettings, onContinue, compact)
             }
+            // Sent into the running turn, not logged yet: the logged user/message takes its place.
+            items(live.steers, key = { "steer/${it.id}" }) { PendingSteer(it) }
             item(key = "tail") {
                 Box(Modifier.fillMaxWidth().heightIn(min = 8.dp)) {
                     if (live.running) RunningIndicator(live, conv.turns.lastOrNull())
@@ -203,6 +207,7 @@ private fun TurnHeader(turn: Turn, open: Boolean, onToggle: () -> Unit) {
             ?: stringResource(R.string.turn_done)
         TurnStatus.Failed -> stringResource(R.string.turn_failed)
         TurnStatus.Stopped -> stringResource(R.string.turn_stopped)
+        TurnStatus.Steered -> stringResource(R.string.turn_steered)
         TurnStatus.Running -> ""
     }
     Column(Modifier.fillMaxWidth().pressable(onToggle, Radius.sm)) {
@@ -234,6 +239,20 @@ private fun UserMessage(u: UserMsg, compact: Boolean) {
             Text(Fmt.stamp(context, u.time), style = DshType.xs13, color = c.labelTertiary)
             IconBtn(R.drawable.dsw_copy_outline, { copyText(context, u.text) }, iconSize = 15.dp, tint = c.labelTertiary, contentDescription = stringResource(R.string.copy_message))
         }
+    }
+}
+
+/** A message steered into the running turn that dsh has not logged yet: the user bubble, dimmed, with its state. */
+@Composable
+private fun PendingSteer(m: SteerMessage) {
+    val c = Dsh.colors
+    val maxW = (LocalConfiguration.current.screenWidthDp * 0.82f).dp
+    Column(Modifier.fillMaxWidth().padding(bottom = 12.dp).alpha(0.6f), horizontalAlignment = Alignment.End) {
+        if (m.images > 0) Tag(stringResource(R.string.images_n, m.images), modifier = Modifier.padding(bottom = 8.dp))
+        if (m.text.isNotBlank()) Text(m.text, Modifier.widthIn(max = maxW).clip(Radius.xl).background(c.bubble).padding(horizontal = 16.dp, vertical = 10.dp),
+            style = DshType.s14, color = c.labelPrimary)
+        Spacer(Modifier.height(6.dp))
+        Tag(stringResource(R.string.steer_pending), Tone.Neutral)
     }
 }
 

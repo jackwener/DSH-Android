@@ -196,8 +196,8 @@ class SessionStore @Inject constructor(
 
     /**
      * User send from the composer. While a run is active the message waits in the app-side queue
-     * (dsh 排队发送) unless [now] is set, in which case it goes to the engine immediately and dsh
-     * claims it at its next turn boundary.
+     * (dsh 排队发送) unless [now] is set (插话发送) or it carries images: then it is steered into the
+     * running turn ([steer]).
      */
     suspend fun send(sessionId: String, text: String, images: List<Pair<String, String>> = emptyList(), now: Boolean = false) {
         // The session's preset is the store's (row value, or the settings default for a new id;
@@ -207,15 +207,54 @@ class SessionStore @Inject constructor(
             mutate(sessionId) { it.copy(queue = it.queue + QueuedMessage(UUID.randomUUID().toString(), text)) }
             return
         }
-        prompt(sessionId, text, images = images)
+        if (live.steerable) steer(sessionId, text, images) else prompt(sessionId, text, images = images)
     }
 
     fun removeQueued(sessionId: String, id: String) = scope.launch { mutate(sessionId) { s -> s.copy(queue = s.queue.filterNot { it.id == id }) } }
 
+    /** 立即发送 on a queued message: steered into the running turn, or a new prompt when none runs. */
     suspend fun sendQueuedNow(sessionId: String, id: String) {
         val q = flowOf(sessionId).value.queue.firstOrNull { it.id == id } ?: return
         mutate(sessionId) { s -> s.copy(queue = s.queue.filterNot { it.id == id }) }
-        prompt(sessionId, q.text)
+        if (flowOf(sessionId).value.steerable) steer(sessionId, q.text) else prompt(sessionId, q.text)
+    }
+
+    /** A turn runs in the engine now (not one waiting for the engine to start or for the network). */
+    private val SessionLive.steerable get() = running && !startingEngine && !waitingForNetwork
+
+    /**
+     * Sends [text] into the running turn (`session/prompt` `mode: 'steer'`, ENGINE-CONTRACT §2): dsh
+     * claims it at the turn's next step boundary, so the model sees it before its next request. It
+     * shows at once as a pending bubble ([SessionLive.steers]) that the logged `user/message`
+     * replaces ([SessionLive.withLogged]). A refused steer is not lost: while the run lasts it goes to
+     * the queue (sent after the turn); with images, or once the run is over, through [prompt].
+     */
+    private suspend fun steer(sessionId: String, text: String, images: List<Pair<String, String>> = emptyList()) {
+        val id = UUID.randomUUID().toString()
+        mutate(sessionId) { it.withSteer(SteerMessage(id, text, images.size)) }
+        // The user spoke: the capability guards start again, as for a prompt (steering stays the same task).
+        capabilities.onUserPrompt(sessionId, text)
+        try {
+            val result = engine.sdk().request("session/prompt", buildJsonObject {
+                put("sessionId", sessionId)
+                putJsonArray("contentBlocks") {
+                    addJsonObject { put("type", "text"); put("text", text) }
+                    images.forEach { (mime, data) -> addJsonObject { put("type", "image"); put("mimeType", mime); put("data", data) } }
+                }
+                put("mode", "steer")
+            }) as? JsonObject
+            mutate(sessionId) { it.steerAccepted(id, result?.s("messageId")) }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            android.util.Log.w(TAG, "steer into $sessionId refused: ${e.message}")
+            val live = flowOf(sessionId).value
+            // Already handed back (the run stopped or the engine was lost meanwhile).
+            if (live.steers.none { it.id == id }) return
+            if (images.isEmpty() && live.running) { mutate(sessionId) { it.steersQueued(listOf(id)) }; return }
+            mutate(sessionId) { s -> s.copy(steers = s.steers.filterNot { it.id == id }) }
+            prompt(sessionId, text, images = images)
+        }
     }
 
     /**
@@ -502,7 +541,8 @@ class SessionStore @Inject constructor(
                     if (op == null || (op is JsonPrimitive && op.contentOrNull == "append")) d else JsonObject(d + (SURFACE_OP_KEY to op))
                 }
                 if (dao.get(sessionId) != null) dao.insertEvent(EventEntity(sessionId, seq, type, data.toString(), time))
-                mutate(sessionId) { s -> if (s.events.any { it.seq == seq }) s else s.copy(events = s.events + LoggedEvent(seq, type, time, data)) }
+                val logged = LoggedEvent(seq, type, time, data)
+                mutate(sessionId) { s -> if (s.events.any { it.seq == seq }) s else s.copy(events = s.events + logged).withLogged(logged) }
                 if (type == "session/title") data.s("title")?.let { rename(sessionId, it) }
                 if (type == "assistant/message" || type == "assistant/attempt") recordUsage(data)
             }
@@ -797,8 +837,9 @@ class SessionStore @Inject constructor(
         }
         roots.forEach { id ->
             if (retryInMs != null && autoContinued.add(id)) {
-                // Continues the same task: its queue stays and is sent after the continuation, as usual.
-                mutate(id) { it.copy(running = true, startingEngine = true, runStartedAt = System.currentTimeMillis(), waitingForUnlock = false) }
+                // Continues the same task: its queue stays and is sent after the continuation, as usual;
+                // steers the lost engine never ran join it (the resumed engine drops them).
+                mutate(id) { it.steersQueued().copy(running = true, startingEngine = true, runStartedAt = System.currentTimeMillis(), waitingForUnlock = false) }
                 appendLocal(id, "app/notice", buildJsonObject { put("kind", ENGINE_RECOVERING); put("text", context.getString(R.string.engine_recovering)) })
             } else {
                 mutate(id) { it.idle() }
