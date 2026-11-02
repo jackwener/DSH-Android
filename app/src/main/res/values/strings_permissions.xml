@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Phone-access permission titles and explanations shown in 设置 → 手机权限 (PermissionCatalog). -->
+<resources>
+    <string name="perm_notifications">通知</string>
+    <string name="perm_notifications_why">任务完成、需要确认时提醒你</string>
+    <string name="perm_battery">不受电池优化限制</string>
+    <string name="perm_battery_why">锁屏和后台时也能执行任务、调用模型</string>
+    <string name="perm_files">所有文件访问</string>
+    <string name="perm_files_why">查找、整理、清理你的文件</string>
+    <string name="perm_accessibility">无障碍（屏幕操作）</string>
+    <string name="perm_accessibility_why">读取屏幕、替你点按和输入</string>
+    <string name="perm_notif_access">通知使用权</string>
+    <string name="perm_notif_access_why">读取通知、通知触发自动化、控制媒体播放</string>
+    <string name="perm_exact_alarm">闹钟和提醒</string>
+    <string name="perm_exact_alarm_why">定时自动化准点执行</string>
+    <string name="perm_dnd">勿扰模式权限</string>
+    <string name="perm_dnd_why">切换静音和勿扰</string>
+    <string name="perm_write_settings">修改系统设置</string>
+    <string name="perm_write_settings_why">调节亮度</string>
+    <string name="perm_location">位置</string>
+    <string name="perm_location_why">按 Wi‑Fi 名称或地点触发自动化</string>
+    <string name="perm_bg_location">后台位置</string>
+    <string name="perm_bg_location_why">离开 App 时也能按地点触发</string>
+    <string name="perm_bluetooth">附近设备（蓝牙）</string>
+    <string name="perm_bluetooth_why">按蓝牙设备名称触发自动化</string>
+    <string name="perm_comms">联系人、短信、通话记录、日历</string>
+    <string name="perm_comms_why">查联系人、读短信、记日程、发短信</string>
+    <string name="perm_overlay">悬浮窗</string>
+    <string name="perm_overlay_why">显示悬浮球</string>
+</resources>

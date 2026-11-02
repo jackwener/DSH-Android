@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Phone-access permission titles and explanations shown in Settings → Phone access (PermissionCatalog). -->
+<resources>
+    <string name="perm_notifications">Notifications</string>
+    <string name="perm_notifications_why">Tell you when tasks finish or need approval</string>
+    <string name="perm_battery">Unrestricted battery</string>
+    <string name="perm_battery_why">Run tasks and reach the model while the phone sleeps</string>
+    <string name="perm_files">All files access</string>
+    <string name="perm_files_why">Find, organise and clean up files</string>
+    <string name="perm_accessibility">Accessibility (screen control)</string>
+    <string name="perm_accessibility_why">Read the screen, tap and type for you</string>
+    <string name="perm_notif_access">Notification access</string>
+    <string name="perm_notif_access_why">Read notifications, notification triggers, media control</string>
+    <string name="perm_exact_alarm">Alarms &amp; reminders</string>
+    <string name="perm_exact_alarm_why">Run timed automations on time</string>
+    <string name="perm_dnd">Do Not Disturb access</string>
+    <string name="perm_dnd_why">Switch silent mode and Do Not Disturb</string>
+    <string name="perm_write_settings">Modify system settings</string>
+    <string name="perm_write_settings_why">Adjust brightness</string>
+    <string name="perm_location">Location</string>
+    <string name="perm_location_why">Trigger automations by Wi‑Fi name or place</string>
+    <string name="perm_bg_location">Background location</string>
+    <string name="perm_bg_location_why">Place triggers while DSH is closed</string>
+    <string name="perm_bluetooth">Nearby devices</string>
+    <string name="perm_bluetooth_why">Trigger automations by Bluetooth device</string>
+    <string name="perm_comms">Contacts, SMS, calls, calendar</string>
+    <string name="perm_comms_why">Look up contacts, read SMS, add events, send SMS</string>
+    <string name="perm_overlay">Display over other apps</string>
+    <string name="perm_overlay_why">Show the floating button</string>
+</resources>
