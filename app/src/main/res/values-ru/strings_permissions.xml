@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Русская локализация: заголовки и пояснения разрешений (设置 → 手机权限). -->
+<resources>
+    <string name="perm_notifications">Уведомления</string>
+    <string name="perm_notifications_why">Сообщим, когда задача завершится или понадобится подтверждение</string>
+    <string name="perm_battery">Без ограничений батареи</string>
+    <string name="perm_battery_why">Задачи и запросы к модели работают при выключенном экране</string>
+    <string name="perm_files">Доступ ко всем файлам</string>
+    <string name="perm_files_why">Искать, разбирать и чистить файлы</string>
+    <string name="perm_accessibility">Спец. возможности (управление экраном)</string>
+    <string name="perm_accessibility_why">Читать экран, нажимать и вводить текст за тебя</string>
+    <string name="perm_notif_access">Доступ к уведомлениям</string>
+    <string name="perm_notif_access_why">Читать уведомления, срабатывать по ним и управлять воспроизведением</string>
+    <string name="perm_exact_alarm">Будильники и напоминания</string>
+    <string name="perm_exact_alarm_why">Автоматизации по расписанию срабатывают точно в срок</string>
+    <string name="perm_dnd">Доступ к режиму «Не беспокоить»</string>
+    <string name="perm_dnd_why">Переключать беззвучный режим и «Не беспокоить»</string>
+    <string name="perm_write_settings">Изменение системных настроек</string>
+    <string name="perm_write_settings_why">Регулировать яркость</string>
+    <string name="perm_location">Геолокация</string>
+    <string name="perm_location_why">Запускать автоматизации по имени Wi-Fi или по месту</string>
+    <string name="perm_bg_location">Геолокация в фоне</string>
+    <string name="perm_bg_location_why">Срабатывание по месту, даже когда DSH закрыт</string>
+    <string name="perm_bluetooth">Устройства рядом</string>
+    <string name="perm_bluetooth_why">Запускать автоматизации по Bluetooth-устройству</string>
+    <string name="perm_comms">Контакты, СМС, звонки, календарь</string>
+    <string name="perm_comms_why">Искать контакты, читать и отправлять СМС, добавлять события</string>
+    <string name="perm_overlay">Поверх других приложений</string>
+    <string name="perm_overlay_why">Показывать плавающий шар</string>
+</resources>

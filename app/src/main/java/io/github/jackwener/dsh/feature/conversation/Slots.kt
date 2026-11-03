@@ -70,7 +70,6 @@ import io.github.jackwener.dsh.feature.settings.ShellGuideActions
 import io.github.jackwener.dsh.feature.settings.ShellGuideBody
 import io.github.jackwener.dsh.feature.settings.rememberShellGuideFlow
 import io.github.jackwener.dsh.feature.settings.rememberShellState
-import io.github.jackwener.dsh.feature.settings.isZh
 
 /** The approval-style card frame: warn border, warn strip, scrolling body, right-aligned actions. */
 @Composable
@@ -148,7 +147,6 @@ private fun ShizukuCard(p: PendingPermission, onAnswer: (Boolean) -> Unit) {
 private fun SystemPermissionCard(p: PendingPermission, onAnswer: (Boolean) -> Unit) {
     val c = Dsh.colors
     val context = LocalContext.current
-    val zh = isZh()
     val item = remember(p.permissionId) { p.permissionId?.let { PermissionCatalog.byId(it) } }
     var launched by remember(p.requestKey) { mutableStateOf(false) }
     var answered by remember(p.requestKey) { mutableStateOf(false) }
@@ -168,9 +166,9 @@ private fun SystemPermissionCard(p: PendingPermission, onAnswer: (Boolean) -> Un
         onDispose { owner.lifecycle.removeObserver(obs) }
     }
     AttentionCard(stringResource(R.string.perm_card_strip), answered, body = {
-        Text(item?.title(zh) ?: p.what, style = DshType.s14m.copy(lineHeight = DshType.base16.lineHeight), color = c.labelPrimary)
+        Text(item?.let { stringResource(it.titleRes) } ?: p.what, style = DshType.s14m.copy(lineHeight = DshType.base16.lineHeight), color = c.labelPrimary)
         Text(stringResource(R.string.perm_card_body, stringResource(ToolPresentation.info(p.toolName).title)), style = DshType.xs13, color = c.labelSecondary)
-        item?.why(zh)?.let { Text(it, style = DshType.xs13, color = c.labelTertiary) }
+        item?.let { Text(stringResource(it.whyRes), style = DshType.xs13, color = c.labelTertiary) }
         if (blocked) Text(stringResource(R.string.perm_denied_forever), style = DshType.xxs12, color = c.labelSecondary)
         if (item?.restrictedSetting == true) Text(stringResource(R.string.restricted_hint), style = DshType.xxs12, color = c.labelSecondary)
         if (item == null) Text(stringResource(R.string.perm_card_manual), style = DshType.xxs12, color = c.labelSecondary)
