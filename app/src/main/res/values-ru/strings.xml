@@ -86,6 +86,9 @@
     <string name="effort_low_desc">Быстрее и экономнее</string>
     <string name="effort_high_desc">Сбалансированный вариант по умолчанию для большинства задач</string>
     <string name="effort_max_desc">Для самых сложных задач, где важен результат</string>
+    <string name="effort_default">По умолчанию</string>
+    <string name="effort_default_desc">Уровень не выбран — как настроено в самой модели</string>
+    <string name="effort_is_default">Уровень модели по умолчанию</string>
     <string name="model_applies_next">Применится со следующего шага текущей задачи</string>
     <string name="model_this_session">Меняет только эту беседу; значение по умолчанию для новых — в Настройки → Модели</string>
     <string name="session_model_gone">Модель этой беседы %1$s больше недоступна; следующее сообщение использует модель по умолчанию %2$s</string>
@@ -727,6 +730,15 @@
     <string name="prov_images_line">%1$s (%2$s)</string>
     <string name="prov_images_by_name">По названию модели</string>
     <string name="prov_images_hint">Модель только с текстом не получает изображения — она видит лишь строку „изображение опущено“, поэтому на вопрос о картинке ответит, не видя её. Авто = если список моделей интерфейса это указывает, берётся он, иначе решает название модели; ошибся — поменяй здесь.</string>
+    <string name="prov_reasoning">Управление рассуждениями</string>
+    <string name="prov_reasoning_auto">Авто: %1$s</string>
+    <string name="prov_reasoning_auto_unknown">Авто</string>
+    <string name="prov_reasoning_none">Нет</string>
+    <string name="prov_reasoning_effort">Уровень рассуждений</string>
+    <string name="prov_reasoning_switch">Переключатель рассуждений</string>
+    <string name="prov_reasoning_hint">Решает, какие уровни рассуждений показать в меню модели у поля ввода и как их отправить в API. Авто — по имени модели определяется встроенное семейство движка (Kimi, GLM, Qwen, GPT и т. п.); для своей или переименованной модели укажи здесь: Уровень рассуждений — отправлять reasoning_effort (отметь уровни, которые принимает эндпоинт); Переключатель рассуждений — вкл./выкл., отправляется enable_thinking или thinking.type; Нет — не отправлять параметры рассуждений.</string>
+    <string name="prov_reasoning_levels_unknown">неизвестно (появится после следующего запуска)</string>
+    <string name="prov_reasoning_levels_none">без управления рассуждениями</string>
     <string name="images_text_only">%1$s не помечена как поддерживающая изображения: изображения не отправляются модели, она увидит только „изображение опущено“. Если она на самом деле умеет смотреть картинки, измени это в Настройки → Модели → эта модель → Ввод изображений.</string>
     <string name="images_text_only_deepseek">%1$s не поддерживает изображения: изображения не отправляются модели. Чтобы модель видела картинки, переключись на DeepSeek-V4.1-Flash.</string>
     <string name="prov_err_limits">Контекстное окно и макс. вывод — только целые положительные числа</string>
