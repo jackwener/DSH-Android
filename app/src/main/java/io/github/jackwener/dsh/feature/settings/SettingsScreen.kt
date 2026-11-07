@@ -431,7 +431,7 @@ private fun PhoneSection(vm: SettingsViewModel, onNotificationApps: () -> Unit) 
     SettingsCard {
         PermissionCatalog.all.forEachIndexed { i, p ->
             val granted = remember(tick) { p.check(context) }
-            SettingsRow(p.title(zh), p.why(zh), divider = i > 0,
+            SettingsRow(stringResource(p.titleRes), stringResource(p.whyRes), divider = i > 0,
                 leading = { StateDot(if (granted) DotKind.Done else DotKind.Idle) },
                 trailing = {
                     if (granted) Text(stringResource(R.string.granted), style = DshType.xs13, color = c.labelTertiary)
