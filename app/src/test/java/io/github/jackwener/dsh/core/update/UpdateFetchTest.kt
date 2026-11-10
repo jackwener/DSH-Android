@@ -186,6 +186,21 @@ class UpdateFetchTest {
         assertTrue(tmp.root.listFiles()!!.none { it.name.endsWith(".apk") })
     }
 
+    @Test fun aDigestMismatchNamesBothDigests() = runBlocking {
+        val tampered = data.copyOf().also { it[0] = (it[0] + 1).toByte() }
+        val net = FakeNet(mapOf("https://evil/x" to tampered))
+        try { downloader(net).download(apk("https://evil/x"), tmp.root) { _, _ -> }; fail() }
+        catch (e: AllSourcesFailed) {
+            val m = e.failures.single().second as DigestMismatch
+            assertEquals("https://evil/x", m.url)
+            assertEquals(Sha256.of(tampered.inputStream()), m.actual)
+            assertTrue(m.actual != m.expected)
+            assertEquals(tampered.size.toLong(), m.bytes)
+            assertTrue(m.message!!, m.message!!.contains(m.actual) && m.message!!.contains(m.expected))
+            assertTrue(m.message!!, m.message!!.contains("${tampered.size} of ${data.size} bytes"))
+        }
+    }
+
     @Test fun aSizeOtherThanTheManifestsIsRefused() = runBlocking {
         val net = FakeNet(mapOf("https://a/x" to data))
         try { downloader(net).download(apk("https://a/x", size = 1000), tmp.root) { _, _ -> }; fail() }
