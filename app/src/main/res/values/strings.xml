@@ -926,4 +926,6 @@
     <string name="upd_res_skipped">已跳过 %1$s</string>
     <string name="upd_res_failed">检查失败：%1$s</string>
     <string name="upd_view">查看</string>
+    <string name="set_engine_options">引擎启动参数</string>
+    <string name="set_engine_options_desc">额外的 Node 启动参数，例如 --jitless；留空表示不追加</string>
 </resources>

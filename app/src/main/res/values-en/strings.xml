@@ -926,4 +926,6 @@
     <string name="upd_res_skipped">Skipped %1$s</string>
     <string name="upd_res_failed">Check failed: %1$s</string>
     <string name="upd_view">View</string>
+    <string name="set_engine_options">Engine launch options</string>
+    <string name="set_engine_options_desc">Extra Node startup flags, e.g. --jitless; leave empty for none</string>
 </resources>

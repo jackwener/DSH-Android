@@ -288,7 +288,7 @@ class EngineManager @Inject constructor(
             val tBound = System.currentTimeMillis()
             val fingerprint = profileFingerprint(st, hasKey)
             withContext(Dispatchers.IO) { writeProfilePatch(profilePatch(st, hasKey)) }
-            val handles = withContext(Dispatchers.IO) { service.start(environment(secrets.read(), providerKeys(st))) }
+            val handles = withContext(Dispatchers.IO) { service.start(environment(secrets.read(), providerKeys(st), st.engineNodeOptions)) }
             val sdkIn = ParcelFileDescriptor.AutoCloseOutputStream(handles.pfd("sdk_in"))
             val sdkOut = ParcelFileDescriptor.AutoCloseInputStream(handles.pfd("sdk_out"))
             val bridgeFd = handles.pfd("bridge")
@@ -506,7 +506,7 @@ class EngineManager @Inject constructor(
         check(tmp.renameTo(f)) { "could not write ${f.path}" }
     }
 
-    private fun environment(apiKey: String?, providerKeys: Map<String, String>) = Bundle().apply {
+    private fun environment(apiKey: String?, providerKeys: Map<String, String>, extraNodeOptions: String) = Bundle().apply {
         startedTz = TimeZone.getDefault().id
         startedLocale = Locale.getDefault().toLanguageTag()
         val files = context.filesDir
@@ -527,6 +527,8 @@ class EngineManager @Inject constructor(
         putString("TZ", startedTz)
         putString("DSH_ANDROID_TZ", startedTz)
         putString("NODE_OPTIONS", "--max-old-space-size=768")
+        // 设置 → 通用 → 引擎启动参数 (#66): merged by EngineRuntimeEnv into NODE_OPTIONS and argv.
+        if (extraNodeOptions.isNotBlank()) putString(EngineRuntimeEnv.EXTRA_OPTIONS_ENV, extraNodeOptions)
         putString("DSH_TELEMETRY_DISABLED", "1")
         putString("NARB_DISABLE_NATIVE_CACHE", "1")
         io.github.jackwener.dsh.core.extensions.SafeModeRequest.take(context, restarts.open)?.let { putString(io.github.jackwener.dsh.core.extensions.SafeModeRequest.ENV, it) }
