@@ -153,8 +153,18 @@ object Sha256 {
     }
 }
 
-/** A downloaded APK did not match the manifest's SHA-256 (corrupt transfer or a tampered mirror). */
-class DigestMismatch(val url: String) : IOException("SHA-256 mismatch from ${hostOf(url)}")
+/**
+ * A downloaded APK did not match the manifest's SHA-256 (corrupt transfer or a tampered mirror).
+ * Both digests and both sizes are kept so a report can tell a truncated transfer (`bytes` short of
+ * `expectedBytes`) from a mirror that served different bytes of the same length.
+ */
+class DigestMismatch(
+    val url: String,
+    val expected: String,
+    val actual: String,
+    val bytes: Long,
+    val expectedBytes: Long,
+) : IOException("SHA-256 mismatch from ${hostOf(url)}: got $actual over $bytes of $expectedBytes bytes, expected $expected")
 
 /**
  * Resumable APK download into [dir]: bytes go to `<sha256>.part` (so a different release never
@@ -187,7 +197,12 @@ class ApkDownloader(
                 currentCoroutineContext().ensureActive()
                 try {
                     fetchInto(url, apk, part, onProgress)
-                    if (Sha256.of(part) != apk.sha256) { part.delete(); throw DigestMismatch(url) }
+                    val actual = Sha256.of(part)
+                    if (actual != apk.sha256) {
+                        val bytes = part.length()
+                        part.delete()
+                        throw DigestMismatch(url, apk.sha256, actual, bytes, apk.size)
+                    }
                     if (!part.renameTo(done)) throw IOException("cannot move the download into place")
                     return done
                 } catch (e: CancellationException) { throw e }
