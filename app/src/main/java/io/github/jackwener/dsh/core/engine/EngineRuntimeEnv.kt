@@ -37,12 +37,45 @@ object EngineRuntimeEnv {
     const val PRELOAD = "node_modules/@dsh-android/bundle-android/android-env.cjs"
 
     /**
+     * User-supplied extra Node options (设置 → 通用 → 引擎启动参数), e.g. `--jitless` to sidestep a
+     * V8 JIT crash on a PAC / Android 16 device (#66). Carried in the engine env Bundle so the same
+     * string reaches both NODE_OPTIONS and the argv copy that survives AT_SECURE.
+     */
+    const val EXTRA_OPTIONS_ENV = "DSH_ENGINE_NODE_OPTIONS"
+
+    /**
+     * Node flags a user may not inject: they load or evaluate code before the engine's entry
+     * script, which would let a saved option run arbitrary code at every engine start.
+     */
+    internal val REFUSED_EXTRA_OPTIONS = setOf(
+        "--expose-internals", "-r", "--require", "--import", "-e", "--eval", "-p", "--print",
+        "--input-type", "--loader", "--experimental-loader",
+    )
+
+    /**
+     * Splits a user-typed option string into flags. Blank tokens, anything that is not a flag
+     * (a stray value would otherwise become an entry-script path in argv), the
+     * [REFUSED_EXTRA_OPTIONS] code-loading flags and duplicates are dropped. Node splits
+     * NODE_OPTIONS on whitespace too, so a spaced value is simply two tokens and is rejected here.
+     */
+    fun parseExtraNodeOptions(raw: String?): List<String> =
+        raw.orEmpty()
+            .split(' ', '\t', '\n')
+            .map { it.trim() }
+            .filter { it.startsWith("-") }
+            .filter { it.substringBefore('=') !in REFUSED_EXTRA_OPTIONS }
+            .distinct()
+
+    /**
      * Full Node argv before the entry script. Zygote-forked processes run with AT_SECURE=1, so
      * Node ignores NODE_OPTIONS (and TMPDIR, NODE_COMPILE_CACHE, NODE_EXTRA_CA_CERTS — restored by
      * [PRELOAD]); the composed NODE_OPTIONS are therefore passed as argv flags as well.
      */
     fun nodeArgv(engineDir: File, env: Bundle): List<String> {
-        val options = mergeNodeOptions(env.getString("NODE_OPTIONS"), RUNTIME_NODE_OPTIONS).split(' ').filter { it.isNotBlank() }
+        val options = mergeNodeOptions(
+            env.getString("NODE_OPTIONS"),
+            RUNTIME_NODE_OPTIONS + parseExtraNodeOptions(env.getString(EXTRA_OPTIONS_ENV)),
+        ).split(' ').filter { it.isNotBlank() }
         val preload = File(engineDir, PRELOAD).takeIf { it.exists() }?.let { listOf("--require", it.path) } ?: emptyList()
         return NODE_ARGV + options + (if (proxyApplied) listOf("--use-env-proxy") else emptyList()) + preload
     }
@@ -66,10 +99,11 @@ object EngineRuntimeEnv {
 
     fun apply(context: Context, env: Bundle) {
         val vars = LinkedHashMap<String, String>()
-        env.keySet().forEach { vars[it] = env.getString(it) ?: "" }
+        env.keySet().forEach { if (it != EXTRA_OPTIONS_ENV) vars[it] = env.getString(it) ?: "" }
         CaBundle.export(context)?.let { vars["NODE_EXTRA_CA_CERTS"] = it.path }
         vars["NODE_COMPILE_CACHE"] = File(context.cacheDir, "node-compile-cache").apply { mkdirs() }.path
-        mergeNodeOptions(vars["NODE_OPTIONS"], RUNTIME_NODE_OPTIONS).takeIf { it.isNotEmpty() }?.let { vars["NODE_OPTIONS"] = it }
+        mergeNodeOptions(vars["NODE_OPTIONS"], RUNTIME_NODE_OPTIONS + parseExtraNodeOptions(env.getString(EXTRA_OPTIONS_ENV)))
+            .takeIf { it.isNotEmpty() }?.let { vars["NODE_OPTIONS"] = it }
         val proxy = systemProxy(context)?.also { Log.i(TAG, "engine proxy ${it.host}:${it.port}, ${it.exclusions.size} exclusions") }
         val proxyEnv = EngineProxy.env(proxy)
         EngineProxy.ENV_NAMES.forEach { if (it !in proxyEnv) runCatching { Os.unsetenv(it) } }

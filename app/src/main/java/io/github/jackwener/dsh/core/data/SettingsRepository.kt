@@ -93,6 +93,8 @@ data class Settings(
     val extUpdateBadge: Int = 0,
     /** 自动检查更新: a background check for a new DSH release at most once a day (core/update/AppUpdater). */
     val autoUpdateCheck: Boolean = true,
+    /** 引擎启动参数 (#66): extra Node options merged into NODE_OPTIONS at every engine start. */
+    val engineNodeOptions: String = "",
     /** 引擎常驻 (#52): the engine stays up (foreground service) instead of stopping when idle. Off by default. */
     val engineKeepAlive: Boolean = false,
     /** A plugin ran a background session (heartbeat, bot) at some point: 设置 → 扩展 may suggest [engineKeepAlive]. */
@@ -151,6 +153,7 @@ class SettingsRepository @Inject constructor(@ApplicationContext private val con
         val extUpdateBadge = intPreferencesKey("ext_update_badge")
         val autoUpdateCheck = booleanPreferencesKey("auto_update_check")
         val engineKeepAlive = booleanPreferencesKey("engine_keep_alive")
+        val engineNodeOptions = stringPreferencesKey("engine_node_options")
         val pluginBackgroundSeen = booleanPreferencesKey("plugin_background_seen")
         val reasoningChoices = stringPreferencesKey("reasoning_choices_json")
         val reasoningCatalog = stringPreferencesKey("reasoning_catalog_json")
@@ -188,6 +191,7 @@ class SettingsRepository @Inject constructor(@ApplicationContext private val con
         extUpdateBadge = this[K.extUpdateBadge] ?: 0,
         autoUpdateCheck = this[K.autoUpdateCheck] ?: true,
         engineKeepAlive = this[K.engineKeepAlive] ?: false,
+        engineNodeOptions = this[K.engineNodeOptions] ?: "",
         pluginBackgroundSeen = this[K.pluginBackgroundSeen] ?: false,
     )
 
@@ -249,6 +253,7 @@ class SettingsRepository @Inject constructor(@ApplicationContext private val con
     suspend fun setVoiceOnAssist(on: Boolean) = context.store.edit { it[K.voiceOnAssist] = on }
     suspend fun setAutoUpdateCheck(on: Boolean) = context.store.edit { it[K.autoUpdateCheck] = on }
     suspend fun setEngineKeepAlive(on: Boolean) = context.store.edit { it[K.engineKeepAlive] = on }
+    suspend fun setEngineNodeOptions(raw: String) = context.store.edit { it[K.engineNodeOptions] = raw.trim() }
     suspend fun setPluginBackgroundSeen() = context.store.edit { it[K.pluginBackgroundSeen] = true }
 
     // ── 扩展 ──

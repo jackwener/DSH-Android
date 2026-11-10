@@ -266,6 +266,19 @@ private fun GeneralSection(vm: SettingsViewModel) {
         SettingsRow(stringResource(R.string.allow_external_apps), stringResource(R.string.allow_external_apps_desc),
             trailing = { DSwitch(s.allowExternalApps, { vm.setAllowExternalApps(it) }) })
     }
+    SettingsGroupTitle(stringResource(R.string.set_engine_options))
+    SettingsCard {
+        var engineOptions by remember(s.engineNodeOptions) { mutableStateOf(s.engineNodeOptions) }
+        SettingsRow(stringResource(R.string.set_engine_options), stringResource(R.string.set_engine_options_desc), divider = false, stacked = true) {
+            DInput(engineOptions, { engineOptions = it }, placeholder = "--jitless")
+        }
+        Box(Modifier.fillMaxWidth().padding(16.dp), contentAlignment = Alignment.CenterEnd) {
+            DButton(stringResource(R.string.save), {
+                vm.setEngineNodeOptions(engineOptions)
+                android.widget.Toast.makeText(context, R.string.saved, android.widget.Toast.LENGTH_SHORT).show()
+            }, size = BtnSize.Sm)
+        }
+    }
 }
 
 @Composable
