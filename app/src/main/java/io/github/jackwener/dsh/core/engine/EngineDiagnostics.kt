@@ -104,12 +104,47 @@ object EngineDiagnostics {
                 text.append('\n').append(String(trace, Charsets.UTF_8).take(64_000))
             }
         }
+        if (trace == null || trace.isEmpty()) {
+            // A SIGSEGV that never reached the tombstone writer leaves nothing to decode (#66):
+            // the threadtime crash/main buffers are then the only evidence of where it died.
+            val crashLog = crashSlice(info.pid)
+            if (crashLog.isEmpty()) {
+                text.append("\nno system trace and no logcat lines for pid ").append(info.pid).append('\n')
+            } else {
+                File(dir, "logcat-$ts.txt").writeText(crashLog)
+                text.append("\nno system trace; logcat-$ts.txt:")
+                crashLog.lineSequence().take(20).forEach { text.append("\n  ").append(it) }
+                text.append('\n')
+            }
+        }
         File(dir, "exit-$ts.txt").writeText(text.toString())
         Log.w(TAG, "engine exit recorded: ${text.lineSequence().first()}")
     }
 
+
+    /** `logcat -d` crash + main buffers, filtered to one (already dead) pid. Best effort, bounded. */
+    private fun crashSlice(pid: Int): String = runCatching {
+        val process = ProcessBuilder("logcat", "-b", "crash", "-b", "main", "-d", "-v", "threadtime")
+            .redirectErrorStream(true).start()
+        val raw = process.inputStream.bufferedReader().use { it.readText() }
+        process.waitFor()
+        filterLogcatForPid(raw, pid)
+    }.onFailure { Log.w(TAG, "logcat slice unavailable", it) }.getOrDefault("")
+
+    /**
+     * The lines `logcat -v threadtime` logged for [pid], last [maxLines] kept. threadtime is
+     * `MM-DD HH:MM:SS.mmm PID TID LEVEL TAG: message`, so the third whitespace-separated column is
+     * the pid; `--pid` cannot be used because the process is already gone by the time we read.
+     */
+    internal fun filterLogcatForPid(raw: String, pid: Int, maxLines: Int = 200): String =
+        raw.lineSequence()
+            .filter { line -> line.trim().split(WHITESPACE).getOrNull(2) == pid.toString() }
+            .toList().takeLast(maxLines).joinToString("\n")
+
+    private val WHITESPACE = Regex("\\s+")
+
     private fun prune(dir: File) {
-        listOf("exit-" to ".txt", "tombstone-" to ".pb").forEach { (prefix, suffix) ->
+        listOf("exit-" to ".txt", "tombstone-" to ".pb", "logcat-" to ".txt").forEach { (prefix, suffix) ->
             dir.listFiles { f -> f.name.startsWith(prefix) && f.name.endsWith(suffix) }.orEmpty()
                 .sortedByDescending { it.name }.drop(KEEP_EXITS).forEach { it.delete() }
         }
