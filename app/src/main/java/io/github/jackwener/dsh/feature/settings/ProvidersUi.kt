@@ -479,6 +479,11 @@ private fun ProviderEditor(vm: SettingsViewModel, existing: ProviderConfig?, pre
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         IconBtn(R.drawable.dsw_edit_outline, { editing = if (editing == m) null else m }, size = 32.dp, iconSize = 14.dp,
                             tint = if (m in overrides || m in imageOverrides || m in reasoningDecls) c.link else c.labelTertiary, contentDescription = stringResource(R.string.prov_model_limits))
+                        IconBtn(R.drawable.dsw_trash_outline, {
+                            offered.remove(m); selected.remove(m); manual.remove(m); missing.remove(m)
+                            overrides.remove(m); imageOverrides.remove(m); reasoningDecls.remove(m)
+                            if (editing == m) editing = null
+                        }, size = 32.dp, iconSize = 14.dp, tint = c.labelTertiary, contentDescription = stringResource(R.string.prov_model_remove))
                         DCheckbox(on, { if (it) selected.add(m) else selected.remove(m) })
                     }
                 })

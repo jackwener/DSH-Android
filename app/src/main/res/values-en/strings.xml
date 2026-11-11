@@ -732,6 +732,7 @@
     <string name="prov_model_missing">Not returned by endpoint</string>
     <string name="prov_model_limits">Set this model\'s context and output</string>
     <string name="prov_model_limits_hint">This model only; blank falls back to the setting above / endpoint value / default</string>
+    <string name="prov_model_remove">Remove this model</string>
     <string name="prov_images">Image input</string>
     <string name="prov_images_on">Images</string>
     <string name="prov_images_off">Text only</string>

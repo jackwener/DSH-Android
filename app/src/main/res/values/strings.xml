@@ -732,6 +732,7 @@
     <string name="prov_model_missing">接口未返回</string>
     <string name="prov_model_limits">设置该模型的上下文与输出</string>
     <string name="prov_model_limits_hint">仅对该模型生效，留空则沿用上方设置 / 接口返回值 / 默认值</string>
+    <string name="prov_model_remove">删除这个模型</string>
     <string name="prov_images">图片输入</string>
     <string name="prov_images_on">支持图片</string>
     <string name="prov_images_off">仅文本</string>
