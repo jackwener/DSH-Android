@@ -49,6 +49,11 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import coil3.compose.AsyncImage
+import com.mikepenz.markdown.compose.components.MarkdownComponent
+import com.mikepenz.markdown.compose.components.markdownComponents
+import com.mikepenz.markdown.compose.elements.MarkdownTable
+import com.mikepenz.markdown.compose.elements.MarkdownTableHeader
+import com.mikepenz.markdown.compose.elements.MarkdownTableRow
 import com.mikepenz.markdown.m3.Markdown
 import com.mikepenz.markdown.m3.markdownColor
 import com.mikepenz.markdown.m3.markdownTypography
@@ -77,6 +82,19 @@ fun DshMarkdown(text: String, modifier: Modifier = Modifier, compact: Boolean = 
     val body = (if (compact) DshType.xs13 else DshType.body).copy(color = color)
     fun h(size: Int, line: Int, w: Int) = body.copy(fontSize = size.sp, lineHeight = line.sp, fontWeight = FontWeight(w))
     val code = DshType.mono12.copy(fontSize = 11.sp, lineHeight = 19.sp, color = c.labelPrimary)
+    val tableComponent: MarkdownComponent = { model ->
+        MarkdownTable(
+            content = model.content,
+            node = model.node,
+            style = model.typography.table,
+            headerBlock = { content, header, tableWidth, style ->
+                MarkdownTableHeader(content, header, tableWidth, style, maxLines = Int.MAX_VALUE)
+            },
+            rowBlock = { content, header, tableWidth, style ->
+                MarkdownTableRow(content, header, tableWidth, style, maxLines = Int.MAX_VALUE)
+            }
+        )
+    }
     Markdown(
         text,
         colors = markdownColor(text = color, codeBackground = c.codeBlock, inlineCodeBackground = c.inlineCode, dividerColor = c.borderL2, tableBackground = c.bgModule),
@@ -91,6 +109,7 @@ fun DshMarkdown(text: String, modifier: Modifier = Modifier, compact: Boolean = 
             table = body.copy(fontSize = 13.sp, lineHeight = 22.sp),
         ),
         padding = markdownPadding(block = if (compact) 2.dp else 6.dp, codeBlock = androidx.compose.foundation.layout.PaddingValues(14.dp, 10.dp)),
+        components = markdownComponents(table = tableComponent),
         modifier = modifier,
     )
 }
