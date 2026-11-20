@@ -12,3 +12,5 @@ node_modules/
 secrets/
 app/schemas/
 /toolchains
+
+.codegraph/

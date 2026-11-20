@@ -22,6 +22,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
@@ -49,6 +52,9 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import coil3.compose.AsyncImage
+import com.mikepenz.markdown.compose.components.markdownComponents
+import com.mikepenz.markdown.compose.elements.MarkdownTable
+import com.mikepenz.markdown.compose.elements.MarkdownTableBasicText
 import com.mikepenz.markdown.m3.Markdown
 import com.mikepenz.markdown.m3.markdownColor
 import com.mikepenz.markdown.m3.markdownTypography
@@ -79,6 +85,7 @@ fun DshMarkdown(text: String, modifier: Modifier = Modifier, compact: Boolean = 
     val code = DshType.mono12.copy(fontSize = 11.sp, lineHeight = 19.sp, color = c.labelPrimary)
     Markdown(
         text,
+        modifier = modifier,
         colors = markdownColor(text = color, codeBackground = c.codeBlock, inlineCodeBackground = c.inlineCode, dividerColor = c.borderL2, tableBackground = c.bgModule),
         typography = markdownTypography(
             h1 = if (compact) body.copy(fontWeight = FontWeight(600)) else h(21, 30, 700),
@@ -91,8 +98,41 @@ fun DshMarkdown(text: String, modifier: Modifier = Modifier, compact: Boolean = 
             table = body.copy(fontSize = 13.sp, lineHeight = 22.sp),
         ),
         padding = markdownPadding(block = if (compact) 2.dp else 6.dp, codeBlock = androidx.compose.foundation.layout.PaddingValues(14.dp, 10.dp)),
-        modifier = modifier,
+        components = markdownComponents(
+            table = { model ->
+                MarkdownTable(
+                    content = model.content,
+                    node = model.node,
+                    style = model.typography.table,
+                    headerBlock = { content, header, width, style -> ScrollableTableRow(content, header, width, style, header = true) },
+                    rowBlock = { content, row, width, style -> ScrollableTableRow(content, row, width, style, header = false) },
+                )
+            },
+        ),
     )
+}
+
+/**
+ * One table row whose cells each scroll horizontally inside their own cell: a long cell is
+ * readable by dragging that cell, instead of being cut with an ellipsis or stretching the message.
+ */
+@Composable
+private fun ScrollableTableRow(content: String, row: org.intellij.markdown.ast.ASTNode, tableWidth: Dp, style: androidx.compose.ui.text.TextStyle, header: Boolean) {
+    Row(Modifier.widthIn(max = tableWidth).height(IntrinsicSize.Max), verticalAlignment = Alignment.CenterVertically) {
+        row.children.filter { it.type == org.intellij.markdown.flavours.gfm.GFMTokenTypes.CELL }.forEach { cell ->
+            Box(Modifier.weight(1f).padding(horizontal = 12.dp, vertical = 8.dp)) {
+                Box(Modifier.horizontalScroll(rememberScrollState())) {
+                    MarkdownTableBasicText(
+                        content = content,
+                        cell = cell,
+                        style = if (header) style.copy(fontWeight = FontWeight.Bold) else style,
+                        maxLines = Int.MAX_VALUE,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Visible,
+                    )
+                }
+            }
+        }
+    }
 }
 
 /** dsh CodeBlock / TerminalBlock: R16 card on the code-block fill with a banner and copy button. */
@@ -173,7 +213,7 @@ private fun JsonNode(key: String?, el: JsonElement, depth: Int, startOpen: Boole
 fun Screenshot(file: File, modifier: Modifier = Modifier, maxHeight: Dp = 240.dp) {
     var open by remember { mutableStateOf(false) }
     val c = Dsh.colors
-    AsyncImage(file, stringResource(R.string.screenshot), modifier.heightIn(max = maxHeight).clip(Radius.lg).border(Hairline, c.borderL2, Radius.lg)
+    AsyncImage(file, stringResource(R.string.screenshot), modifier.fillMaxWidth().heightIn(max = maxHeight).clip(Radius.lg).border(Hairline, c.borderL2, Radius.lg)
         .clickable { open = true }, contentScale = ContentScale.Fit)
     if (open) Lightbox(file) { open = false }
 }
