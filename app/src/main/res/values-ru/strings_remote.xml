@@ -2,8 +2,8 @@
 <!-- Remote mode (#51): SSH to a computer and drive the dsh installed there. -->
 <resources>
     <string name="set_remote">Удалённые хосты</string>
-    <string name="remote_intro">Подключитесь к своему компьютеру или серверу по SSH и используйте установленный там dsh (0.2.2 или новее): диалоги, траектории и подтверждения остаются на телефоне, а команды и работа с файлами выполняются на компьютере. На компьютере должен работать sshd и запускаться dsh (Linux / macOS).</string>
-    <string name="remote_scope_note">В удалённых диалогах нет возможностей телефона (экран, уведомления, SMS, вложения файлов…) и режимов сеанса; модель предоставляет dsh на компьютере, изображения отправляются вместе с сообщениями. После обрыва или смены сети приложение переподключится и продолжит задачу.</string>
+    <string name="remote_intro">Подключись к своему компьютеру или серверу по SSH и используй установленный там dsh (0.2.2 или новее): сессии, их хронология и подтверждения остаются на телефоне, а команды и работа с файлами выполняются на компьютере. На компьютере должен работать sshd и запускаться dsh (Linux / macOS).</string>
+    <string name="remote_scope_note">В удалённых сессиях недоступны возможности телефона (экран, уведомления, SMS, вложения файлов…) и режимы сессии; модель предоставляет dsh на компьютере, изображения отправляются вместе с сообщениями. После обрыва или смены сети приложение переподключится и продолжит задачу.</string>
     <string name="remote_workspace">Рабочая среда</string>
     <string name="remote_this_phone">Этот телефон</string>
     <string name="remote_this_phone_desc">Работает на телефоне и может им управлять</string>
@@ -19,7 +19,7 @@
     <string name="remote_connected_notif">Подключено: %1$s</string>
     <string name="remote_badge">Удалённо · %1$s</string>
     <string name="remote_disconnect">Отключиться</string>
-    <string name="remote_disconnect_desc">Завершает dsh на компьютере; следующее сообщение подключится снова</string>
+    <string name="remote_disconnect_desc">Завершает dsh на компьютере; при отправке следующего сообщения подключение восстановится</string>
     <string name="remote_host_settings">Настройки удалённого хоста</string>
     <string name="remote_hero">Работает на %1$s</string>
 
@@ -34,66 +34,66 @@
     <string name="remote_auth_key">Закрытый ключ</string>
     <string name="remote_password">Пароль</string>
     <string name="remote_key">Закрытый ключ</string>
-    <string name="remote_key_desc">Вставьте закрытый ключ в формате OpenSSH или PEM (ed25519, ECDSA, RSA) или импортируйте файл</string>
+    <string name="remote_key_desc">Вставь закрытый ключ в формате OpenSSH или PEM (ed25519, ECDSA, RSA) или импортируй файл</string>
     <string name="remote_key_file">Импорт из файла</string>
     <string name="remote_passphrase">Пароль ключа</string>
-    <string name="remote_passphrase_desc">Оставьте пустым, если ключ не зашифрован</string>
-    <string name="remote_secret_stored">Сохранено (оставьте пустым, чтобы не менять)</string>
+    <string name="remote_passphrase_desc">Оставь пустым, если ключ не зашифрован</string>
+    <string name="remote_secret_stored">Сохранено (оставь пустым, чтобы не менять)</string>
     <string name="remote_dsh_group">dsh на компьютере</string>
     <string name="remote_workdir">Рабочий каталог</string>
-    <string name="remote_workdir_desc">Новые диалоги начинаются здесь; пусто — домашний каталог, поддерживается ~/</string>
+    <string name="remote_workdir_desc">Новые сессии начинаются здесь; пусто — домашний каталог, поддерживается ~/</string>
     <string name="remote_command">Команда dsh</string>
-    <string name="remote_command_desc">Если команда не найдена, укажите полный путь (выполните which dsh на компьютере) или, например, npx -y @deepseek-ai/dsh</string>
+    <string name="remote_command_desc">Если команда не найдена, укажи полный путь (выполни which dsh на компьютере) или, например, npx -y @deepseek-ai/dsh</string>
     <string name="remote_model">Модель</string>
     <string name="remote_model_desc">Провайдер и id модели, доступные dsh на компьютере, например deepseek-official / deepseek-flash</string>
     <string name="remote_share_key">Использовать API-ключ DeepSeek с телефона</string>
-    <string name="remote_share_key_desc">Передаётся dsh на компьютере по SSH-каналу (не записывается на его диск и не видна в командной строке); выкл. — собственные настройки компьютера</string>
+    <string name="remote_share_key_desc">Ключ передаётся dsh на компьютере по SSH-каналу (не записывается на диск компьютера и не отображается в командной строке); если выключено, используются настройки компьютера</string>
     <string name="remote_env">Переменные окружения</string>
-    <string name="remote_env_desc">По одной KEY=value на строку, передаются dsh на компьютере</string>
+    <string name="remote_env_desc">По одной переменной KEY=value в строке; передаются dsh на компьютере</string>
     <string name="remote_hostkey">Отпечаток ключа хоста</string>
     <string name="remote_hostkey_none">Ещё не подтверждён</string>
     <string name="remote_hostkey_desc">Проверяется при каждом подключении; при изменении будет явное предупреждение и отказ</string>
-    <string name="remote_hostkey_none_desc">Первая «Проверка подключения» покажет SHA256-отпечаток компьютера; подключение начнётся только после подтверждения</string>
+    <string name="remote_hostkey_none_desc">Первая проверка подключения покажет отпечаток SHA256 ключа хоста; подключение начнётся только после твоего подтверждения</string>
     <string name="remote_test">Проверить подключение</string>
     <string name="remote_testing">Подключение и запуск dsh…</string>
     <string name="remote_test_ok">Подключено; dsh запущен в %1$s</string>
-    <string name="remote_invalid_host">Укажите корректный адрес хоста</string>
+    <string name="remote_invalid_host">Укажи корректный адрес хоста</string>
     <string name="remote_invalid_port">Порт должен быть от 1 до 65535</string>
-    <string name="remote_invalid_user">Укажите имя пользователя</string>
-    <string name="remote_need_password">Введите пароль</string>
-    <string name="remote_need_key">Вставьте или импортируйте закрытый ключ</string>
-    <string name="remote_invalid_env">Переменные окружения: по одной KEY=value на строку</string>
+    <string name="remote_invalid_user">Укажи имя пользователя</string>
+    <string name="remote_need_password">Введи пароль</string>
+    <string name="remote_need_key">Вставь или импортируй закрытый ключ</string>
+    <string name="remote_invalid_env">Укажи по одной переменной KEY=value в строке</string>
 
-    <string name="remote_trust_title">Первое подключение: подтвердите ключ хоста</string>
+    <string name="remote_trust_title">Первое подключение: подтверди ключ хоста</string>
     <string name="remote_trust_body">Отпечаток ключа хоста %1$s:</string>
-    <string name="remote_trust_check">Сверьте его на компьютере командой ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub и доверяйте только при совпадении; каждое следующее подключение проверяется по нему.</string>
+    <string name="remote_trust_check">Сверь его на компьютере командой ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub и доверяй только при совпадении; каждое следующее подключение проверяется по нему.</string>
     <string name="remote_trust">Доверять и подключиться</string>
     <string name="remote_changed_title">⚠ Ключ хоста изменился</string>
-    <string name="remote_changed_body">Ключ хоста %1$s отличается от того, которому вы доверяли.\n\nРаньше: %2$s\nСейчас: %3$s\n\nКто-то может выдавать себя за этот компьютер (атака «человек посередине») и перехватить пароль и диалоги. Доверяйте новому ключу, только если компьютер переустанавливали или его SSH-ключи перегенерировали и вы сверили новый отпечаток на компьютере.</string>
+    <string name="remote_changed_body">Ключ хоста %1$s отличается от подтверждённого.\n\nРаньше: %2$s\nСейчас: %3$s\n\nКто-то может выдавать себя за этот компьютер (атака «человек посередине») и перехватить твой пароль и переписку. Доверяй новому ключу, только если знаешь, что на компьютере переустановили систему или пересоздали ключи SSH, и ты сверил новый отпечаток на компьютере.</string>
     <string name="remote_changed_check">Я сверил новый отпечаток на компьютере</string>
     <string name="remote_changed_trust">Доверять новому ключу</string>
     <string name="remote_delete_title">Удалить удалённый хост?</string>
-    <string name="remote_delete_body">Будут удалены параметры подключения, сохранённый пароль / ключ и его диалоги на телефоне. Собственные сеансы dsh на компьютере не затрагиваются.</string>
+    <string name="remote_delete_body">Будут удалены параметры подключения, сохранённый пароль / ключ и сессии этого хоста на телефоне. Собственные сессии dsh на компьютере не затрагиваются.</string>
 
     <string name="remote_error_title">Удалённый компьютер недоступен</string>
     <string name="remote_open_settings">Настройки удалённого хоста</string>
     <string name="remote_recovering">Соединение с компьютером прервалось; переподключение и продолжение задачи…</string>
     <string name="err_remote_lost">Соединение с компьютером прервалось; этот ход прерван.</string>
     <string name="remote_err_offline">У телефона нет подключения к сети.</string>
-    <string name="remote_err_dns">Не удаётся разрешить имя хоста: проверьте домен или используйте IP-адрес.</string>
+    <string name="remote_err_dns">Не удаётся определить IP-адрес по имени хоста: проверь домен или используй IP-адрес.</string>
     <string name="remote_err_timeout">Время подключения истекло: компьютер выключен, адрес неверный или сети не видят друг друга (вне локальной сети нужен публичный адрес, проброс порта или, например, Tailscale).</string>
     <string name="remote_err_refused">В подключении отказано: sshd на компьютере не запущен или порт неверный.</string>
     <string name="remote_err_unreachable">Сеть недоступна: нет маршрута между телефоном и компьютером.</string>
-    <string name="remote_err_hostkey_unknown">Ключ хоста этого компьютера ещё не подтверждён: откройте его в Настройки → Удалённые хосты, нажмите «Проверить подключение» и сверьте отпечаток.</string>
-    <string name="remote_err_hostkey_changed">⚠ Ключ хоста компьютера изменился (сейчас %1$s), подключение отклонено: возможно, кто-то выдаёт себя за него. Если вы переустанавливали компьютер или меняли ключи, сверьте и подтвердите новый ключ в Настройки → Удалённые хосты.</string>
-    <string name="remote_err_auth">Ошибка аутентификации: неверное имя пользователя или пароль, либо компьютер не принимает этот ключ (проверьте ~/.ssh/authorized_keys).</string>
+    <string name="remote_err_hostkey_unknown">Ключ хоста этого компьютера ещё не подтверждён: открой его в разделе «Настройки → Удалённые хосты», нажми «Проверить подключение» и сверь отпечаток.</string>
+    <string name="remote_err_hostkey_changed">⚠ Ключ хоста компьютера изменился (сейчас %1$s), подключение отклонено: возможно, кто-то выдаёт себя за него. Если ты переустанавливал систему на компьютере или менял ключи, сверь и подтверди новый ключ в разделе «Настройки → Удалённые хосты».</string>
+    <string name="remote_err_auth">Ошибка аутентификации: неверное имя пользователя или пароль, либо компьютер не принимает этот ключ (проверь ~/.ssh/authorized_keys).</string>
     <string name="remote_err_key_invalid">Не удаётся прочитать закрытый ключ (%1$s): поддерживаются форматы OpenSSH и PEM.</string>
     <string name="remote_err_key_passphrase">Неверный пароль ключа, или ключ зашифрован, а пароль не указан.</string>
     <string name="remote_err_workdir">Не удаётся перейти в рабочий каталог на компьютере: %1$s</string>
-    <string name="remote_err_no_dsh">dsh не найден на компьютере (%1$s). Установите его там (npm i -g @deepseek-ai/dsh) или укажите полный путь к команде dsh в настройках хоста.</string>
+    <string name="remote_err_no_dsh">dsh не найден на компьютере (%1$s). Установи его там (npm i -g @deepseek-ai/dsh) или укажи полный путь к команде dsh в настройках хоста.</string>
     <string name="remote_err_dsh_exited">dsh не запустился на компьютере: %1$s</string>
-    <string name="remote_err_initialize">dsh на компьютере отклонил модель: %1$s. Проверьте модель в настройках хоста или провайдеров, настроенных в dsh на компьютере.</string>
-    <string name="remote_err_host_missing">Этот удалённый хост удалён.</string>
+    <string name="remote_err_initialize">dsh на компьютере отклонил модель: %1$s. Проверь модель в настройках хоста или провайдеров, настроенных в dsh на компьютере.</string>
+    <string name="remote_err_host_missing">Настройки этого удалённого хоста удалены.</string>
     <string name="remote_fork_unsupported">dsh на компьютере не поддерживает ветвление</string>
     <string name="remote_err_other">Ошибка удалённого подключения: %1$s</string>
 </resources>
